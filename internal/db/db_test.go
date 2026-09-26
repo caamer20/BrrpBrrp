@@ -140,7 +140,7 @@ func TestMigrationsAndSearchTriggers(t *testing.T) {
 	for _, query := range []string{
 		`INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES('u','alex','hash','now','now')`,
 		`INSERT INTO channels(id,name,type,created_at,updated_at) VALUES('c','general','text','now','now')`,
-		`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES('m','c','u','hello world','now','key')`,
+		`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key) VALUES('m','c','c','u','hello world','now','key')`,
 	} {
 		if _, err := store.Exec(query); err != nil {
 			t.Fatal(err)
@@ -289,7 +289,7 @@ func TestAnIncompleteUpgradeCannotBeSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES('orphan','missing','missing','text','now','key')`); err != nil {
+	if _, err := raw.Exec(`INSERT INTO channels(id,name,type,created_at,updated_at) VALUES('corrupt-reference','test','text','now','now'); INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key) VALUES('orphan','corrupt-reference','corrupt-reference','missing','text','now','key')`); err != nil {
 		raw.Close()
 		t.Fatal(err)
 	}

@@ -61,6 +61,10 @@ func (s *Server) anonymizeUser(w http.ResponseWriter, r *http.Request, actor db.
 		s.failed(w, err)
 		return
 	}
+	if err := cancelPendingDirectRequests(r.Context(), tx, target.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
 	for _, query := range []string{
 		`DELETE FROM sessions WHERE user_id=?`,
 		`DELETE FROM push_subscriptions WHERE user_id=?`,
@@ -71,6 +75,10 @@ func (s *Server) anonymizeUser(w http.ResponseWriter, r *http.Request, actor db.
 		`DELETE FROM conversation_members WHERE user_id=?`,
 		`DELETE FROM channel_notification_preferences WHERE user_id=?`,
 		`DELETE FROM channel_reads WHERE user_id=?`,
+		`DELETE FROM conversation_reads WHERE user_id=?`,
+		`DELETE FROM contact_preferences WHERE user_id=?`,
+		`DELETE FROM direct_preferences WHERE user_id=?`,
+		`DELETE FROM user_blocks WHERE blocker_id=?`,
 		`DELETE FROM mentions WHERE target_user_id=?`,
 		`DELETE FROM message_operations WHERE account_id=?`,
 		`DELETE FROM attachments WHERE uploader_id=? AND message_id IS NULL`,

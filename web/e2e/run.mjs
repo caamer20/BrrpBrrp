@@ -56,7 +56,11 @@ async function run() {
       // It is raised here rather than in the product, because a journey must measure what
       // it is about: the default budget stays 20, and the limiter's behaviour stays a
       // server-side concern with its own tests.
-      BRRP_LOGIN_ATTEMPTS: '400'
+      BRRP_LOGIN_ATTEMPTS: '400',
+      // Private conversations stay disabled in the default suite. The focused DM journey
+      // opts this temporary server in explicitly; it never changes shipped defaults.
+      BRRP_ENABLE_PRIVATE_CONVERSATIONS:
+        process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'true' : 'false'
     },
     stdio: ['ignore', 'ignore', 'pipe']
   });
@@ -77,7 +81,12 @@ async function run() {
       ...process.argv.slice(2)
     ],
     {
-      env: { ...cleanEnv, BRRP_E2E_BASE_URL: baseURL, BRRP_E2E_DATA_DIR: dataDir },
+      env: {
+        ...cleanEnv,
+        BRRP_E2E_BASE_URL: baseURL,
+        BRRP_E2E_DATA_DIR: dataDir,
+        BRRP_E2E_PRIVATE_CONVERSATIONS: process.env.BRRP_E2E_PRIVATE_CONVERSATIONS || '0'
+      },
       stdio: 'inherit'
     }
   );

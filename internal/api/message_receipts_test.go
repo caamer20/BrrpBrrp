@@ -241,7 +241,7 @@ func TestLegacyReceiptCannotReplayIntoAnotherConversation(t *testing.T) {
 	private := privateTextChannel(t, handler, admin, "legacy-private", memberID)
 	public := textChannelID(t, s)
 	now, messageID := db.Now(), db.ID()
-	if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?)`, messageID, private.ID, memberID, "private legacy content", now, "legacy-private-key"); err != nil {
+	if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,conversation_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?)`, messageID, private.ID, private.ID, memberID, "private legacy content", now, "legacy-private-key"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.store.Exec(`INSERT INTO message_operations(account_id,idempotency_key,conversation_id,intent_digest,state,result_message_id,created_at,expires_at) VALUES(?,?,?,'','committed',?,?,?)`, memberID, "legacy-private-key", private.ID, messageID, now, now); err != nil {
@@ -323,8 +323,8 @@ func TestALegacyBackfilledReceiptNeverRecreatesContent(t *testing.T) {
 	accountID := sessionUserID(t, s, admin)
 
 	legacyID, now := db.ID(), db.Now()
-	if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?)`,
-		legacyID, channelID, accountID, "a message from before the migration", now, "legacy-key-1"); err != nil {
+	if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,conversation_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?)`,
+		legacyID, channelID, channelID, accountID, "a message from before the migration", now, "legacy-key-1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.store.Exec(`INSERT INTO message_operations(account_id,idempotency_key,conversation_id,intent_digest,state,result_message_id,created_at,expires_at) VALUES(?,?,?,'','committed',?,?,?)`,

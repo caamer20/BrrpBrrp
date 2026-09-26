@@ -81,6 +81,9 @@ func (s *Server) answerSendReceipt(w http.ResponseWriter, r *http.Request, user 
 	if receipt.ResultMessageID != "" {
 		message, err := s.store.Message(r.Context(), user.ID, receipt.ResultMessageID)
 		if err == nil {
+			if _, _, ok := s.requireScope(w, r, user, message.ConversationID, false); !ok {
+				return
+			}
 			respond(w, http.StatusOK, message)
 			return
 		}
@@ -106,16 +109,12 @@ type messageInput struct {
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, user db.User) {
-	channel, _, ok := s.requireChannel(w, r, principalOf(r), r.PathValue("id"))
+	scope, _, ok := s.requireScope(w, r, user, r.PathValue("id"), false)
 	if !ok {
 		return
 	}
-	if channel.Type != "text" {
-		problem(w, 400, "Voice channels do not contain messages.")
-		return
-	}
-	clause := "WHERE channel_id=?"
-	args := []any{channel.ID}
+	clause := "WHERE conversation_id=?"
+	args := []any{scope.ID}
 	limit := pageLimit(r)
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
 	if from != "" || to != "" {
@@ -151,12 +150,8 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, user db.Us
 }
 
 func (s *Server) firstUnreadMessage(w http.ResponseWriter, r *http.Request, user db.User) {
-	channel, _, ok := s.requireChannel(w, r, principalOf(r), r.PathValue("id"))
+	scope, _, ok := s.requireScope(w, r, user, r.PathValue("id"), false)
 	if !ok {
-		return
-	}
-	if channel.Type != "text" {
-		problem(w, 400, "Voice channels do not contain messages.")
 		return
 	}
 	after := r.URL.Query().Get("after")
@@ -167,7 +162,7 @@ func (s *Server) firstUnreadMessage(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 	var id string
-	err := s.store.QueryRowContext(r.Context(), `SELECT id FROM messages WHERE channel_id=? AND id>? AND user_id<>? ORDER BY id LIMIT 1`, channel.ID, after, user.ID).Scan(&id)
+	err := s.store.QueryRowContext(r.Context(), `SELECT id FROM messages WHERE conversation_id=? AND id>? AND user_id<>? ORDER BY id LIMIT 1`, scope.ID, after, user.ID).Scan(&id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.failed(w, err)
 		return
@@ -197,14 +192,6 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 		problem(w, 400, "Send up to 4,000 characters and five attachments, with a valid message key.")
 		return
 	}
-	channel, ok := s.requireChannelPost(w, r, principalOf(r), r.PathValue("id"))
-	if !ok {
-		return
-	}
-	if channel.Type != "text" {
-		problem(w, 400, "Messages belong in text channels.")
-		return
-	}
 	tx, err := s.store.BeginTx(r.Context(), nil)
 	if err != nil {
 		s.failed(w, err)
@@ -214,25 +201,22 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// Authority is re-established inside the write transaction. Access may have
 	// been revoked between the route guard and this point, and a queued socket
 	// send must not slip through on the older revision.
-	principal, err := s.requireChannelAccessInTx(r.Context(), tx, user, channel.ID)
+	scope, principal, err := s.scopeInTx(r.Context(), tx, user, r.PathValue("id"), true)
 	if err != nil {
-		if errors.Is(err, authz.ErrUnavailable) {
-			hidden(w)
-			return
-		}
-		problem(w, 403, "You cannot post in this channel.")
+		s.scopeFailed(w, err)
 		return
 	}
+	channel := scope.Channel
 	// One acknowledged send maps to one stored message, and the operation's identity is the
 	// returning client's key scoped to the account. The destination and the content are part of
 	// the intent, so reusing a key for another conversation or other work is a conflict rather
 	// than a silent replay (ADR 0010 / D-11). The receipt is consulted first because it outlives
 	// the message: a retry of a send whose content was deleted or purged is answered from the
 	// record, never by creating the message again.
-	intent := sendIntentDigest(channel.ID, input.Content, input.AttachmentIDs, input.ReplyToID)
+	intent := sendIntentDigest(scope.ID, input.Content, input.AttachmentIDs, input.ReplyToID)
 	if receipt, receiptErr := s.store.Receipt(r.Context(), tx, user.ID, input.IdempotencyKey); receiptErr == nil {
 		tx.Rollback()
-		s.answerSendReceipt(w, r, user, receipt, channel.ID, intent)
+		s.answerSendReceipt(w, r, user, receipt, scope.ID, intent)
 		return
 	} else if !errors.Is(receiptErr, sql.ErrNoRows) {
 		s.failed(w, receiptErr)
@@ -242,10 +226,10 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// backfill gives every such message the same non-recreating outcome, and this lookup keeps
 	// the message row itself the second guard.
 	var existingID, existingChannel string
-	err = tx.QueryRow(`SELECT id,channel_id FROM messages WHERE user_id=? AND idempotency_key=?`, user.ID, input.IdempotencyKey).Scan(&existingID, &existingChannel)
+	err = tx.QueryRow(`SELECT id,conversation_id FROM messages WHERE user_id=? AND idempotency_key=?`, user.ID, input.IdempotencyKey).Scan(&existingID, &existingChannel)
 	if err == nil {
 		tx.Rollback()
-		if existingChannel != channel.ID {
+		if existingChannel != scope.ID {
 			problem(w, 409, "That message key belongs to another channel.")
 			return
 		}
@@ -263,11 +247,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// Read the policy inside the same serialized transaction as the send. A
 	// concurrent channel edit or another send cannot bypass the interval. Known
 	// receipts above remain replayable and never consume another interval.
-	channel, err = s.store.Channel(r.Context(), tx, channel.ID)
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
+
 	sentAt := time.Now().UTC()
 	if channel.SlowModeSeconds > 0 && !principal.Allowed(authz.ChannelManage) {
 		var lastSent string
@@ -295,7 +275,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// once even when two requests race: the loser's primary-key violation answers the replay
 	// instead of creating a second message.
 	if err := s.store.BeginOperation(r.Context(), tx, db.Receipt{
-		AccountID: user.ID, Key: input.IdempotencyKey, ConversationID: channel.ID,
+		AccountID: user.ID, Key: input.IdempotencyKey, ConversationID: scope.ID,
 		IntentDigest: intent, CreatedAt: now, ExpiresAt: sendReceiptDeadline(now),
 	}); err != nil {
 		tx.Rollback()
@@ -304,12 +284,12 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 			s.failed(w, err)
 			return
 		}
-		s.answerSendReceipt(w, r, user, receipt, channel.ID, intent)
+		s.answerSendReceipt(w, r, user, receipt, scope.ID, intent)
 		return
 	}
 	if input.ReplyToID != "" {
 		var count int
-		if err := tx.QueryRow(`SELECT count(*) FROM messages WHERE id=? AND channel_id=?`, input.ReplyToID, channel.ID).Scan(&count); err != nil {
+		if err := tx.QueryRow(`SELECT count(*) FROM messages WHERE id=? AND conversation_id=?`, input.ReplyToID, scope.ID).Scan(&count); err != nil {
 			s.failed(w, err)
 			return
 		}
@@ -321,13 +301,13 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// conversation_id records the conversation scope every reader resolves through
 	// COALESCE(conversation_id, channel_id). A channel conversation's id is its channel id, so
 	// the new column and the legacy column agree for every message this path writes.
-	_, err = tx.Exec(`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key,reply_to_id) VALUES(?,?,?,?,?,?,?,NULLIF(?,''))`, id, channel.ID, channel.ID, principal.UserID, input.Content, now, input.IdempotencyKey, input.ReplyToID)
+	_, err = tx.Exec(`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key,reply_to_id) VALUES(?,?,NULLIF(?,''),?,?,?,?,NULLIF(?,''))`, id, scope.ID, scope.ChannelID, principal.UserID, input.Content, now, input.IdempotencyKey, input.ReplyToID)
 	if err != nil {
 		s.failed(w, err)
 		return
 	}
 	for _, attachmentID := range input.AttachmentIDs {
-		result, err := tx.Exec(`UPDATE attachments SET message_id=? WHERE id=? AND uploader_id=? AND message_id IS NULL`, id, attachmentID, user.ID)
+		result, err := tx.Exec(`UPDATE attachments SET message_id=? WHERE id=? AND uploader_id=? AND message_id IS NULL AND (staged_conversation_id=? OR (staged_conversation_id IS NULL AND ?='channel'))`, id, attachmentID, user.ID, scope.ID, scope.Kind)
 		if err != nil {
 			s.failed(w, err)
 			return
@@ -348,23 +328,26 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 		s.failed(w, err)
 		return
 	}
-	// Record every successful new send, including when slow mode is disabled or
-	// bypassed, so enabling it or removing a manager's capability uses the actual
-	// last-send time. Rejected sends roll this clock back with the message/receipt.
-	if _, err := tx.ExecContext(r.Context(), `INSERT INTO channel_slow_mode_sends(channel_id,user_id,last_sent_at) VALUES(?,?,?) ON CONFLICT(channel_id,user_id) DO UPDATE SET last_sent_at=excluded.last_sent_at`, channel.ID, user.ID, now); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `UPDATE conversations SET updated_at=? WHERE id=?`, now, scope.ID); err != nil {
 		s.failed(w, err)
 		return
 	}
-	// The audience is resolved through the transaction that holds the connection.
-	eligible, err := s.channelEligible(r.Context(), tx, channel)
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
-	targets, err := syncMentions(r.Context(), tx, id, channel.ID, user, input.Content, eligible, principal.Allowed(authz.MentionEveryone))
-	if err != nil {
-		s.failed(w, err)
-		return
+	targets := []string{}
+	if scope.Kind == "channel" {
+		if _, err := tx.ExecContext(r.Context(), `INSERT INTO channel_slow_mode_sends(channel_id,user_id,last_sent_at) VALUES(?,?,?) ON CONFLICT(channel_id,user_id) DO UPDATE SET last_sent_at=excluded.last_sent_at`, channel.ID, user.ID, now); err != nil {
+			s.failed(w, err)
+			return
+		}
+		eligible, err := s.channelEligible(r.Context(), tx, channel)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		targets, err = syncMentions(r.Context(), tx, id, channel.ID, user, input.Content, eligible, principal.Allowed(authz.MentionEveryone))
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		s.failed(w, err)
@@ -382,16 +365,14 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 }
 
 func (s *Server) editMessage(w http.ResponseWriter, r *http.Request, user db.User) {
-	message, err := s.store.Message(r.Context(), user.ID, r.PathValue("id"))
-	if !s.found(w, err) {
+	// Existence is private too. Establish readable scope before distinguishing
+	// another author's message from the caller's own editable content.
+	message, _, ok := s.requireMessage(w, r, principalOf(r), r.PathValue("id"))
+	if !ok {
 		return
 	}
 	if message.UserID != user.ID {
 		problem(w, 403, "You can only edit your own messages.")
-		return
-	}
-	// The message and its channel are both re-checked after the first read.
-	if _, ok := s.requireChannelPost(w, r, principalOf(r), message.ChannelID); !ok {
 		return
 	}
 	var input struct {
@@ -411,24 +392,36 @@ func (s *Server) editMessage(w http.ResponseWriter, r *http.Request, user db.Use
 		return
 	}
 	defer tx.Rollback()
+	scope, principal, err := s.scopeInTx(r.Context(), tx, user, message.ConversationID, true)
+	if err != nil {
+		s.scopeFailed(w, err)
+		return
+	}
+	var author string
+	if err := tx.QueryRowContext(r.Context(), `SELECT user_id FROM messages WHERE id=? AND conversation_id=?`, message.ID, scope.ID).Scan(&author); err != nil {
+		s.scopeFailed(w, err)
+		return
+	}
+	if author != user.ID {
+		problem(w, 403, "You can only edit your own messages.")
+		return
+	}
+
 	_, err = tx.Exec(`UPDATE messages SET content=?,edited_at=?,embed_json=NULL,embed_status='pending' WHERE id=?`, input.Content, db.Now(), message.ID)
 	if err != nil {
 		s.failed(w, err)
 		return
 	}
-	channel, err := s.store.Channel(r.Context(), tx, message.ChannelID)
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
-	eligible, err := s.channelEligible(r.Context(), tx, channel)
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
-	if _, err := syncMentions(r.Context(), tx, message.ID, message.ChannelID, user, input.Content, eligible, principalOf(r).Allowed(authz.MentionEveryone)); err != nil {
-		s.failed(w, err)
-		return
+	if scope.Kind == "channel" {
+		eligible, err := s.channelEligible(r.Context(), tx, scope.Channel)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		if _, err := syncMentions(r.Context(), tx, message.ID, scope.ChannelID, user, input.Content, eligible, principal.Allowed(authz.MentionEveryone)); err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		s.failed(w, err)
@@ -457,11 +450,38 @@ func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request, user db.U
 	if !confirmed(w, r, message.ID) {
 		return
 	}
-	if _, err := s.store.Exec(`DELETE FROM messages WHERE id=?`, message.ID); err != nil {
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
 		s.failed(w, err)
 		return
 	}
-	s.audit(user.ID, "message.deleted", message.ID)
+	defer tx.Rollback()
+	scope, current, err := s.scopeInTx(r.Context(), tx, user, message.ConversationID, false)
+	if err != nil {
+		s.scopeFailed(w, err)
+		return
+	}
+	var author string
+	if err := tx.QueryRowContext(r.Context(), `SELECT user_id FROM messages WHERE id=? AND conversation_id=?`, message.ID, scope.ID).Scan(&author); err != nil {
+		s.scopeFailed(w, err)
+		return
+	}
+	if author != user.ID && (scope.Kind != "channel" || !current.Allowed(authz.MessageDeleteAny)) {
+		problem(w, 403, "You can only delete your own messages.")
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM messages WHERE id=?`, message.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if err := s.auditCommunityMessageTx(r.Context(), tx, scope, user.ID, "message.deleted", message.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		s.failed(w, err)
+		return
+	}
 	s.publishMessage("message.deleted", message)
 	respond(w, 200, map[string]bool{"ok": true})
 }
@@ -485,6 +505,15 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request, user db.User) {
 	// Eligibility is resolved inside the query, before the limit and before the
 	// count, so a hidden conversation contributes no hit, excerpt or total.
 	clause, args := db.ReadableChannelScope(viewer(principal))
+	clause += " AND channel_id IS NOT NULL"
+	if id := r.URL.Query().Get("conversation_id"); id != "" {
+		scope, _, ok := s.requireScope(w, r, user, id, false)
+		if !ok {
+			return
+		}
+		clause = "WHERE conversation_id=?"
+		args = []any{scope.ID}
+	}
 	clause += `
   AND rowid IN (SELECT rowid FROM message_fts WHERE message_fts MATCH ?)`
 	args = append(args, strings.Join(terms, " AND "))

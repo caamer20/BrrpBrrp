@@ -46,6 +46,8 @@ class Workspace {
   loading = $state(true);
   error = $state('');
   activeId = $state('');
+  messagesOpen = $state(false);
+  contactsVersion = $state(0);
   messages = $state<Message[]>([]);
   messagesLoading = $state(false);
   olderLoading = $state(false);
@@ -122,7 +124,9 @@ class Workspace {
   private stateVersion = 0;
   lowResource = $state(storage.getItem('brrp.low-resource') === 'true');
   privacy = $state(storage.getItem('brrp.privacy') === 'true');
-  typing = $state<Record<string, { channel_id: string; expires_at: number }>>({});
+  typing = $state<
+    Record<string, { channel_id?: string; conversation_id?: string; expires_at: number }>
+  >({});
   onVoiceEvent: ((event: RealtimeEvent) => void) | null = null;
   leaveVoice: (() => void) | null = null;
   voiceDisconnected: (() => void) | null = null;
@@ -147,6 +151,56 @@ class Workspace {
 
   get channel() {
     return this.state?.channels.find((channel) => channel.id === this.activeId);
+  }
+  get privateConversationsEnabled() {
+    return this.state?.features?.private_conversations === true;
+  }
+  get directConversations() {
+    return this.privateConversationsEnabled
+      ? (this.state?.conversations ?? []).filter((item) => item.kind === 'direct' && item.can_read)
+      : [];
+  }
+  get direct() {
+    return this.directConversations.find((item) => item.id === this.activeId);
+  }
+  userFor(id: string) {
+    return (
+      this.state?.users.find((user) => user.id === id) ||
+      this.directConversations.find((item) => item.peer.id === id)?.peer
+    );
+  }
+  get conversationName() {
+    return (
+      this.channel?.name ||
+      this.direct?.peer.display_name ||
+      this.direct?.peer.username ||
+      'Conversation'
+    );
+  }
+  conversationId(value: { conversation_id?: string; channel_id?: string }) {
+    return value.conversation_id || value.channel_id || '';
+  }
+  isDirect(id: string) {
+    return this.directConversations.some((item) => item.id === id);
+  }
+  canReadConversation(id: string) {
+    return (
+      !!this.state?.channels.some((item) => item.id === id && item.type === 'text') ||
+      this.isDirect(id)
+    );
+  }
+  canWriteConversation(id: string) {
+    const direct = this.directConversations.find((item) => item.id === id);
+    return direct
+      ? direct.can_write
+      : !!this.state?.channels.some((item) => item.id === id && item.type === 'text') &&
+          this.can('message.send');
+  }
+  conversationPath(id: string, resource: string) {
+    return `/${this.isDirect(id) ? 'conversations' : 'channels'}/${id}/${resource}`;
+  }
+  conversationURL(id: string) {
+    return `/?${this.isDirect(id) ? 'conversation' : 'channel'}=${encodeURIComponent(id)}`;
   }
   get user() {
     return this.state?.user;
@@ -204,6 +258,16 @@ class Workspace {
   // unaffected.
   unreadFor(channelID: string) {
     if (this.authorizationUnverified) return undefined;
+    const confirmed = this.state?.unread.find((item) => this.conversationId(item) === channelID);
+    if (confirmed) return confirmed;
+    const direct = this.directConversations.find((item) => item.id === channelID);
+    if (direct)
+      return {
+        channel_id: direct.id,
+        count: direct.count ?? 0,
+        mentions: 0,
+        last_read_message_id: direct.last_read_message_id ?? ''
+      };
     return this.state?.unread.find((item) => item.channel_id === channelID);
   }
 
@@ -315,11 +379,13 @@ class Workspace {
     this.setupRequired = false;
     this.stopped = false;
     const openSettings = location.hash === '#server-settings';
-    const requested = new URLSearchParams(location.search).get('channel');
+    const params = new URLSearchParams(location.search);
+    const requested = params.get('conversation') || params.get('channel');
     const initial =
       this.state?.channels.find((channel) => channel.id === requested && channel.type === 'text') ||
       this.state?.channels.find((channel) => channel.type === 'text');
-    if (initial) await this.selectChannel(initial.id);
+    if (requested && this.isDirect(requested)) await this.selectChannel(requested);
+    else if (initial) await this.selectChannel(initial.id);
     if (restored?.reply) {
       const channel = this.activeId;
       const request = this.identity();
@@ -327,7 +393,11 @@ class Workspace {
         const reply =
           this.messages.find((message) => message.id === restored.reply) ||
           (await api<Message>(`/messages/${restored.reply}`));
-        if (channel === this.activeId && this.admitted(request) && reply.channel_id === channel)
+        if (
+          channel === this.activeId &&
+          this.admitted(request) &&
+          this.conversationId(reply) === channel
+        )
           this.replyTo = reply;
       } catch {
         this.showToast('Your draft was kept, but the original reply is no longer available.');
@@ -394,13 +464,26 @@ class Workspace {
     if (version !== this.stateVersion || !this.admitted(request)) return;
     this.authorizationUnverified = false;
     const previous = this.state?.authorization;
+    const privateAccess = (snapshot: WorkspaceState | null) =>
+      JSON.stringify([
+        snapshot?.features?.private_conversations === true,
+        (snapshot?.conversations || [])
+          .map((item) => [item.id, item.can_read, item.can_write])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      ]);
+    const previousPrivateAccess = privateAccess(this.state);
     this.state = state;
     // A confirmed snapshot carries each conversation's cursor, and it only ever moves one
     // forward: a snapshot that was read before this client's last mark cannot pull the
     // cursor back, and a snapshot read after it is the server agreeing with us.
     for (const unread of state.unread || [])
-      if ((this.readCursors[unread.channel_id] || '') < (unread.last_read_message_id || ''))
-        this.readCursors[unread.channel_id] = unread.last_read_message_id;
+      if (
+        (this.readCursors[this.conversationId(unread)] || '') < (unread.last_read_message_id || '')
+      )
+        this.readCursors[this.conversationId(unread)] = unread.last_read_message_id;
+    for (const direct of this.directConversations)
+      if ((this.readCursors[direct.id] || '') < (direct.last_read_message_id || ''))
+        this.readCursors[direct.id] = direct.last_read_message_id || '';
     // A snapshot whose authorization differs from the one on screen is a change of
     // authority even when no authorization.changed event preceded it (a refused
     // refresh that later succeeds, or a reconnect after missed events), so it
@@ -409,24 +492,22 @@ class Workspace {
     const next = state.authorization;
     if (
       previous &&
-      (previous.revision !== next?.revision ||
+      (previousPrivateAccess !== privateAccess(state) ||
+        previous.revision !== next?.revision ||
         (previous.capabilities ?? []).length !== (next?.capabilities ?? []).length ||
         (previous.capabilities ?? []).some((name) => !(next?.capabilities ?? []).includes(name)))
     )
       this.invalidateAuthorization();
     this.forgetUnauthorizedChannels();
     for (const message of Object.values(this.pending)) {
-      if (
-        !this.can('message.send') ||
-        !state.channels.some((channel) => channel.id === message.channel_id)
-      )
+      if (!this.canWriteConversation(this.conversationId(message)))
         this.finishUnsendable(message, 'You no longer have access to send to that conversation.');
     }
     if (!storage.getItem('brrp.privacy'))
       this.privacy = this.state.settings.privacy_mode_embeds_default;
     if (!storage.getItem('brrp.low-resource'))
       this.lowResource = this.state.settings.low_resource_default;
-    if (this.activeId && !this.state.channels.some((channel) => channel.id === this.activeId)) {
+    if (this.activeId && !this.canReadConversation(this.activeId)) {
       await this.selectChannel(
         this.state.channels.find((channel) => channel.type === 'text')?.id || ''
       );
@@ -447,7 +528,7 @@ class Workspace {
   private forgetUnauthorizedChannels() {
     if (!this.state) return;
     for (const id of [...this.views.keys()])
-      if (!this.state.channels.some((channel) => channel.id === id)) this.views.delete(id);
+      if (!this.canReadConversation(id)) this.views.delete(id);
   }
 
   // forgetCachedConversations discards locally held message history. It runs when
@@ -565,7 +646,7 @@ class Workspace {
     this.activeId = id;
     const cached = this.views.get(id);
     this.views.delete(id);
-    const unread = this.state?.unread.find((item) => item.channel_id === id);
+    const unread = this.unreadFor(id);
     this.unreadAfter =
       cached?.unreadAfter ?? (unread?.count ? unread.last_read_message_id || '' : null);
     this.replyTo = null;
@@ -577,14 +658,14 @@ class Workspace {
     this.sidebarOpen = false;
     this.messages = [
       ...(cached?.messages || []),
-      ...Object.values(this.pending).filter((message) => message.channel_id === id)
+      ...Object.values(this.pending).filter((message) => this.conversationId(message) === id)
     ];
     this.messagesLoading = false;
     this.olderLoading = false;
     this.messagesError = '';
     this.hasOlder = cached?.hasOlder ?? false;
     this.readMarker = '';
-    history.replaceState(null, '', `/?channel=${encodeURIComponent(id)}`);
+    history.replaceState(null, '', this.conversationURL(id));
     await this.loadMessages(false, !!cached);
   }
 
@@ -612,7 +693,7 @@ class Workspace {
         : historyWindow
           ? `?from=${saved[0].id}&to=${saved.at(-1)!.id}`
           : '';
-      let loaded = await api<Message[]>(`/channels/${id}/messages${before}`);
+      let loaded = await api<Message[]>(`${this.conversationPath(id, 'messages')}${before}`);
       if (id !== this.activeId || version !== this.loadVersion || !this.admitted(request))
         return false;
       // Reconcile events received while this snapshot was in flight before displaying it.
@@ -683,7 +764,9 @@ class Workspace {
             .map((message) => message.idempotency_key)
         );
         for (const key of keys) delete this.pending[key];
-        const pending = Object.values(this.pending).filter((message) => message.channel_id === id);
+        const pending = Object.values(this.pending).filter(
+          (message) => this.conversationId(message) === id
+        );
         this.messages = [...loaded, ...pending];
       }
       if (!historyWindow) this.hasOlder = loaded.length === 50;
@@ -716,22 +799,31 @@ class Workspace {
     // The cursor is advanced, never moved: an answer that arrives after a newer one, or a
     // conversation reloaded from an older cached window, must not mark unseen content read
     // (ADR 0010, Decision 6).
-    if (last.id <= (this.readCursors[last.channel_id] || '')) return;
+    if (last.id <= (this.readCursors[this.conversationId(last)] || '')) return;
     this.readMarker = last.id;
     // Read state is metadata about a conversation, so it follows the same rule: a
     // read acknowledged under authority that has since changed does not rewrite the
     // counts the new snapshot will deliver.
     const request = this.identity();
     try {
-      await api(`/channels/${last.channel_id}/read`, 'POST', { last_read_message_id: last.id });
+      await api(this.conversationPath(this.conversationId(last), 'read'), 'POST', {
+        last_read_message_id: last.id
+      });
       if (!this.admitted(request)) return;
-      if (last.id <= (this.readCursors[last.channel_id] || '')) return;
+      if (last.id <= (this.readCursors[this.conversationId(last)] || '')) return;
       // The cursor moves only where the server confirmed it. A refused mark leaves it where it
       // was, so the same message is offered again rather than an assumed progress.
-      this.readCursors[last.channel_id] = last.id;
+      this.readCursors[this.conversationId(last)] = last.id;
+      const direct = this.directConversations.find((item) => item.id === this.conversationId(last));
+      if (direct) {
+        direct.count = 0;
+        direct.last_read_message_id = last.id;
+      }
       if (this.state)
         this.state.unread = this.state.unread.map((unread) =>
-          unread.channel_id === last.channel_id ? { ...unread, count: 0, mentions: 0 } : unread
+          this.conversationId(unread) === this.conversationId(last)
+            ? { ...unread, count: 0, mentions: 0 }
+            : unread
         );
     } catch {
       // The cursor stays where it was: a refused mark is one the server did not confirm, and
@@ -753,7 +845,7 @@ class Workspace {
     if (!this.user) return;
     const entry: OutboxEntry = {
       key: message.idempotency_key,
-      conversation: message.channel_id,
+      conversation: this.conversationId(message),
       content: message.content,
       attachments: attachments.slice(0, 5),
       reply_to: message.reply_to_id || '',
@@ -799,10 +891,7 @@ class Workspace {
     for (const entry of entries) {
       if (!this.admitted(request)) return;
       if (entry.recovery) continue;
-      const destination = this.state?.channels.find(
-        (channel) => channel.id === entry.conversation && channel.type === 'text'
-      );
-      if (!destination || !this.can('message.send')) {
+      if (!this.canWriteConversation(entry.conversation)) {
         this.releaseOutbox(entry.key, 'You no longer have access to send to that conversation.');
         continue;
       }
@@ -819,7 +908,8 @@ class Workspace {
     const message: Message = {
       id: entry.key,
       idempotency_key: entry.key,
-      channel_id: entry.conversation,
+      channel_id: this.isDirect(entry.conversation) ? '' : entry.conversation,
+      conversation_id: entry.conversation,
       user_id: this.user.id,
       content: entry.content,
       reply_to_id: entry.reply_to,
@@ -833,7 +923,7 @@ class Workspace {
     // A restored send for the conversation on screen belongs in it, exactly as a send from
     // the composer does, so its outcome is visible where it happened.
     if (
-      message.channel_id === this.activeId &&
+      this.conversationId(message) === this.activeId &&
       !this.messages.some((item) => item.id === entry.key)
     )
       this.messages = [...this.messages, message];
@@ -879,12 +969,19 @@ class Workspace {
     replyToID?: string,
     preservePosition = false
   ) {
-    if (!this.user || !this.activeId) return;
+    if (
+      !this.user ||
+      !this.activeId ||
+      this.authorizationUnverified ||
+      !this.canWriteConversation(this.activeId)
+    )
+      return;
     const key = crypto.randomUUID();
     const message: Message = {
       id: key,
       idempotency_key: key,
-      channel_id: this.activeId,
+      channel_id: this.direct ? '' : this.activeId,
+      conversation_id: this.activeId,
       user_id: this.user.id,
       content,
       reply_to_id: replyToID,
@@ -901,7 +998,10 @@ class Workspace {
       attachments.map((attachment) => attachment.id)
     );
     if (!preservePosition) this.messages = [...this.messages, message];
-    this.sendEvent('typing.stop', { channel_id: this.activeId });
+    this.sendEvent(
+      'typing.stop',
+      this.direct ? { conversation_id: this.activeId } : { channel_id: this.activeId }
+    );
     // A reply sent from search/history belongs at the live end of the channel.
     if (!preservePosition) {
       if (this.viewingHistory) void this.latest();
@@ -911,7 +1011,7 @@ class Workspace {
   }
 
   async retryMessage(message: Message) {
-    if (!this.user || message.user_id !== this.user.id) return;
+    if (!this.user || message.user_id !== this.user.id || this.authorizationUnverified) return;
     if (this.outbox.some((entry) => entry.key === message.idempotency_key && entry.recovery))
       return;
     if (operationExpired({ created: message.created_at })) {
@@ -926,6 +1026,13 @@ class Workspace {
       message.pending === 'failed'
     )
       return;
+    if (!this.canWriteConversation(this.conversationId(message))) {
+      this.finishUnsendable(
+        message,
+        'This conversation is read-only. Your text has been kept for you to copy.'
+      );
+      return;
+    }
     const sender = this.user?.id;
     // A send that completes after this account's authority moved does not write its
     // result into a conversation that was cleared: the message exists on the server
@@ -936,12 +1043,16 @@ class Workspace {
       item.id === message.id ? { ...item, pending: 'sending' } : item
     );
     try {
-      const saved = await api<Message>(`/channels/${message.channel_id}/messages`, 'POST', {
-        content: message.content,
-        reply_to_id: message.reply_to_id || '',
-        idempotency_key: message.idempotency_key,
-        attachment_ids: this.outboxAttachments(message)
-      });
+      const saved = await api<Message>(
+        this.conversationPath(this.conversationId(message), 'messages'),
+        'POST',
+        {
+          content: message.content,
+          reply_to_id: message.reply_to_id || '',
+          idempotency_key: message.idempotency_key,
+          attachment_ids: this.outboxAttachments(message)
+        }
+      );
       if (this.user?.id !== sender || request.session !== this.sessionVersion) return;
       if (request.generation !== this.authorizationGeneration) {
         delete this.pending[message.idempotency_key];
@@ -953,9 +1064,9 @@ class Workspace {
       delete this.pending[message.idempotency_key];
       this.releaseOutbox(message.idempotency_key);
       this.onConversationEvent?.({ t: 'message.created', d: saved });
-      if (saved.reply_to_id) this.queueParentRefresh(saved.reply_to_id, saved.channel_id);
+      if (saved.reply_to_id) this.queueParentRefresh(saved.reply_to_id, this.conversationId(saved));
       if (
-        this.activeId === message.channel_id &&
+        this.activeId === this.conversationId(message) &&
         !(message.preserve_position && (this.viewingHistory || !this.atLatest))
       ) {
         this.messages = this.messages.filter(
@@ -970,7 +1081,21 @@ class Workspace {
         if (!message.preserve_position) await this.markRead();
       }
     } catch (error) {
-      if (this.user?.id !== sender || !this.admitted(request)) return;
+      if (this.user?.id !== sender || request.session !== this.sessionVersion) return;
+      if (!this.admitted(request)) {
+        // A contact/role refresh can overtake an uncertain send. Keep the author's
+        // operation retryable under its original key instead of leaving Sending forever;
+        // do not apply an old server error or resurrect cleared conversation content.
+        if (this.pending[message.idempotency_key]) {
+          this.pending[message.idempotency_key] = { ...message, pending: 'failed' };
+          this.messages = this.messages.map((item) =>
+            item.pending && item.idempotency_key === message.idempotency_key
+              ? { ...item, pending: 'failed' }
+              : item
+          );
+        }
+        return;
+      }
       // A socket refresh can acknowledge delivery before the POST connection fails.
       if (!this.pending[message.idempotency_key]) return;
       const status = error instanceof APIError ? error.status : 0;
@@ -994,7 +1119,11 @@ class Workspace {
     if (!this.state?.settings.enable_typing_indicators || Date.now() - this.lastTyping < 3000)
       return;
     this.lastTyping = Date.now();
-    this.sendEvent('typing.start', { channel_id: this.activeId });
+    if (!this.canWriteConversation(this.activeId)) return;
+    this.sendEvent(
+      'typing.start',
+      this.direct ? { conversation_id: this.activeId } : { channel_id: this.activeId }
+    );
   }
 
   sendEvent(type: string, data: unknown) {
@@ -1095,7 +1224,8 @@ class Workspace {
       }
     }
     if (event.t.startsWith('message.') || event.t === 'reaction.updated') {
-      const { id, channel_id: channel } = event.d;
+      const { id } = event.d;
+      const channel = this.conversationId(event.d);
       if (typeof id === 'string' && typeof channel === 'string') {
         const revision = ++this.eventRevision;
         this.messageRevisions.set(id, revision);
@@ -1111,6 +1241,13 @@ class Workspace {
           this.refreshUnread = true;
         this.scheduleChanges();
       }
+    } else if (
+      event.t.startsWith('direct.') ||
+      event.t.startsWith('contact.') ||
+      event.t.startsWith('conversation.')
+    ) {
+      this.contactsVersion++;
+      this.invalidateAuthorization();
     } else if (event.t === 'unread.updated') {
       this.refreshUnread = true;
       this.scheduleChanges();
@@ -1170,8 +1307,9 @@ class Workspace {
     // after it: it can carry an entry for a channel this account may no longer read.
     const request = this.identity();
     const unread = await api<WorkspaceState['unread']>('/unread');
-    if (version === this.unreadVersion && this.admitted(request) && this.state)
+    if (version === this.unreadVersion && this.admitted(request) && this.state) {
       this.state.unread = unread;
+    }
   }
 
   private async flushChanges() {
@@ -1321,7 +1459,7 @@ class Workspace {
     this.jumpingUnread = true;
     try {
       const result = await api<{ message_id: string }>(
-        `/channels/${channel}/first-unread?after=${encodeURIComponent(after)}`
+        `${this.conversationPath(channel, 'first-unread')}?after=${encodeURIComponent(after)}`
       );
       if (!this.admitted(request) || channel !== this.activeId) return;
       if (result.message_id) {
@@ -1377,8 +1515,8 @@ class Workspace {
       if (version !== this.loadVersion || !this.admitted(request)) return;
       const target = context.find((message) => message.id === id);
       if (!target) return;
-      if (target.channel_id !== this.activeId) this.rememberChannel();
-      this.activeId = target.channel_id;
+      if (this.conversationId(target) !== this.activeId) this.rememberChannel();
+      this.activeId = this.conversationId(target);
       this.position = null;
       this.scrollRestore = null;
       this.viewingHistory = true;
@@ -1393,7 +1531,7 @@ class Workspace {
       this.searchOpen = false;
       this.pinsOpen = false;
       this.threadId = '';
-      history.replaceState(null, '', `/?channel=${encodeURIComponent(target.channel_id)}`);
+      history.replaceState(null, '', this.conversationURL(this.conversationId(target)));
     } catch (error) {
       if (version === this.loadVersion && this.admitted(request))
         this.showToast(errorMessage(error));
@@ -1420,7 +1558,10 @@ class Workspace {
     if (removed) {
       const message = this.messages.find((message) => message.id === id);
       this.applyMessageChange(id, channel, null);
-      this.onConversationEvent?.({ t: 'message.deleted', d: { id, channel_id: channel } });
+      this.onConversationEvent?.({
+        t: 'message.deleted',
+        d: { id, channel_id: this.channel?.id || '', conversation_id: channel }
+      });
       if (message?.reply_to_id) this.queueParentRefresh(message.reply_to_id, channel);
       return;
     }
@@ -1483,6 +1624,8 @@ class Workspace {
     this.olderLoading = false;
     this.messagesError = '';
     this.drafts = {};
+    this.messagesOpen = false;
+    this.contactsVersion++;
     this.messages = [];
     this.replyTo = null;
     this.typing = {};

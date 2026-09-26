@@ -168,7 +168,7 @@ func TestReportEvidenceBoundsExpiryAndPrivateConversationExclusion(t *testing.T)
 	if _, err := s.store.Exec(`INSERT INTO conversations(id,kind,created_at,updated_at) VALUES(?,'direct',?,?)`, directID, db.Now(), db.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.store.Exec(`UPDATE messages SET conversation_id=? WHERE id=?`, directID, messageID); err != nil {
+	if _, err := s.store.Exec(`UPDATE messages SET conversation_id=?,channel_id=NULL WHERE id=?`, directID, messageID); err != nil {
 		t.Fatal(err)
 	}
 	if w := request(t, handler, "POST", "/api/messages/"+messageID+"/report", map[string]string{"reason": "Must be private."}, reporter); w.Code != http.StatusNotFound {

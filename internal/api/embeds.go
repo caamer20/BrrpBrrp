@@ -10,11 +10,11 @@ import (
 type previewJob struct{ messageID, channelID, content string }
 
 func (s *Server) queuePreview(message db.Message) {
-	if !s.Settings().LinkPreviews || len(scraper.Links(message.Content)) == 0 {
+	if message.ChannelID == "" || !s.Settings().LinkPreviews || len(scraper.Links(message.Content)) == 0 {
 		return
 	}
 	select {
-	case s.previewJobs <- previewJob{message.ID, message.ChannelID, message.Content}:
+	case s.previewJobs <- previewJob{message.ID, message.ConversationID, message.Content}:
 	default:
 		_, _ = s.store.Exec(`UPDATE messages SET embed_status='skipped' WHERE id=?`, message.ID)
 	}
@@ -51,7 +51,7 @@ func (s *Server) previewWorker() {
 			}
 			count, _ := result.RowsAffected()
 			if count > 0 {
-				s.hub.Broadcast("message.embed_updated", map[string]string{"id": job.messageID, "channel_id": job.channelID})
+				s.publishToConversation(s.ctx, job.channelID, "message.embed_updated", map[string]string{"id": job.messageID, "channel_id": job.channelID, "conversation_id": job.channelID})
 			}
 		}
 	}

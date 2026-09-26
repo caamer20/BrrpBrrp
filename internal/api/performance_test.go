@@ -23,7 +23,7 @@ func TestLightweightUnreadAndHistoryWindow(t *testing.T) {
 		if i == 101 {
 			author = other
 		}
-		if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?)`, ids[i], channel, author, fmt.Sprint(i), db.Now(), fmt.Sprint(i)); err != nil {
+		if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,conversation_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?)`, ids[i], channel, channel, author, fmt.Sprint(i), db.Now(), fmt.Sprint(i)); err != nil {
 			t.Fatal(err)
 		}
 	}

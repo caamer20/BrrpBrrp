@@ -23,6 +23,18 @@ func (s *Server) unreadState(w http.ResponseWriter, r *http.Request, user db.Use
 		s.failed(w, err)
 		return
 	}
+	if s.config.PrivateConversations {
+		directs, err := s.directConversations(r.Context(), user)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		for _, c := range directs {
+			if c.CanRead {
+				counts = append(counts, db.UnreadCount{ConversationID: c.ID, Count: c.Count, Mentions: 0, LastRead: c.LastReadMessageID})
+			}
+		}
+	}
 	respond(w, 200, counts)
 }
 
@@ -74,7 +86,21 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 		s.failed(w, err)
 		return
 	}
+	directs := []directConversation{}
+	if s.config.PrivateConversations {
+		all, err := s.directConversations(r.Context(), user)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		for _, c := range all {
+			if c.CanRead {
+				directs = append(directs, c)
+			}
+		}
+	}
 	respond(w, 200, map[string]any{
+		"conversations": directs, "features": map[string]bool{"private_conversations": s.config.PrivateConversations},
 		"user": user, "channels": channels, "users": users, "settings": s.Settings(), "unread": unread,
 		"reaction_palette": reactionPalette, "presence": s.visiblePresence(), "push_public_key": s.vapidPublic,
 		"voice_states": s.visibleVoiceStates(r.Context(), principal), "categories": categories,
@@ -117,26 +143,21 @@ func (s *Server) markRead(w http.ResponseWriter, r *http.Request, user db.User) 
 	defer tx.Rollback()
 	// Read state is personal data too: a request admitted before sign-out or
 	// account removal cannot recreate it after the identity cleanup committed.
-	principal, err := s.authorizeInTx(r.Context(), tx, user)
+	scope, _, err := s.scopeInTx(r.Context(), tx, user, r.PathValue("id"), false)
 	if err != nil {
-		s.authorityFailed(w, err)
-		return
-	}
-	readable, err := s.store.ChannelAccessible(r.Context(), tx, viewer(principal), r.PathValue("id"))
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
-	if !readable {
-		hidden(w)
+		s.scopeFailed(w, err)
 		return
 	}
 	var id string
-	err = tx.QueryRowContext(r.Context(), `SELECT id FROM messages WHERE id=? AND channel_id=?`, input.MessageID, r.PathValue("id")).Scan(&id)
+	err = tx.QueryRowContext(r.Context(), `SELECT id FROM messages WHERE id=? AND conversation_id=?`, input.MessageID, scope.ID).Scan(&id)
 	if !s.found(w, err) {
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO channel_reads(user_id,channel_id,last_read_message_id,last_read_at) VALUES(?,?,?,?) ON CONFLICT(user_id,channel_id) DO UPDATE SET last_read_message_id=max(last_read_message_id,excluded.last_read_message_id),last_read_at=excluded.last_read_at`, user.ID, r.PathValue("id"), id, db.Now())
+	if scope.Kind == "channel" {
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO channel_reads(user_id,channel_id,last_read_message_id,last_read_at) VALUES(?,?,?,?) ON CONFLICT(user_id,channel_id) DO UPDATE SET last_read_message_id=max(last_read_message_id,excluded.last_read_message_id),last_read_at=excluded.last_read_at`, user.ID, r.PathValue("id"), id, db.Now())
+	} else {
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO conversation_reads(user_id,conversation_id,last_read_message_id,last_read_at) VALUES(?,?,?,?) ON CONFLICT(user_id,conversation_id) DO UPDATE SET last_read_message_id=max(last_read_message_id,excluded.last_read_message_id),last_read_at=excluded.last_read_at`, user.ID, scope.ID, id, db.Now())
+	}
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -150,6 +171,6 @@ func (s *Server) markRead(w http.ResponseWriter, r *http.Request, user db.User) 
 		s.failed(w, err)
 		return
 	}
-	s.hub.BroadcastToRevision([]string{user.ID}, revision, "unread.updated", map[string]string{"channel_id": r.PathValue("id")})
+	s.hub.BroadcastToRevision([]string{user.ID}, revision, "unread.updated", map[string]string{"channel_id": scope.ChannelID, "conversation_id": scope.ID})
 	respond(w, 200, map[string]bool{"ok": true})
 }

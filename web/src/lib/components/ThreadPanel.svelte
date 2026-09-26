@@ -74,9 +74,9 @@
 <Modal title="Reply thread" close={() => (workspace.threadId = '')} wide>
   <div class="thread-panel">
     <div class="thread-toolbar">
-      <span><Icon name="hash" size={16} />{workspace.channel?.name}</span>
+      <span><Icon name="hash" size={16} />{workspace.conversationName}</span>
       {#if replies.parent}<button class="text-button" onclick={() => workspace.jumpToMessage(id)}
-          >Show in channel <Icon name="chevronRight" size={14} /></button
+          >Show in conversation <Icon name="chevronRight" size={14} /></button
         >{/if}
     </div>
     {#if replies.error}<div class="thread-error" role="alert">

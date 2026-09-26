@@ -8,7 +8,9 @@ This is an alpha candidate. Automated integration and race checks and local brow
 
 For an ordered rollout and sign-off record covering both Windows and Docker, use the [production release runbook](docs/production-readiness.md).
 
-The current **0.4.0-alpha.5** candidate adds message reporting, channel slow mode, per-channel notification muting, explicit recovery for failed sends, and account removal that keeps conversation history under “Deleted member.” It includes focused reply discussions, a keyboard channel picker, roles and channel access controls. See the [community guide](docs/community-guide.md), [alpha.5 release record](docs/releases/0.4.0-alpha.5.md) and [verification](docs/acceptance.md).
+The packaged **0.4.0-alpha.5** checkpoint adds message reporting, channel slow mode, per-channel notification muting, explicit recovery for failed sends, and account removal that keeps conversation history under “Deleted member.” It includes focused reply discussions, a keyboard channel picker, roles and channel access controls. See the [community guide](docs/community-guide.md), [alpha.5 release record](docs/releases/0.4.0-alpha.5.md) and [verification](docs/acceptance.md).
+
+The current source candidate **0.4.0-alpha.6** adds opt-in consented direct messaging and blocking on the shared message pipeline (schema 12). See the [alpha.6 record](docs/releases/0.4.0-alpha.6.md) and [private conversation policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md). Its default feature gate remains off pending privacy acceptance.
 
 ## Start a server
 

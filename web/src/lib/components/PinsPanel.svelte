@@ -25,7 +25,7 @@
     error = '';
     loading = true;
     const admitted = workspace.authorizationGeneration;
-    api<Message[]>(`/channels/${workspace.activeId}/pins`)
+    api<Message[]>(workspace.conversationPath(workspace.activeId, 'pins'))
       .then((result) => {
         if (admitted !== workspace.authorizationGeneration) return;
         messages = result;
@@ -41,7 +41,7 @@
 </script>
 
 <Modal
-  title={`Pinned in #${workspace.channel?.name || 'channel'}`}
+  title={`Pinned in ${workspace.direct ? '' : '#'}${workspace.conversationName}`}
   close={() => (workspace.pinsOpen = false)}
 >
   {#if loading}<p class="muted" role="status">Loading pins…</p>

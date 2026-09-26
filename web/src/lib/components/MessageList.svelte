@@ -107,7 +107,7 @@
       if (workspace.atLatest) void workspace.markRead();
     }}
     role="log"
-    aria-label="Channel messages"
+    aria-label={workspace.direct ? 'Direct messages' : 'Channel messages'}
     aria-live="polite"
     aria-relevant="additions"
     aria-busy={workspace.messagesLoading || workspace.olderLoading}
@@ -134,8 +134,10 @@
       {#if !workspace.hasOlder && !workspace.viewingHistory && !workspace.messagesError}<div
           class="channel-welcome"
         >
-          <div class="channel-symbol"><Icon name="hash" size={35} /></div>
-          <h1>{workspace.channel?.name || 'Your community'}</h1>
+          <div class="channel-symbol">
+            <Icon name={workspace.direct ? 'users' : 'hash'} size={35} />
+          </div>
+          <h1>{workspace.conversationName}</h1>
           <p>{workspace.channel?.topic || 'This is the beginning of the conversation.'}</p>
           <span class="channel-start"
             >{workspace.messages.length ? 'THE CONVERSATION' : 'A FRESH START'}</span

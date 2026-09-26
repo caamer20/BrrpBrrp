@@ -46,6 +46,12 @@ var migration9 string
 //go:embed migration10.sql
 var migration10 string
 
+//go:embed migration11.sql
+var migration11 string
+
+//go:embed migration12.sql
+var migration12 string
+
 // Durability levels accepted for the SQLite synchronous pragma. The production
 // baseline is FULL so that a committed transaction survives an operating-system
 // crash or power loss on honest storage; NORMAL is available for disposable or
@@ -209,49 +215,8 @@ const UpgradeStateKey = "upgrade-state"
 // what keeps the pair honest: while it exists, every open re-runs the
 // postconditions and refuses to serve until they succeed.
 func (s *Store) Migrate(ctx context.Context) error {
-	tx, err := s.BeginTx(ctx, nil)
+	outstanding, err := s.applySchemaMigrations(ctx, 0)
 	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.ensureVersionTable(ctx, tx); err != nil {
-		return err
-	}
-	var version int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version > SchemaVersion {
-		return &UpgradeError{Version: version, Supported: SchemaVersion}
-	}
-	pending := PendingMigrations(version)
-	for _, migration := range pending {
-		if migration.SQL != "" {
-			if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
-				return fmt.Errorf("migration %d (%s): %w", migration.Version, migration.Name, err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES(?)`, migration.Version); err != nil {
-			return fmt.Errorf("migration %d (%s): recording version: %w", migration.Version, migration.Name, err)
-		}
-	}
-	// The record is read after the migrations have run, because a database that
-	// predates the settings table only has one once migration 1 has applied.
-	outstanding, err := upgradeOutstanding(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if len(pending) > 0 {
-		// The applied schema and the statement that its postconditions are still
-		// owed commit together. A crash after this point is a recoverable upgrade,
-		// not a silently advanced schema.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`,
-			UpgradeStateKey, fmt.Sprintf(`{"from":%d,"to":%d}`, version, SchemaVersion), Now()); err != nil {
-			return fmt.Errorf("recording the upgrade state: %w", err)
-		}
-		outstanding = true
-	}
-	if err := tx.Commit(); err != nil {
 		return err
 	}
 	if !outstanding {
@@ -318,6 +283,9 @@ func (s *Store) Verify(ctx context.Context) error {
 	}
 	if missing != 0 {
 		return fmt.Errorf("database has %d broken references", missing)
+	}
+	if err := verifyMessageScopes(ctx, s); err != nil {
+		return err
 	}
 	return s.VerifySearchIndex(ctx)
 }

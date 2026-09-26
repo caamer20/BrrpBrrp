@@ -2,9 +2,10 @@
 
 **Last updated:** 25 September 2026
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.5** (schema **10**, backup format **2**)
+**Candidate:** **0.4.0-alpha.6** (schema **12**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
-**Current evidence:** [alpha.5 release record](releases/0.4.0-alpha.5.md)
+**Current evidence:** [alpha.6 release record](releases/0.4.0-alpha.6.md)
+**Prior packaged checkpoint:** [alpha.5](releases/0.4.0-alpha.5.md)
 **Historical finding record:** [completion-remediation-2026-09-24.md](completion-remediation-2026-09-24.md)
 **Assessment:** substantial local implementation progress; no G0–G8 release gate has passed. Earlier dated reviews describe their inspected snapshot. They do not override this candidate's implementation or supply missing host/independent acceptance.
 
@@ -19,6 +20,10 @@ that order: "complete on this machine" means code plus local tests, never a host
 rehearsal, platform acceptance or review. The finding-by-finding record, including
 the evidence level of each claim and the acceptance test that pins it, is in
 [the remediation ledger](completion-remediation-2026-09-24.md). The dated completion reviews remain historical evidence; the release record above is the current implementation checkpoint.
+
+## Current private-message tranche
+
+Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canonical direct requests, consent, durable contact limits, blocking, shared message/file/reply/search/read behavior and an opt-in inbox. This is partial progress in WP-09–11, not completed private messaging or v1 acceptance: private reports/push policy, groups, calls and independent review remain. Private conversations default off. The package-status table below retains the earlier alpha.5 foundation assessment where unaffected.
 
 ## Status summary
 

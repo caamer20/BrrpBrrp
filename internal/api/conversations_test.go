@@ -16,7 +16,7 @@ func TestReplyContextPinsAndDeletion(t *testing.T) {
 	ids := make([]string, 61)
 	for i := range ids {
 		ids[i] = db.ID()
-		if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?)`, ids[i], channel, user, fmt.Sprintf("message %d", i), db.Now(), fmt.Sprint(i)); err != nil {
+		if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,conversation_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?)`, ids[i], channel, channel, user, fmt.Sprintf("message %d", i), db.Now(), fmt.Sprint(i)); err != nil {
 			t.Fatal(err)
 		}
 	}

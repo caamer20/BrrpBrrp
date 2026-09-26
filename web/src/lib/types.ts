@@ -107,6 +107,7 @@ export interface Embed {
 export interface Message {
   id: string;
   channel_id: string;
+  conversation_id?: string;
   user_id: string;
   content: string;
   created_at: string;
@@ -177,18 +178,46 @@ export interface Authorization {
   ownership_established: boolean;
 }
 
+// Private destinations are conversations, never fabricated community channels.
+export interface DirectConversation {
+  id: string;
+  kind: 'direct';
+  state: string;
+  peer: User;
+  can_read: boolean;
+  can_write: boolean;
+  blocked_by_me: boolean;
+  blocked: boolean;
+  request_state: 'pending' | 'accepted' | 'rejected';
+  request_direction: 'incoming' | 'outgoing' | 'none';
+  introduction: string;
+  hidden: boolean;
+  updated_at: string;
+  count: number;
+  mentions: number;
+  last_read_message_id?: string;
+}
+
 export interface WorkspaceState {
   user: User;
   channels: Channel[];
   users: User[];
   settings: Settings;
-  unread: { channel_id: string; count: number; mentions: number; last_read_message_id: string }[];
+  unread: {
+    channel_id: string;
+    conversation_id?: string;
+    count: number;
+    mentions: number;
+    last_read_message_id: string;
+  }[];
   presence: Record<string, string>;
   voice_states: VoiceState[];
   reaction_palette: string[];
   push_public_key: string;
   categories: Category[];
   authorization: Authorization;
+  features?: { private_conversations: boolean };
+  conversations?: DirectConversation[];
 }
 
 export interface RealtimeEvent {

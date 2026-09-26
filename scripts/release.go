@@ -18,7 +18,7 @@ import (
 
 func main() {
 	targets := flag.String("targets", "linux/amd64,linux/arm64,windows/amd64,windows/arm64,darwin/amd64,darwin/arm64", "comma-separated OS/architecture targets")
-	version := flag.String("version", "0.4.0-alpha.5", "release version")
+	version := flag.String("version", "0.4.0-alpha.6", "release version")
 	noticesOnly := flag.String("notices", "", "write dependency notices to this file without building packages")
 	sourceList := flag.Bool("source-list", false, "print the source-package contents (one path per line) without building anything")
 	nativeList := flag.String("native-list", "", "print the documents a native package for this GOOS ships (one path per line) without building anything")

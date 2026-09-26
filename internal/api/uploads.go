@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"brrpbrrp/internal/app"
+	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
 )
 
@@ -26,6 +27,12 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !s.limiter.allow("upload:"+user.ID, 10, time.Minute) {
 		problem(w, 429, "Upload limit reached. Try again in a minute.")
 		return
+	}
+	scopeID := r.URL.Query().Get("conversation_id")
+	if scopeID != "" {
+		if _, _, ok := s.requireScope(w, r, user, scopeID, true); !ok {
+			return
+		}
 	}
 	limit := min(s.config.MaxUploadBytes, s.Settings().MaxUploadBytes)
 	r.Body = http.MaxBytesReader(w, r.Body, limit+(64<<10))
@@ -96,10 +103,35 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 		s.failed(w, err)
 		return
 	}
-	_, err = s.store.Exec(`INSERT INTO attachments(id,uploader_id,file_name,stored_name,file_size,mime_type,created_at) VALUES(?,?,?,?,?,?,?)`, id, user.ID, name, id, size, contentType, db.Now())
+	tx, err := s.store.BeginTx(r.Context(), nil)
 	if err != nil {
-		// Without the row the published file has no owner, so it is removed here
-		// rather than waiting for the hourly orphan sweep.
+		_ = os.Remove(published)
+		s.failed(w, err)
+		return
+	}
+	defer tx.Rollback()
+	var principal authz.Principal
+	if scopeID != "" {
+		_, principal, err = s.scopeInTx(r.Context(), tx, user, scopeID, true)
+	} else {
+		principal, err = s.authorizeInTx(r.Context(), tx, user)
+	}
+	// Destination access and the route capability are separate permissions.
+	// Uploading bytes can outlast either one; both must still authorize the row
+	// that promises those bytes when this transaction commits.
+	if err == nil && !principal.Allowed(authz.MessageUpload) {
+		err = authz.Denial{Reason: "Your role does not include message.upload."}
+	}
+	if err != nil {
+		_ = os.Remove(published)
+		s.scopeFailed(w, err)
+		return
+	}
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO attachments(id,uploader_id,file_name,stored_name,file_size,mime_type,created_at,staged_conversation_id) VALUES(?,?,?,?,?,?,?,NULLIF(?,''))`, id, user.ID, name, id, size, contentType, db.Now(), scopeID)
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
 		_ = os.Remove(published)
 		s.failed(w, err)
 		return
@@ -124,7 +156,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, user db.User) 
 		// The channel is read without an authorization decision: it only tags the
 		// stream for a channel-wide revocation, and the request still has to pass the
 		// message's access check below.
-		if err := s.store.QueryRowContext(r.Context(), `SELECT channel_id FROM messages WHERE id=?`, attachment.MessageID).Scan(&channelID); err != nil {
+		if err := s.store.QueryRowContext(r.Context(), `SELECT conversation_id FROM messages WHERE id=?`, attachment.MessageID).Scan(&channelID); err != nil {
 			channelID = ""
 		}
 	}
@@ -151,7 +183,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, user db.User) 
 			return
 		}
 	} else {
-		_, channel, ok := s.requireMessage(w, r, principal, attachment.MessageID)
+		_, _, ok := s.requireMessage(w, r, principal, attachment.MessageID)
 		if !ok {
 			// Access is resolved now, through the file's current conversation. A
 			// retained URL cannot outlive the access that produced it, and a
@@ -159,7 +191,6 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, user db.User) 
 			// response through the context above.
 			return
 		}
-		channelID = channel.ID
 	}
 	path, err := app.Contained(s.config.DataDir, filepath.Join(s.config.UploadDir, storedName))
 	if err != nil {

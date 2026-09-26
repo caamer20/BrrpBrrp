@@ -41,19 +41,24 @@
   let editInput = $state<HTMLTextAreaElement>();
   let editButton = $state<HTMLButtonElement>();
   let moreButton = $state<HTMLButtonElement>();
-  let author = $derived(workspace.state?.users.find((user) => user.id === message.user_id));
+  let author = $derived(workspace.userFor(message.user_id));
   let own = $derived(message.user_id === workspace.user?.id);
-  let canDelete = $derived(own || workspace.can('message.delete_any'));
+  let direct = $derived(workspace.isDirect(workspace.conversationId(message)));
+  let canWrite = $derived(
+    !workspace.authorizationUnverified &&
+      workspace.canWriteConversation(workspace.conversationId(message))
+  );
+  let canDelete = $derived(own || (!direct && workspace.can('message.delete_any')));
   // Pinning is a moderation capability, not an administrator flag: a delegated
   // moderator sees the control and the server accepts it.
-  let canPin = $derived(workspace.can('message.pin'));
+  let canPin = $derived(canWrite && workspace.can('message.pin'));
   let reply = $derived(workspace.messages.find((item) => item.id === message.reply_to_id));
   const tokens = (text: string) => text.split(/(https?:\/\/[^\s<>]+|@[a-zA-Z0-9_]+)/g);
   const size = (bytes: number) =>
     bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
 
   async function react(emoji: string) {
-    if (reacting) return;
+    if (reacting || !canWrite) return;
     reacting = true;
     try {
       await api(`/messages/${message.id}/reactions`, 'POST', { emoji });
@@ -67,7 +72,7 @@
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
-    if (saving || (!editText.trim() && !message.attachments.length)) return;
+    if (saving || !canWrite || (!editText.trim() && !message.attachments.length)) return;
     saving = true;
     try {
       await api(`/messages/${message.id}`, 'PATCH', { content: editText });
@@ -250,7 +255,7 @@
         {#each message.reactions as reaction (reaction.emoji)}<button
             class:mine={reaction.mine}
             aria-pressed={reaction.mine}
-            disabled={reacting}
+            disabled={reacting || !canWrite}
             title={`${reactionName(reaction.emoji)} · ${reaction.count}${reaction.mine ? ' · Click to remove your reaction' : ''}`}
             aria-label={`${reactionName(reaction.emoji)}, ${reaction.count} reactions${reaction.mine ? ', including yours' : ''}`}
             onclick={() => react(reaction.emoji)}
@@ -282,12 +287,12 @@
       >{/if}
   </div>
   {#if !message.pending && !editing}<div class="message-actions">
-      <button
-        class="icon-button"
-        aria-label="Report message"
-        title="Report message"
-        onclick={() => (reportOpen = true)}><Icon name="shield" size={17} /></button
-      >
+      {#if !direct}<button
+          class="icon-button"
+          aria-label="Report message"
+          title="Report message"
+          onclick={() => (reportOpen = true)}><Icon name="shield" size={17} /></button
+        >{/if}
       <button
         class="icon-button"
         aria-label="Reply to message"
@@ -311,10 +316,10 @@
         bind:this={reactionButton}
         aria-label="Add reaction"
         title="Add reaction"
-        disabled={reacting}
+        disabled={reacting || !canWrite}
         onclick={() => (pickerOpen = true)}><Icon name="smile" size={18} /></button
       >
-      {#if own}<button
+      {#if own && canWrite}<button
           class="icon-button"
           title="Edit message"
           aria-label="Edit message"
@@ -344,12 +349,12 @@
       <p>{message.content || 'Attachment'}</p>
     </div>
     <div class="message-action-menu">
-      <button
-        onclick={() => {
-          moreOpen = false;
-          reportOpen = true;
-        }}><Icon name="shield" />Report message</button
-      >
+      {#if !direct}<button
+          onclick={() => {
+            moreOpen = false;
+            reportOpen = true;
+          }}><Icon name="shield" />Report message</button
+        >{/if}
       <button onclick={replyToMessage}><Icon name="reply" />Reply</button>
       {#if showThread}<button onclick={openThread}><Icon name="hash" />Open reply thread</button
         >{/if}
@@ -357,7 +362,8 @@
         onclick={() => {
           moreOpen = false;
           pickerOpen = true;
-        }}><Icon name="smile" />Add reaction</button
+        }}
+        disabled={!canWrite}><Icon name="smile" />Add reaction</button
       >
       {#if canPin}<button
           onclick={() => {
@@ -365,7 +371,8 @@
             void pin();
           }}><Icon name="pin" />{message.pinned ? 'Unpin message' : 'Pin message'}</button
         >{/if}
-      {#if own}<button onclick={beginEdit}><Icon name="edit" />Edit message</button>{/if}
+      {#if own && canWrite}<button onclick={beginEdit}><Icon name="edit" />Edit message</button
+        >{/if}
       {#if canDelete}<button
           class="danger-text"
           onclick={() => {

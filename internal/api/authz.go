@@ -130,11 +130,11 @@ func (s *Server) requireMessage(w http.ResponseWriter, r *http.Request, principa
 		s.failed(w, err)
 		return db.Message{}, db.Channel{}, false
 	}
-	channel, _, ok := s.requireChannel(w, r, principal, message.ChannelID)
+	scope, _, ok := s.requireScope(w, r, db.User{ID: principal.UserID}, message.ConversationID, false)
 	if !ok {
 		return db.Message{}, db.Channel{}, false
 	}
-	return message, channel, true
+	return message, scope.Channel, true
 }
 
 // authorizeInTx re-resolves authority inside a security-sensitive write

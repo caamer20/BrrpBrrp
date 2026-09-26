@@ -32,10 +32,11 @@ type Config struct {
 	// RestrictedChannels exposes private community channels and their access
 	// grants through the API. It stays off by default so an incomplete privacy
 	// surface is never reachable by users before the privacy gate passes.
-	RestrictedChannels bool
-	TrustedProxies     []netip.Prefix
-	MaxUploadBytes     int64
-	LoginAttempts      int
+	RestrictedChannels   bool
+	PrivateConversations bool
+	TrustedProxies       []netip.Prefix
+	MaxUploadBytes       int64
+	LoginAttempts        int
 	// SQLiteSynchronous is the durability level for committed transactions. The
 	// production baseline is FULL: a commit survives an operating-system crash or
 	// power loss on honest storage. NORMAL is available for disposable or
@@ -74,6 +75,9 @@ func LoadConfig() (Config, error) {
 		return c, err
 	}
 	if c.RestrictedChannels, err = boolean("BRRP_ENABLE_RESTRICTED_CHANNELS"); err != nil {
+		return c, err
+	}
+	if c.PrivateConversations, err = boolean("BRRP_ENABLE_PRIVATE_CONVERSATIONS"); err != nil {
 		return c, err
 	}
 	c.SQLiteSynchronous = strings.ToUpper(env("BRRP_SQLITE_SYNCHRONOUS", db.DurabilityFull))

@@ -36,6 +36,9 @@ export default defineConfig({
     { name: 'release', testMatch: 'release.spec.mjs' },
     { name: 'authority', testMatch: 'authority.spec.mjs', dependencies: ['release'] },
     { name: 'privacy', testMatch: 'privacy.spec.mjs', dependencies: ['release'] },
+    ...(process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1'
+      ? [{ name: 'directs', testMatch: 'directs.spec.mjs', dependencies: ['release'] }]
+      : []),
     { name: 'voice', testMatch: 'voice.spec.mjs', dependencies: ['release'] },
     { name: 'account-switch', testMatch: 'account-switch.spec.mjs', dependencies: ['release'] },
     { name: 'ownership', testMatch: 'ownership.spec.mjs', dependencies: ['release'] }

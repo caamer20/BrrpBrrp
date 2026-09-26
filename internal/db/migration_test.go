@@ -349,7 +349,7 @@ func TestVerifyDetectsGapsAndIndexDamage(t *testing.T) {
 	for _, statement := range []string{
 		`INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES('u1','alex','hash','now','now')`,
 		`INSERT INTO channels(id,name,type,created_at,updated_at) VALUES('c1','general','text','now','now')`,
-		`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES('018f0000-0000-7000-8000-00000000000a','c1','u1','indexed text','now','key')`,
+		`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key) VALUES('018f0000-0000-7000-8000-00000000000a','c1','c1','u1','indexed text','now','key')`,
 	} {
 		if _, err := store.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -361,7 +361,7 @@ func TestVerifyDetectsGapsAndIndexDamage(t *testing.T) {
 	if _, err := store.Exec(`DROP TRIGGER messages_insert`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES('018f0000-0000-7000-8000-00000000000b','c1','u1','unindexed text','now','key2')`); err != nil {
+	if _, err := store.Exec(`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key) VALUES('018f0000-0000-7000-8000-00000000000b','c1','c1','u1','unindexed text','now','key2')`); err != nil {
 		t.Fatal(err)
 	}
 	// A missing index entry is invisible to structural verification, so the

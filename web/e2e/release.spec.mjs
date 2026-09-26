@@ -32,6 +32,19 @@ test('first setup, persistent chat, search and sign-out', async ({ page, context
 
   const composer = page.getByRole('textbox', { name: 'Message general' });
   await expect(composer).toBeVisible();
+  const privateEnabled = process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1';
+  const featureState = await (await page.request.get('/api/state')).json();
+  expect(featureState.features.private_conversations).toBe(privateEnabled);
+  if (privateEnabled)
+    await expect(
+      page.getByRole('button', { name: 'Messages and requests', exact: true })
+    ).toBeVisible();
+  else {
+    await expect(
+      page.getByRole('button', { name: 'Messages and requests', exact: true })
+    ).toHaveCount(0);
+    expect((await page.request.get('/api/directs')).status()).toBe(409);
+  }
   await expectAccessible(page);
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');

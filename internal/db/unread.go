@@ -5,10 +5,11 @@ import "context"
 // UnreadCount is the client-facing unread shape for one conversation. It is
 // defined next to the query so state and the lightweight endpoint cannot drift.
 type UnreadCount struct {
-	ChannelID string `json:"channel_id"`
-	Count     int    `json:"count"`
-	Mentions  int    `json:"mentions"`
-	LastRead  string `json:"last_read_message_id"`
+	ChannelID      string `json:"channel_id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Count          int    `json:"count"`
+	Mentions       int    `json:"mentions"`
+	LastRead       string `json:"last_read_message_id"`
 }
 
 // UnreadCounts counts unseen activity per readable channel. The access condition

@@ -10,6 +10,13 @@
   const helpId = `${componentId}-help`;
   const mentionsId = `${componentId}-mentions`;
   let scope = $derived(thread ? `thread:${thread.id}` : workspace.activeId);
+  let readOnly = $derived(
+    unavailable ||
+      workspace.authorizationUnverified ||
+      !workspace.canWriteConversation(
+        thread ? workspace.conversationId(thread) : workspace.activeId
+      )
+  );
 
   let text = $state('');
   let attachments = $state<Attachment[]>([]);
@@ -26,7 +33,7 @@
   let mentionIndex = $state(0);
   let matches = $derived(
     mention
-      ? (workspace.state?.users || [])
+      ? (workspace.direct ? [workspace.user!, workspace.direct.peer] : workspace.state?.users || [])
           .filter(
             (user) =>
               !user.is_banned &&
@@ -87,9 +94,11 @@
   }
 
   async function attach(files: FileList | File[] | null) {
-    if (!files || progress !== null || unavailable) return;
+    if (!files || progress !== null || readOnly) return;
     const channel = scope;
-    const channelName = workspace.channel?.name || 'channel';
+    const destination = thread ? workspace.conversationId(thread) : workspace.activeId;
+    const generation = workspace.authorizationGeneration;
+    const channelName = workspace.conversationName;
     uploadChannelName = channelName;
     let savedElsewhere = false;
     for (const file of Array.from(files)) {
@@ -110,7 +119,16 @@
       workspace.uploadCount++;
       uploadName = file.name;
       try {
-        const attachment = await uploadFile<Attachment>(file, (value) => (progress = value));
+        const attachment = await uploadFile<Attachment>(
+          file,
+          (value) => (progress = value),
+          workspace.isDirect(destination) ? destination : undefined
+        );
+        if (
+          generation !== workspace.authorizationGeneration ||
+          !workspace.canWriteConversation(destination)
+        )
+          return;
         if (workspace.composerDrafts !== drafts) return;
         if (mounted && channel === draftChannel) attachments = [...attachments, attachment];
         else {
@@ -133,7 +151,7 @@
   }
 
   function send() {
-    if ((!text.trim() && !attachments.length) || progress !== null || unavailable) return;
+    if ((!text.trim() && !attachments.length) || progress !== null || readOnly) return;
     const content = text.trim();
     const uploaded = attachments;
     text = '';
@@ -148,6 +166,10 @@
 </script>
 
 <div class="composer-area" class:thread-composer={!!thread}>
+  {#if workspace.direct && readOnly}<p class="upload-status" role="status">
+      This conversation is read-only. You can read earlier messages and copy your drafts; sending
+      resumes only when both participants can write.
+    </p>{/if}
   {#if unavailable}<p class="upload-status" role="status">
       This discussion was removed. Copy your unsent text before closing.
     </p>{/if}
@@ -231,7 +253,7 @@
         class="icon-button attach-button"
         aria-label="Attach files"
         title="Attach up to 5 files"
-        disabled={progress !== null || unavailable}
+        disabled={progress !== null || readOnly}
         onclick={() => fileInput.click()}><Icon name="plus" /></button
       >
       <textarea
@@ -239,13 +261,15 @@
         bind:value={text}
         rows="1"
         maxlength="4000"
-        aria-label={thread ? 'Reply in thread' : `Message ${workspace.channel?.name || 'channel'}`}
+        aria-label={thread ? 'Reply in thread' : `Message ${workspace.conversationName}`}
         aria-describedby={helpId}
         placeholder={dragging
           ? 'Drop files to attach'
           : thread
             ? 'Continue this conversation…'
-            : `Message #${workspace.channel?.name || 'channel'}`}
+            : workspace.direct
+              ? `Message ${workspace.conversationName}`
+              : `Message #${workspace.conversationName}`}
         aria-controls={matches.length ? mentionsId : undefined}
         oninput={changed}
         onclick={() => (mention = null)}
@@ -290,7 +314,7 @@
         class="send-button"
         aria-label={thread ? 'Send reply' : 'Send message'}
         title="Send message"
-        disabled={(!text.trim() && !attachments.length) || progress !== null || unavailable}
+        disabled={(!text.trim() && !attachments.length) || progress !== null || readOnly}
         onclick={send}><Icon name="send" size={19} /></button
       >
     </div>

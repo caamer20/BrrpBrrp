@@ -426,6 +426,10 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request, actor db.Use
 	// Ownership is not deletable even if a decision above were wrong: the
 	// statement itself refuses the designated owner, so no account-management
 	// request can remove it.
+	if err := cancelPendingDirectRequests(r.Context(), tx, target.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
 	result, err := tx.Exec(`DELETE FROM users WHERE id=? AND is_owner=0`, target.ID)
 	if err != nil {
 		s.failed(w, err)
@@ -756,7 +760,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request, user db.User) {
 	var memory runtime.MemStats
 	runtime.ReadMemStats(&memory)
 	var messages int
-	if err := s.store.QueryRow(`SELECT count(*) FROM messages`).Scan(&messages); err != nil {
+	if err := s.store.QueryRow(`SELECT count(*) FROM messages WHERE channel_id IS NOT NULL`).Scan(&messages); err != nil {
 		s.failed(w, err)
 		return
 	}

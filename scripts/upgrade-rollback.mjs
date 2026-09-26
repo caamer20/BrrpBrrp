@@ -13,9 +13,9 @@
 //      an uploaded file and its bytes)
 //   2. snapshot that installation with the OLD executable — this archive is the only
 //      supported rollback source — and read it with the candidate's reader
-//   3. snapshot the same installation with the candidate, and prove the candidate's
-//      archive is format 2 and therefore NOT a rollback archive: the old executable
-//      refuses it, and the snapshot itself did not migrate the database
+//   3. snapshot the same installation with the candidate, prove the snapshot did not
+//      migrate the database, and check whether the prior reader accepts its format:
+//      a newer format must be refused, while a compatible format remains readable
 //   4. upgrade with the candidate, then verify and serve the upgraded installation and
 //      prove every dataset row survived, including the exact attachment bytes
 //   5. record what changed after the snapshot, so the data-loss boundary of a rollback
@@ -25,7 +25,8 @@
 //      is not asked to repair a prior-version folder
 //
 // What this cannot establish, and does not claim: Windows or container lifecycles, an
-// interrupted upgrade, off-host recovery, capacity or measured RPO/RTO.
+// physical process interruption during an upgrade, off-host recovery, capacity or
+// measured RPO/RTO. Step 7 injects unfinished postconditions deterministically.
 //
 // Usage:
 //   node scripts/upgrade-rollback.mjs [--old-release ZIP] [--old-binary PATH]
@@ -511,6 +512,11 @@ async function main() {
 
   say("");
   say("2. Snapshot the installation with the prior release (the rollback source)");
+  const preflightBefore = await run(candidateBinary, ["preflight", "--data-dir", rollbackDir]);
+  const beforeReport = JSON.parse((preflightBefore.stdout ?? "{}").replace(/^[^{]*/, ""));
+  check("the baseline schema is known before either snapshot",
+    preflightBefore.status === 0 && Number.isInteger(beforeReport.schema_version) && beforeReport.schema_version > 0,
+    `schema ${beforeReport.schema_version} of ${beforeReport.supported_schema_version}`);
   const oldBackup = await run(oldBinary, ["backup", "--data-dir", rollbackDir, "--out", "backups/rollback.zip"]);
   const rollbackArchive = path.join(rollbackDir, "backups/rollback.zip");
   check("the prior release wrote an archive", oldBackup.status === 0 && existsSync(rollbackArchive),
@@ -518,12 +524,16 @@ async function main() {
   const rollbackDigest = existsSync(rollbackArchive) ? fileDigest(rollbackArchive) : "";
   const readRollback = await run(candidateBinary, ["verify-backup", "--file", rollbackArchive]);
   const rollbackFormat = /format (\d+)/.exec(readRollback.stdout ?? "");
+  const rollbackSchema = /schema (\d+)/.exec(readRollback.stdout ?? "");
   check("the candidate reads the old archive", readRollback.status === 0, `${(readRollback.stdout ?? "").split("\n")[1]?.trim() ?? (readRollback.stderr ?? "").trim()}`);
-  check("the old archive is the older backup format", rollbackFormat && Number(rollbackFormat[1]) < 2,
+  check("the old archive reports its backup format", rollbackFormat && Number(rollbackFormat[1]) > 0,
     rollbackFormat ? `format ${rollbackFormat[1]}` : "format not reported");
+  check("the old archive's schema metadata agrees with the baseline",
+    rollbackSchema ? Number(rollbackSchema[1]) === beforeReport.schema_version : rollbackFormat?.[1] === "1",
+    rollbackSchema ? `schema ${rollbackSchema[1]}` : `format 1 omits schema metadata; preflight measured schema ${beforeReport.schema_version}`);
 
   say("");
-  say("3. The candidate's own snapshot of the same installation is not a rollback archive");
+  say("3. Check the candidate snapshot's schema and prior-reader compatibility");
   const candidateBackup = await run(candidateBinary, ["backup", "--data-dir", rollbackDir, "--out", "backups/candidate.zip"]);
   const candidateArchive = path.join(rollbackDir, "backups/candidate.zip");
   check("the candidate wrote an archive", candidateBackup.status === 0 && existsSync(candidateArchive),
@@ -532,20 +542,39 @@ async function main() {
   const candidateHeader = (readCandidateArchive.stdout ?? "").split("\n")[1]?.trim() ?? "";
   const candidateFormat = /format (\d+)/.exec(candidateHeader);
   const candidateSnapshotSchema = /schema (\d+)/.exec(candidateHeader);
-  check("the candidate's archive is the current backup format", candidateFormat && Number(candidateFormat[1]) === 2,
+  check("the candidate verifies its own archive and reports its format",
+    readCandidateArchive.status === 0 && candidateFormat && Number(candidateFormat[1]) > 0,
     candidateHeader || (readCandidateArchive.stderr ?? "").trim());
   check("snapshotting an un-migrated installation did not migrate it",
-    candidateSnapshotSchema !== null && Number(candidateSnapshotSchema[1]) < 5,
+    candidateSnapshotSchema !== null && Number(candidateSnapshotSchema[1]) === beforeReport.schema_version,
     candidateSnapshotSchema ? `recorded schema ${candidateSnapshotSchema[1]}` : "schema not reported");
-  const preflightBefore = await run(candidateBinary, ["preflight", "--data-dir", rollbackDir]);
-  const beforeReport = JSON.parse((preflightBefore.stdout ?? "{}").replace(/^[^{]*/, ""));
-  check("the installation is still at the prior schema", beforeReport.schema_version < beforeReport.supported_schema_version,
-    `schema ${beforeReport.schema_version} of ${beforeReport.supported_schema_version}, ${beforeReport.pending_migrations?.length ?? 0} pending`);
+  const preflightAfterSnapshots = await run(candidateBinary, ["preflight", "--data-dir", rollbackDir]);
+  const afterSnapshots = JSON.parse((preflightAfterSnapshots.stdout ?? "{}").replace(/^[^{]*/, ""));
+  check("the installation is still at the prior schema",
+    preflightAfterSnapshots.status === 0 && afterSnapshots.schema_version === beforeReport.schema_version &&
+      afterSnapshots.schema_version < afterSnapshots.supported_schema_version,
+    `schema ${afterSnapshots.schema_version} of ${afterSnapshots.supported_schema_version}, ${afterSnapshots.pending_migrations?.length ?? 0} pending`);
   copyFileSync(candidateArchive, path.join(refusedDir, "candidate.zip"));
   const oldRestoreOfCandidate = await run(oldBinary, ["restore", "--data-dir", refusedDir, "--file", "candidate.zip"]);
-  check("the prior release refuses the candidate's archive",
-    oldRestoreOfCandidate.status !== 0 && /unsupported backup format/i.test((oldRestoreOfCandidate.stderr ?? "") + (oldRestoreOfCandidate.stdout ?? "")),
-    (oldRestoreOfCandidate.stderr ?? "").trim().split("\n")[0] || "no refusal reported");
+  const newerCandidateFormat = candidateFormat && rollbackFormat && Number(candidateFormat[1]) > Number(rollbackFormat[1]);
+  if (newerCandidateFormat) {
+    check("the prior release refuses the candidate's newer backup format",
+      oldRestoreOfCandidate.status !== 0 && /unsupported backup format/i.test((oldRestoreOfCandidate.stderr ?? "") + (oldRestoreOfCandidate.stdout ?? "")),
+      (oldRestoreOfCandidate.stderr ?? "").trim().split("\n")[0] || "no refusal reported");
+  } else {
+    check("the prior release restores the candidate's compatible pre-upgrade archive",
+      candidateFormat && rollbackFormat && Number(candidateFormat[1]) === Number(rollbackFormat[1]) && oldRestoreOfCandidate.status === 0,
+      `exit ${oldRestoreOfCandidate.status}, formats ${rollbackFormat?.[1]} -> ${candidateFormat?.[1]}`);
+    const compatiblePreflight = await run(candidateBinary, ["preflight", "--data-dir", refusedDir]);
+    const compatibleReport = JSON.parse((compatiblePreflight.stdout ?? "{}").replace(/^[^{]*/, ""));
+    check("the compatible candidate archive restores the unchanged baseline schema",
+      compatiblePreflight.status === 0 && compatibleReport.schema_version === beforeReport.schema_version,
+      `schema ${compatibleReport.schema_version}`);
+    const compatibleVerify = await run(oldBinary, ["verify", "--data-dir", refusedDir]);
+    check("the prior release verifies the compatible candidate archive's restored data",
+      compatibleVerify.status === 0,
+      (compatibleVerify.stdout || compatibleVerify.stderr).trim().split("\n").at(-1));
+  }
 
   say("");
   say("4. Upgrade with the candidate and prove the dataset survived");
@@ -762,6 +791,7 @@ async function main() {
         bytes: existsSync(rollbackArchive) ? statSync(rollbackArchive).size : 0,
         sha256: rollbackDigest,
         format: rollbackFormat ? Number(rollbackFormat[1]) : null,
+        schema: rollbackSchema ? Number(rollbackSchema[1]) : null,
         written_by: "the prior release, from the un-migrated installation",
       },
       candidate: {
@@ -769,6 +799,7 @@ async function main() {
         sha256: existsSync(candidateArchive) ? fileDigest(candidateArchive) : "",
         format: candidateFormat ? Number(candidateFormat[1]) : null,
         schema: candidateSnapshotSchema ? Number(candidateSnapshotSchema[1]) : null,
+        prior_reader_compatible: !newerCandidateFormat && oldRestoreOfCandidate.status === 0,
         written_by: "the candidate, from the same un-migrated installation",
       },
     },
@@ -832,5 +863,6 @@ try {
   console.error(`Workspace kept for inspection: ${workDirForCleanup ?? "(not created)"}`);
   process.exit(1);
 }
-if (!options.keep) rmSync(outcome.workDir, { recursive: true, force: true });
+if (!options.keep && outcome.summary.passed) rmSync(outcome.workDir, { recursive: true, force: true });
 else say(`Workspace kept: ${outcome.workDir}`);
+process.exitCode = outcome.summary.passed ? 0 : 1;

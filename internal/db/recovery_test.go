@@ -73,8 +73,8 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 		t.Fatal(err)
 	}
 	for index := 0; index < 2; index++ {
-		if _, err := store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?)`,
-			ID(), channel, fixture.memberID, "member history", Now(), ID()); err != nil {
+		if _, err := store.Exec(`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?)`,
+			ID(), channel, channel, fixture.memberID, "member history", Now(), ID()); err != nil {
 			t.Fatal(err)
 		}
 	}

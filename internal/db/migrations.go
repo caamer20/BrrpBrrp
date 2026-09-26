@@ -3,11 +3,14 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Migration is one ordered schema change. Migrations are append-only: never
@@ -17,6 +20,9 @@ type Migration struct {
 	Version int
 	Name    string
 	SQL     string
+	// RebuildsReferences requires foreign_keys=OFF before BEGIN on the exact
+	// connection that runs this migration, plus integrity checks before commit.
+	RebuildsReferences bool
 }
 
 // Migrations is the complete ordered list of schema changes this binary can
@@ -32,6 +38,8 @@ var Migrations = []Migration{
 	{Version: 8, Name: "channel slow mode and durable send clocks", SQL: migration8},
 	{Version: 9, Name: "community message reports and review evidence", SQL: migration9},
 	{Version: 10, Name: "account-scoped channel notification preferences", SQL: migration10},
+	{Version: 11, Name: "required conversation scope and nullable channel message projection", SQL: migration11, RebuildsReferences: true},
+	{Version: 12, Name: "direct consent, blocking, preferences and read cursors", SQL: migration12},
 }
 
 // SchemaVersion is the newest schema this binary writes and understands.
@@ -89,29 +97,138 @@ func CreateSchemaFixture(path string, version int) error {
 	defer database.Close()
 	database.SetMaxOpenConns(1)
 	store := &Store{database}
-	ctx := context.Background()
-	tx, err := store.BeginTx(ctx, nil)
+	_, err = store.applySchemaMigrations(context.Background(), version)
+	return err
+}
+
+// applySchemaMigrations owns one pinned connection through the schema commit and
+// restoration of its original foreign-key setting. A fixtureVersion greater
+// than zero creates only that historical schema and omits the runtime upgrade
+// marker. Production uses zero and retains the existing all-or-nothing batch.
+func (s *Store) applySchemaMigrations(ctx context.Context, fixtureVersion int) (outstanding bool, resultErr error) {
+	conn, err := s.Conn(ctx)
 	if err != nil {
-		return err
+		return false, err
+	}
+	defer conn.Close()
+	var exists, version int
+	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`).Scan(&exists); err != nil {
+		return false, err
+	}
+	if exists != 0 {
+		if err := conn.QueryRowContext(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&version); err != nil {
+			return false, err
+		}
+	}
+	if version > SchemaVersion {
+		return false, &UpgradeError{Version: version, Supported: SchemaVersion}
+	}
+	pending := PendingMigrations(version)
+	if fixtureVersion > 0 {
+		for i, migration := range pending {
+			if migration.Version > fixtureVersion {
+				pending = pending[:i]
+				break
+			}
+		}
+	}
+	rebuild := false
+	for _, migration := range pending {
+		rebuild = rebuild || migration.RebuildsReferences
+	}
+	if rebuild {
+		var original int
+		if err := conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&original); err != nil {
+			return false, err
+		}
+		// Install cleanup before changing the setting: even a cancelled Exec may
+		// have executed its pragma. Cleanup uses an independent bounded context.
+		defer func() {
+			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_, err := conn.ExecContext(restoreCtx, fmt.Sprintf("PRAGMA foreign_keys=%d", original))
+			if err == nil {
+				var restored int
+				err = conn.QueryRowContext(restoreCtx, `PRAGMA foreign_keys`).Scan(&restored)
+				if err == nil && restored != original {
+					err = errors.New("foreign-key setting was not restored")
+				}
+			}
+			if err != nil {
+				// Never return a connection with weakened enforcement to the pool.
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+				resultErr = errors.Join(resultErr, fmt.Errorf("restoring migration connection: %w", err))
+			}
+		}()
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return false, err
+		}
+		var enabled int
+		if err := conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&enabled); err != nil {
+			return false, err
+		}
+		if enabled != 0 {
+			return false, errors.New("foreign-key enforcement could not be suspended before table rebuild")
+		}
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
 	}
 	defer tx.Rollback()
-	if err := store.ensureVersionTable(ctx, tx); err != nil {
-		return err
+	if err := s.ensureVersionTable(ctx, tx); err != nil {
+		return false, err
 	}
-	for _, migration := range PendingMigrations(0) {
-		if migration.Version > version {
-			break
-		}
+	for _, migration := range pending {
 		if migration.SQL != "" {
 			if _, err := tx.ExecContext(ctx, migration.SQL); err != nil {
-				return fmt.Errorf("migration %d (%s): %w", migration.Version, migration.Name, err)
+				return false, fmt.Errorf("migration %d (%s): %w", migration.Version, migration.Name, err)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES(?)`, migration.Version); err != nil {
-			return fmt.Errorf("migration %d (%s): recording version: %w", migration.Version, migration.Name, err)
+			return false, fmt.Errorf("migration %d (%s): recording version: %w", migration.Version, migration.Name, err)
 		}
 	}
-	return tx.Commit()
+	if rebuild {
+		var missing int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check`).Scan(&missing); err != nil {
+			return false, fmt.Errorf("rebuild foreign-key check: %w", err)
+		}
+		if missing != 0 {
+			return false, fmt.Errorf("table rebuild has %d broken references; migration rolled back", missing)
+		}
+		if err := verifyMessageScopes(ctx, tx); err != nil {
+			return false, err
+		}
+	}
+	if fixtureVersion == 0 {
+		outstanding, err = upgradeOutstanding(ctx, tx)
+		if err != nil {
+			return false, err
+		}
+		if len(pending) > 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, UpgradeStateKey, fmt.Sprintf(`{"from":%d,"to":%d}`, version, SchemaVersion), Now()); err != nil {
+				return false, fmt.Errorf("recording the upgrade state: %w", err)
+			}
+			outstanding = true
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return outstanding, nil
+}
+
+func verifyMessageScopes(ctx context.Context, q Queryer) error {
+	var invalid int
+	err := q.QueryRowContext(ctx, `SELECT count(*) FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE COALESCE((c.kind='channel' AND c.channel_id=m.channel_id AND c.id=m.channel_id) OR (c.kind IN ('direct','group') AND c.channel_id IS NULL AND m.channel_id IS NULL),0)=0`).Scan(&invalid)
+	if err != nil {
+		return fmt.Errorf("message conversation scope verification: %w", err)
+	}
+	if invalid != 0 {
+		return fmt.Errorf("database has %d invalid message conversation scopes", invalid)
+	}
+	return nil
 }
 
 // Inspection is a read-only description of a database file. It answers the

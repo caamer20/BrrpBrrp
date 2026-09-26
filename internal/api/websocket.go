@@ -178,34 +178,40 @@ func (s *Server) handleEvent(ctx context.Context, r *http.Request, client *ws.Cl
 			return
 		}
 		var input struct {
-			ChannelID string `json:"channel_id"`
+			ChannelID      string `json:"channel_id"`
+			ConversationID string `json:"conversation_id"`
 		}
 		if json.Unmarshal(event.Data, &input) != nil {
 			return
 		}
-		// Authority is re-resolved for the event, not inherited from page load.
-		principal, err := s.resolvePrincipal(ctx, s.store, user)
+		id := input.ConversationID
+		if id == "" {
+			id = input.ChannelID
+		}
+		tx, err := s.store.BeginTx(ctx, nil)
 		if err != nil {
 			return
 		}
-		channel, _, readable, err := s.channelAccess(ctx, principal, input.ChannelID)
-		if err != nil || !readable || channel.Type != "text" {
-			return
-		}
-		if event.Type == "typing.start" && !s.limiter.allow("typing:"+user.ID+":"+channel.ID, 1, 3*time.Second) {
-			return
-		}
-		// Typing state is channel metadata, so it is delivered with the revision the
-		// eligibility answer was computed at. The audience and that revision come from
-		// one snapshot, so a revocation cannot be straddled by the two reads.
-		eligible, revision, err := s.coherentAudience(ctx, channel.ID)
+		defer tx.Rollback()
+		scope, _, err := s.scopeInTx(ctx, tx, user, id, true)
 		if err != nil {
 			return
 		}
-		if committed := s.authorizationRevision(ctx); committed != revision {
+		if event.Type == "typing.start" && !s.limiter.allow("typing:"+user.ID+":"+id, 1, 3*time.Second) {
 			return
 		}
-		s.hub.BroadcastToRevision(eligible, revision, "typing.update", map[string]any{"channel_id": channel.ID, "user_id": user.ID, "typing": event.Type == "typing.start", "expires_at": time.Now().Add(5 * time.Second).UnixMilli()})
+		eligible, revision, err := s.conversationAudienceIDs(ctx, tx, id)
+		if err != nil {
+			return
+		}
+		if tx.Commit() != nil {
+			return
+		}
+		if s.authorizationRevision(ctx) != revision {
+			return
+		}
+		s.hub.BroadcastToRevision(eligible, revision, "typing.update", map[string]any{"channel_id": scope.ChannelID, "conversation_id": id, "user_id": user.ID, "typing": event.Type == "typing.start", "expires_at": time.Now().Add(5 * time.Second).UnixMilli()})
+
 	default:
 		s.dispatchSocketMutation(ctx, r, client, user, event)
 	}
@@ -223,6 +229,9 @@ func (s *Server) dispatchSocketMutation(ctx context.Context, r *http.Request, cl
 	switch event.Type {
 	case "message.send":
 		handler, idKey, capability = s.createMessage, "channel_id", authz.MessageSend
+		if _, ok := input["conversation_id"]; ok {
+			idKey = "conversation_id"
+		}
 	case "message.edit":
 		handler, idKey = s.editMessage, "message_id"
 	case "message.delete":
@@ -231,6 +240,9 @@ func (s *Server) dispatchSocketMutation(ctx context.Context, r *http.Request, cl
 		handler, idKey, capability = s.toggleReaction, "message_id", authz.MessageReact
 	case "channel.read":
 		handler, idKey = s.markRead, "channel_id"
+		if _, ok := input["conversation_id"]; ok {
+			idKey = "conversation_id"
+		}
 	default:
 		client.Send("error", map[string]string{"error": "Unknown event."})
 		return
@@ -253,7 +265,7 @@ func (s *Server) dispatchSocketMutation(ctx context.Context, r *http.Request, cl
 	}
 	delete(input, idKey)
 	data, _ := json.Marshal(input)
-	request := r.Clone(ctx)
+	request := withPrincipal(r.Clone(ctx), principal)
 	request.Method = http.MethodPost
 	request.Body = io.NopCloser(bytes.NewReader(data))
 	request.Header.Set("Content-Type", "application/json")
@@ -267,7 +279,7 @@ func (s *Server) dispatchSocketMutation(ctx context.Context, r *http.Request, cl
 // The payload carries identifiers, never content, and never reaches an account
 // without current access.
 func (s *Server) publishMessage(kind string, message db.Message) {
-	s.publishToChannel(context.Background(), message.ChannelID, kind, map[string]string{"id": message.ID, "channel_id": message.ChannelID, "reply_to_id": message.ReplyToID})
+	s.publishToConversation(context.Background(), message.ConversationID, kind, map[string]string{"id": message.ID, "channel_id": message.ChannelID, "conversation_id": message.ConversationID, "reply_to_id": message.ReplyToID})
 }
 
 func (s *Server) Close() {

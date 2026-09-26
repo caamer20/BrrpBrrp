@@ -1344,3 +1344,167 @@ test('muting while service-worker readiness is pending prevents the delayed noti
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(notifications, 1, 'a confirmed unmute permits later notifications');
 });
+
+const directID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+function directWorkspace() {
+  const value = recoveryWorkspace();
+  value.state.features = { private_conversations: true };
+  value.state.conversations = [
+    {
+      id: directID,
+      kind: 'direct',
+      state: 'active',
+      peer: { id: 'peer', username: 'peer', display_name: 'Peer' },
+      can_read: true,
+      can_write: true,
+      blocked: false,
+      blocked_by_me: false,
+      request_state: 'accepted',
+      request_direction: 'none',
+      introduction: '',
+      hidden: false,
+      count: 2,
+      mentions: 0,
+      last_read_message_id: '',
+      updated_at: new Date().toISOString()
+    }
+  ];
+  value.activeId = directID;
+  return value;
+}
+
+test('an accepted direct conversation uses the shared send, history and receipt path without a shadow channel', async (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  value.saveDrafts = true;
+  const calls = [];
+  let sent;
+  setHandler(async (path, method, body) => {
+    calls.push({ path, method, body });
+    if (method === 'POST') {
+      sent = message('direct-saved', {
+        user_id: recoveryAccount,
+        channel_id: '',
+        conversation_id: directID,
+        idempotency_key: body.idempotency_key,
+        content: body.content
+      });
+      return sent;
+    }
+    return [sent];
+  });
+  assert.equal(value.channel, undefined, 'there is no fake community channel');
+  await value.send('a private message', []);
+  assert.equal(calls[0].path, `/conversations/${directID}/messages`);
+  assert.equal(value.messages[0].conversation_id, directID);
+  assert.equal(value.messages[0].channel_id, '');
+  assert.equal(value.hasPendingMessages, false);
+  assert.equal(store.getItem(`brrp.outbox.${recoveryAccount}`), null);
+  await value.loadMessages();
+  assert.equal(calls[1].path, `/conversations/${directID}/messages`);
+  assert.equal(value.messages[0].content, 'a private message');
+});
+
+test('blocking a direct preserves readable history and recovers pending text without replay on unblock', async (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  value.saveDrafts = true;
+  const held = deferred();
+  let posts = 0;
+  const history = [
+    message('history', { channel_id: '', conversation_id: directID, content: 'accepted history' })
+  ];
+  setHandler((path, method) => {
+    if (method === 'POST') {
+      posts++;
+      return held.promise;
+    }
+    if (path === '/state') return structuredClone(value.state);
+    return history;
+  });
+  const sending = value.send('preserve my unconfirmed text', []);
+  value.state.conversations[0].can_write = false;
+  value.state.conversations[0].blocked = true;
+  value.invalidateAuthorization();
+  await value.refreshState();
+  held.reject(apiError('Send not allowed', 403));
+  await sending;
+  assert.equal(value.canReadConversation(directID), true);
+  assert.equal(value.canWriteConversation(directID), false);
+  assert.equal(value.recoveredMessages[0].content, 'preserve my unconfirmed text');
+  assert.deepEqual(value.recoveredMessages[0].attachments, []);
+  assert.equal(value.hasPendingMessages, false);
+  value.state.conversations[0].can_write = true;
+  value.state.conversations[0].blocked = false;
+  await value.restoreOutbox();
+  assert.equal(posts, 1, 'unblocking never automatically resends recovered intent');
+  assert.equal(value.recoveredMessages.length, 1);
+});
+
+test('direct read cursors and unread rows use conversation IDs and stay separate from community channels', async (t) => {
+  const value = directWorkspace();
+  t.after(() => {
+    value.stop();
+    setDocumentFocus(true, false);
+  });
+  setDocumentFocus(false, true);
+  value.state.unread = [
+    { channel_id: '', conversation_id: directID, count: 3, mentions: 0, last_read_message_id: '' }
+  ];
+  value.messages = [message('003', { channel_id: '', conversation_id: directID })];
+  const calls = [];
+  setHandler(async (path) => {
+    calls.push(path);
+    return {};
+  });
+  await value.markRead();
+  assert.deepEqual(calls, [`/conversations/${directID}/read`]);
+  assert.equal(value.unreadFor(directID).count, 0);
+  assert.equal(value.readCursors[directID], '003');
+  assert.equal(value.readCursors[''], undefined);
+});
+
+test('disabling private conversations clears their scope even when the authorization revision is unchanged', async (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  const old = deferred();
+  const oldLoad = (() => {
+    setHandler(() => old.promise);
+    return value.loadMessages();
+  })();
+  const next = structuredClone(value.state);
+  next.features.private_conversations = false;
+  next.conversations = [];
+  setHandler(async (path) => (path === '/state' ? next : []));
+  await value.refreshState();
+  old.resolve([
+    message('restricted', {
+      channel_id: '',
+      conversation_id: directID,
+      content: 'old private answer'
+    })
+  ]);
+  await oldLoad;
+  assert.equal(value.directConversations.length, 0);
+  assert.equal(
+    value.messages.some((item) => item.id === 'restricted'),
+    false
+  );
+  assert.notEqual(value.activeId, directID);
+});
+
+test('an uncertain send overtaken by an allowed authority refresh is retryable rather than stuck sending', async (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  const held = deferred();
+  setHandler(() => held.promise);
+  const sending = value.send('same operation, uncertain answer', []);
+  const key = Object.keys(value.pending)[0];
+  value.invalidateAuthorization();
+  held.reject(apiError('old server answer', 503));
+  await sending;
+  assert.equal(value.pending[key].pending, 'failed');
+  assert.equal(value.pending[key].idempotency_key, key);
+  assert.equal(value.messages.length, 0, 'old authority cannot refill the cleared view');
+  assert.notEqual(value.toast, 'old server answer');
+});

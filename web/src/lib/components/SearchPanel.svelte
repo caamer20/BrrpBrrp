@@ -6,7 +6,7 @@
   import Icon from './Icon.svelte';
   import HighlightedText from './HighlightedText.svelte';
   let query = $state('');
-  let channel = $state('');
+  let channel = $state(workspace.direct?.id || '');
   let results = $state<Message[]>([]);
   let searched = $state(false);
   let busy = $state(false);
@@ -39,7 +39,7 @@
     searched = false;
     try {
       const hits = await api<Message[]>(
-        `/search?q=${encodeURIComponent(searchQuery)}&channel_id=${encodeURIComponent(searchChannel)}`
+        `/search?q=${encodeURIComponent(searchQuery)}&${workspace.isDirect(searchChannel) ? 'conversation_id' : 'channel_id'}=${encodeURIComponent(searchChannel)}`
       );
       if (admitted !== workspace.authorizationGeneration) return;
       results = hits;
@@ -76,6 +76,8 @@
         ><option value="">All text channels</option
         >{#each workspace.state?.channels.filter((channel) => channel.type === 'text') || [] as item}<option
             value={item.id}>#{item.name}</option
+          >{/each}{#each workspace.directConversations as direct}<option value={direct.id}
+            >Direct · {direct.peer.display_name || direct.peer.username}</option
           >{/each}</select
       ></label
     ><button class="primary" disabled={busy || !query.trim()}
@@ -106,7 +108,11 @@
     {#if !changed}
       {#each results as message (message.id)}<button onclick={() => jump(message)}
           ><small
-            >#{workspace.state?.channels.find((channel) => channel.id === message.channel_id)?.name} ·
+            >{workspace.isDirect(workspace.conversationId(message))
+              ? 'Direct conversation'
+              : '#' +
+                (workspace.state?.channels.find((channel) => channel.id === message.channel_id)
+                  ?.name || 'channel')} ·
             {new Date(message.created_at).toLocaleDateString()}</small
           ><strong
             >{workspace.state?.users.find((user) => user.id === message.user_id)?.display_name ||

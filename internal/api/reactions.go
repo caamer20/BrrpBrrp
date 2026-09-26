@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"net/http"
 	"slices"
 
@@ -36,12 +35,13 @@ func (s *Server) toggleReaction(w http.ResponseWriter, r *http.Request, user db.
 	defer tx.Rollback()
 	// A reaction is a write against the message's conversation, so access is
 	// re-checked in the transaction that records it.
-	if _, err := s.requireChannelAccessInTx(r.Context(), tx, user, message.ChannelID); err != nil {
-		if errors.Is(err, authz.ErrUnavailable) {
-			hidden(w)
-			return
-		}
-		problem(w, 403, "You cannot react in this channel.")
+	_, current, err := s.scopeInTx(r.Context(), tx, user, message.ConversationID, true)
+	if err != nil {
+		s.scopeFailed(w, err)
+		return
+	}
+	if !current.Allowed(authz.MessageReact) {
+		s.scopeFailed(w, authz.ErrForbidden)
 		return
 	}
 	result, err := tx.Exec(`DELETE FROM reactions WHERE message_id=? AND user_id=? AND emoji=?`, message.ID, user.ID, input.Emoji)

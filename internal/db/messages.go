@@ -12,7 +12,7 @@ func (s *Store) Messages(ctx context.Context, viewer, clause string, args ...any
 	// compatibility bridge ADR 0010 defines: a message written before the schema 6 migration
 	// still resolves to its channel's conversation, and one written after it resolves to the
 	// conversation the send recorded.
-	rows, err := s.QueryContext(ctx, `SELECT id,COALESCE(conversation_id,channel_id),channel_id,user_id,content,created_at,COALESCE(edited_at,''),idempotency_key,COALESCE(embed_json,'[]'),COALESCE(reply_to_id,''),EXISTS(SELECT 1 FROM message_pins WHERE message_id=messages.id),
+	rows, err := s.QueryContext(ctx, `SELECT id,COALESCE(conversation_id,channel_id),COALESCE(channel_id,''),user_id,content,created_at,COALESCE(edited_at,''),idempotency_key,COALESCE(embed_json,'[]'),COALESCE(reply_to_id,''),EXISTS(SELECT 1 FROM message_pins WHERE message_id=messages.id),
         (SELECT count(*) FROM messages replies WHERE replies.reply_to_id=messages.id)
         FROM messages `+clause, args...)
 	if err != nil {

@@ -7,6 +7,8 @@
   import Composer from './Composer.svelte';
   import RecoveredMessages from './RecoveredMessages.svelte';
   import ChannelNotifications from './ChannelNotifications.svelte';
+  import MessagesInbox from './MessagesInbox.svelte';
+  import DirectControls from './DirectControls.svelte';
   import MessageList from './MessageList.svelte';
   import SearchPanel from './SearchPanel.svelte';
   import PinsPanel from './PinsPanel.svelte';
@@ -38,7 +40,9 @@
   });
   let clock = $state(Date.now());
   let members = $derived(
-    workspace.state?.users.filter((user) => !user.is_banned && !user.is_deactivated) || []
+    workspace.direct
+      ? [workspace.user!, workspace.direct.peer]
+      : workspace.state?.users.filter((user) => !user.is_banned && !user.is_deactivated) || []
   );
   async function toggleMembers(open: boolean) {
     if (open) workspace.sidebarOpen = false;
@@ -61,7 +65,7 @@
       .filter(
         ([id, state]) =>
           id !== workspace.user?.id &&
-          state.channel_id === workspace.activeId &&
+          workspace.conversationId(state) === workspace.activeId &&
           state.expires_at > clock
       )
       .map(
@@ -131,7 +135,33 @@
       ><Icon name="search" size={16} /><span>Jump to a channel</span><kbd>{searchShortcut}</kbd
       ></button
     >
+    {#if workspace.privateConversationsEnabled}<button
+        class="sidebar-search"
+        onclick={() => (workspace.messagesOpen = true)}
+        ><Icon name="users" size={16} /><span>Messages and requests</span></button
+      >{/if}
     <nav class="channel-navigation">
+      {#if workspace.privateConversationsEnabled}<div class="channel-group">
+          <h2>DIRECT MESSAGES</h2>
+          {#each workspace.directConversations.filter((direct) => !direct.hidden) as direct (direct.id)}
+            {@const unread = workspace.unreadFor(direct.id)}
+            <button
+              class="channel-link"
+              class:active={workspace.activeId === direct.id}
+              class:unread={!!unread?.count}
+              aria-current={workspace.activeId === direct.id ? 'page' : undefined}
+              onclick={() => workspace.selectChannel(direct.id)}
+            >
+              <Avatar user={direct.peer} size={22} /><span
+                >{direct.peer.display_name || direct.peer.username}</span
+              >{#if !direct.can_write}<small>Read-only</small>{/if}{#if unread?.count}<i
+                  class="unread-dot"
+                ></i>{/if}
+            </button>
+          {:else}<button class="channel-link" onclick={() => (workspace.messagesOpen = true)}
+              ><Icon name="plus" /><span>Start a conversation</span></button
+            >{/each}
+        </div>{/if}
       {#each categories as category}<div class="channel-group">
           <h2>{category.name || 'TEXT CHANNELS'}</h2>
           {#each category.channels as channel (channel.id)}{@const unread = workspace.unreadFor(
@@ -233,12 +263,16 @@
           workspace.setMembersOpen(false);
           workspace.sidebarOpen = true;
         }}><Icon name="menu" /></button
-      ><Icon name="hash" size={25} /><strong>{workspace.channel?.name || 'Welcome'}</strong><span
-        class="header-divider"
-      ></span>
-      <p>{workspace.channel?.topic}</p>
+      ><Icon name={workspace.direct ? 'users' : 'hash'} size={25} /><strong
+        >{workspace.activeId ? workspace.conversationName : 'Welcome'}</strong
+      ><span class="header-divider"></span>
+      <p>
+        {workspace.direct
+          ? 'Direct conversation · only accepted participants'
+          : workspace.channel?.topic}
+      </p>
       <div class="header-actions">
-        <ChannelNotifications />
+        {#if workspace.direct}<DirectControls />{:else}<ChannelNotifications />{/if}
         <button
           class="icon-button"
           aria-label="Pinned messages"
@@ -344,6 +378,7 @@
       </div>
     </aside>{/if}
 </div>
+{#if workspace.messagesOpen && workspace.privateConversationsEnabled}<MessagesInbox />{/if}
 {#if workspace.searchOpen}<SearchPanel />{/if}
 {#if workspace.pinsOpen}<PinsPanel />{/if}
 {#if workspace.switcherOpen}<ChannelSwitcher />{/if}

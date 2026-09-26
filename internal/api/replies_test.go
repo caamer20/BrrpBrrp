@@ -24,7 +24,7 @@ func TestReplyThreadsPaginationIsolationAndDeletion(t *testing.T) {
 	insert := func(replyTo string) string {
 		t.Helper()
 		id := db.ID()
-		if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,user_id,content,created_at,idempotency_key,reply_to_id) VALUES(?,?,?,?,?,?,NULLIF(?,''))`, id, channel, user, "thread content", db.Now(), id, replyTo); err != nil {
+		if _, err := s.store.Exec(`INSERT INTO messages(id,channel_id,conversation_id,user_id,content,created_at,idempotency_key,reply_to_id) VALUES(?,?,?,?,?,?,?,NULLIF(?,''))`, id, channel, channel, user, "thread content", db.Now(), id, replyTo); err != nil {
 			t.Fatal(err)
 		}
 		return id

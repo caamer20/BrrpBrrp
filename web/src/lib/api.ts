@@ -40,10 +40,17 @@ export async function api<T>(
   }
 }
 
-export function uploadFile<T>(file: File, progress: (percent: number) => void): Promise<T> {
+export function uploadFile<T>(
+  file: File,
+  progress: (percent: number) => void,
+  conversationId?: string
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open('POST', '/api/uploads');
+    request.open(
+      'POST',
+      `/api/uploads${conversationId ? '?conversation_id=' + encodeURIComponent(conversationId) : ''}`
+    );
     request.responseType = 'json';
     request.timeout = 60000;
     request.upload.onprogress = (event) => {
