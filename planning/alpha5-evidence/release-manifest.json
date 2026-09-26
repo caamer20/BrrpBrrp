@@ -1,0 +1,266 @@
+{
+  "manifest_format": 1,
+  "created_at": "2026-09-26T06:43:51.267885+00:00",
+  "candidate": {
+    "application_version": "0.4.0-alpha.5",
+    "database_schema": 10,
+    "backup_format": 2,
+    "frontend_build": "083ff51d9960726b",
+    "source_commit": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+    "source_commit_scope": "Local source checkpoint before derived release evidence; all six native binaries embed this revision with vcs.modified=false.",
+    "state": "local alpha candidate",
+    "published": false,
+    "production_approved": false,
+    "signed": false,
+    "release_gates_passed": []
+  },
+  "toolchain": {
+    "go": "go1.27.1",
+    "go_host": "darwin/amd64",
+    "node": "v24.2.0",
+    "govulncheck": "v1.8.0",
+    "native_cgo_enabled": false
+  },
+  "artifacts": [
+    {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.5-linux-amd64.zip",
+      "sha256": "96642a3a883035d0c90bfd6a95da9894a684605376de194a98d2c9433ef404a7",
+      "bytes": 8737815,
+      "target": "linux/amd64",
+      "zip_crc": "passed",
+      "shell_wrapper_modes": "0755",
+      "binary_sha256": "31f0a89234da02d37b8beb42f524cd07f21b660911907303972aa5126e17966a",
+      "embedded_go_version": "go1.27.1",
+      "embedded_source_revision": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "embedded_source_modified": false
+    },
+    {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.5-linux-arm64.zip",
+      "sha256": "2161414c04618eb7de195aa44438563c3f483f0fcd8b6439387e020fc4b55944",
+      "bytes": 8065551,
+      "target": "linux/arm64",
+      "zip_crc": "passed",
+      "shell_wrapper_modes": "0755",
+      "binary_sha256": "ca64717231d1d188ba70b3538151e7515986cf87115fd91e88d29a68ab31015b",
+      "embedded_go_version": "go1.27.1",
+      "embedded_source_revision": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "embedded_source_modified": false
+    },
+    {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.5-windows-amd64.zip",
+      "sha256": "60cf81560b892bb7c73507d813e7f1c2cc79d602bf05e25d5468c96ac1fa387c",
+      "bytes": 8918975,
+      "target": "windows/amd64",
+      "zip_crc": "passed",
+      "shell_wrapper_modes": "0755",
+      "binary_sha256": "2752d3c2cc3e4168b446d6e7c90dc113ab096891b06bc897af888918927e4872",
+      "embedded_go_version": "go1.27.1",
+      "embedded_source_revision": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "embedded_source_modified": false
+    },
+    {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.5-windows-arm64.zip",
+      "sha256": "2c5a8266e08ca380028bf09251d75e9eade33811077851c0751b75ca466f4cc1",
+      "bytes": 8188964,
+      "target": "windows/arm64",
+      "zip_crc": "passed",
+      "shell_wrapper_modes": "0755",
+      "binary_sha256": "6d693f0e6e75dafceac093c958acf5f7be53b741a379d603c13cf79f4d1e41a8",
+      "embedded_go_version": "go1.27.1",
+      "embedded_source_revision": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "embedded_source_modified": false
+    },
+    {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.5-darwin-amd64.zip",
+      "sha256": "f186eecda78dcc0d2faeeaefe2a18b9f9bcf62b752753a62c00a60ecffda2db1",
+      "bytes": 8831746,
+      "target": "darwin/amd64",
+      "zip_crc": "passed",
+      "shell_wrapper_modes": "0755",
+      "binary_sha256": "79d90400e39ce2b08bcbfd15af46b4c95436c2977cbe3117b5063423b2960278",
+      "embedded_go_version": "go1.27.1",
+      "embedded_source_revision": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "embedded_source_modified": false
+    },
+    {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.5-darwin-arm64.zip",
+      "sha256": "be62173e30b122ac9c211f2a3ff7ea5aa93522f1cc4e23e81c78ae0de2d2c1fe",
+      "bytes": 8355213,
+      "target": "darwin/arm64",
+      "zip_crc": "passed",
+      "shell_wrapper_modes": "0755",
+      "binary_sha256": "5294ccb37ec821f116a3d5825bc2d5c55054b084a07df6cec659a8f2dbf997e9",
+      "embedded_go_version": "go1.27.1",
+      "embedded_source_revision": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "embedded_source_modified": false
+    },
+    {
+      "path": "dist/brrpbrrp-docker-source-0.4.0-alpha.5.zip",
+      "sha256": "8058802d63dd7bd4a4b781b77eb30b24979535398d7acd3fe324072397f23973",
+      "bytes": 1011858,
+      "zip_crc": "passed",
+      "entries": 349,
+      "source_bytes_match_workspace": true
+    }
+  ],
+  "checks": [
+    {
+      "name": "six-platform build",
+      "command": "BRRP_GO=<Go 1.27.1> go run scripts/release.go",
+      "exit_code": 0,
+      "result": "All six default targets built. No deployment or publication occurred."
+    },
+    {
+      "name": "archive contents and identity",
+      "result": "PASS",
+      "details": [
+        "All seven ZIP archives passed CRC validation and matched their generated SHA256SUMS files.",
+        "All six native binaries embed the expected GOOS/GOARCH, Go1.27.1, exact source revision and vcs.modified=false.",
+        "Every source ZIP entry is byte-identical to the frozen workspace file, and its entry set exactly matches the packager source list.",
+        "Native backup/restore wrappers have executable0755 mode.",
+        "Required license/notices, community guide and release notes are present. Source includes migrations7\u201310 and excludes dependencies, build outputs, Git metadata and operator-specific notes."
+      ]
+    },
+    {
+      "name": "source package link/input checker",
+      "command": "BRRP_GO=<Go 1.27.1> node scripts/check-source-package.mjs",
+      "exit_code": 0,
+      "result": "PASS in workspace and clean extraction",
+      "actual_source_entries": 349,
+      "actual_shared_native_document_entries": 38,
+      "checker_displayed_source_files": 350,
+      "checker_displayed_native_documents": 39,
+      "output": "Source package check passed: 350 files, 39 native package documents, every documented local link resolved in both sets, every Makefile script and .dockerignore input packaged, and the operator-specific notes excluded.\nThis validates the package contents, not an extracted build; the archive itself is produced by \"make release\"."
+    },
+    {
+      "name": "notices freshness",
+      "command": "BRRP_GO=<Go 1.27.1> node scripts/licenses.mjs --check",
+      "exit_code": 0,
+      "result": "Up to date:39 components,20 license texts"
+    },
+    {
+      "name": "Docker inputs",
+      "commands": [
+        "node scripts/check-docker-inputs.mjs --self-test",
+        "node scripts/check-docker-inputs.mjs"
+      ],
+      "exit_codes": [
+        0,
+        0
+      ],
+      "result": "Static audit passed24 COPY inputs; self-test detected5 expected defects. No Docker executable/runtime was available."
+    },
+    {
+      "name": "npm advisories",
+      "command": "npm audit --audit-level=moderate",
+      "exit_code": 0,
+      "output": "found 0 vulnerabilities"
+    },
+    {
+      "name": "Go advisories",
+      "command": "go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -show=verbose ./...",
+      "exit_code": 0,
+      "affected_symbols": 0,
+      "affected_imported_packages": 0,
+      "module_only_advisories": [
+        {
+          "id": "GO-2026-5932",
+          "module": "golang.org/x/crypto",
+          "version": "v0.56.0",
+          "package": "golang.org/x/crypto/openpgp",
+          "fixed_version": null,
+          "application_imports_or_calls_affected_package": false,
+          "source": "https://pkg.go.dev/vuln/GO-2026-5932"
+        }
+      ]
+    },
+    {
+      "name": "extracted native smoke",
+      "command": "node scripts/check-package.mjs <extracted darwin-amd64 binary>",
+      "exit_code": 0,
+      "result": "PASS:CLI setup, backup, restore, data lock, health, production guard, embedded UI, manifest and graceful stop.",
+      "observed_backup": {
+        "application_version": "0.4.0-alpha.5",
+        "schema_version": 10,
+        "format": 2
+      }
+    },
+    {
+      "name": "native embedded frontend",
+      "result": "PASS",
+      "details": {
+        "build": "083ff51d9960726b",
+        "app_version_endpoint": "passed",
+        "html_meta": "passed"
+      },
+      "transport": "HTTP GET /app-version.json and / through a disposable localhost server using the extracted darwin/amd64 native binary"
+    },
+    {
+      "name": "clean source dependency install",
+      "command": "npm ci --offline --cache <existing npm cache> --no-audit --no-fund",
+      "exit_code": 0,
+      "result": "102 locked packages installed into fresh extracted source; no node_modules symlink or copied installed dependencies; registry network not needed.",
+      "output": "added 102 packages in 2s"
+    },
+    {
+      "name": "clean source Svelte check",
+      "command": "npm run check",
+      "exit_code": 0,
+      "result": "0 errors,0 warnings"
+    },
+    {
+      "name": "clean source frontend build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "observed_frontend_build": "083ff51d9960726b",
+      "matches_packaged_frontend": true
+    },
+    {
+      "name": "clean source Go build",
+      "command": "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o brrpbrrp ./cmd/brrpbrrp",
+      "exit_code": 0,
+      "binary_sha256": "07ce1f11d82230f790decccbe5064c95c1732611045b4b6227b7f980779cb81b",
+      "note": "Uses shared downloaded Go module/build caches. This validates consumer buildability, not bit-for-bit native binary reproducibility; source ZIP deliberately omits Git metadata."
+    },
+    {
+      "name": "native and clean source CLI identity/preflight",
+      "commands": [
+        "brrpbrrp version",
+        "brrpbrrp preflight --data-dir <fresh empty directory>"
+      ],
+      "exit_codes": [
+        0,
+        0
+      ],
+      "result": "Both binaries identify alpha.5 and supported schema10. Preflight reports no existing database and creates none."
+    }
+  ],
+  "integration_checkpoint_reported_by_root": {
+    "frontend_unit_tests_passed": 96,
+    "browser_journeys_passed": 13,
+    "go_vet": "passed",
+    "full_go_race_baseline": "passed; API762.644s",
+    "final_read_cursor_and_rtc_focused_race": "passed after final fixes",
+    "final_all_go_nonrace": "passed; API72.938s",
+    "fresh_install_backup_restore_checks_passed": 23,
+    "archived_alpha3_upgrade_and_rollback_checks_passed": 53,
+    "detail": "See repository planning/alpha5-evidence/verification.md, recovery.json and rollback.json. The complete race baseline preceded final targeted read-cursor/RTC fixes; those final fixes have focused race coverage plus final full non-race coverage."
+  },
+  "known_nonblocking_issues": [
+    {
+      "component": "scripts/check-source-package.mjs",
+      "issue": "The checker normalizes its trailing empty list line to '.' before filtering, inflating each displayed entry count by one. Exact source-list/ZIP comparison passes with349 source entries and38 shared native documents.",
+      "status": "Frozen source preserved; record for a later packaging-tool cleanup."
+    }
+  ],
+  "limitations": [
+    "Native Linux/Windows/macOS ARM64 artifacts were cross-compiled and structurally checked, not executed on their target systems. Runtime smoke used macOS amd64 only.",
+    "Docker checks are static; no container image was built or run.",
+    "No signing, hosted CI provenance, Windows service/Tailscale qualification, off-host restore, physical-device audio, target-load soak, independent security acceptance or beta release approval is established by these checks.",
+    "Advisory scans are not an independent security review."
+  ],
+  "checksum_lists": [
+    "dist/releases/SHA256SUMS",
+    "dist/DOCKER-SOURCE-SHA256SUMS"
+  ]
+}

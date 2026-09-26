@@ -18,7 +18,7 @@ Date: 25 September 2026 Pacific time (26 September UTC). Application 0.4.0-alpha
 | Actual archived alpha.3 upgrade / rollback / interrupted upgrade recovery | 53/53 passed; see rollback.json. |
 | `node scripts/licenses.mjs --check` | 39 components, 20 texts; current. |
 | Docker input audit and self-test | Passed, 24 COPY sources; no Docker engine was available. |
-| Source/native package static checker | Passed, 350 files and 39 native package documents; no broken packaged local links. |
+| Source/native package static checker | Passed; 349 actual source entries and 38 native document/script entries. The checker prints 350 and 39 because its list normalization counts a trailing empty line as `.`; all actual packaged links/build inputs pass. This cosmetic counter issue does not change archive contents. |
 | npm audit moderate | Zero vulnerabilities. |
 | Pinned govulncheck 1.8.0 | Zero affected symbols/imported-package vulnerabilities. GO-2026-5932 is module-only in unused x/crypto/openpgp. |
 
