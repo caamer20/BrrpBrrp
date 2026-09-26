@@ -1,0 +1,408 @@
+# v1 implementation progress and evidence ledger
+
+**Last updated:** 25 September 2026
+**Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
+**Candidate:** **0.4.0-alpha.5** (schema **10**, backup format **2**)
+**Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
+**Current evidence:** [alpha.5 release record](releases/0.4.0-alpha.5.md)
+**Historical finding record:** [completion-remediation-2026-09-24.md](completion-remediation-2026-09-24.md)
+**Assessment:** substantial local implementation progress; no G0–G8 release gate has passed. Earlier dated reviews describe their inspected snapshot. They do not override this candidate's implementation or supply missing host/independent acceptance.
+
+This ledger records what was actually implemented, what evidence exists, and what
+is deliberately still missing. It is the honest companion to the plan: the plan
+describes the required work, and this file records progress against it. Where a
+plan target is a proposed number, the number is unchanged and unmeasured.
+
+**Status vocabulary.** A package can be implemented, tested locally, accepted on a
+platform, and approved, and these are different things. This ledger is written in
+that order: "complete on this machine" means code plus local tests, never a host
+rehearsal, platform acceptance or review. The finding-by-finding record, including
+the evidence level of each claim and the acceptance test that pins it, is in
+[the remediation ledger](completion-remediation-2026-09-24.md). The dated completion reviews remain historical evidence; the release record above is the current implementation checkpoint.
+
+## Status summary
+
+| Package | Status | Notes |
+| --- | --- | --- |
+| WP-01 project identity/rights | **Partially complete** | License, copyright holder and contribution terms are decided and recorded ([ADR 0006](adr/0006-licensing-and-contribution-terms.md)): MIT, an owner-named holder, a CLA with a signatory record, generated dependency notices and a security policy. A local Git source baseline is recorded; missing: the canonical public repository, maintainer access and recovery, release/registry identities (D-15), a *tested* private security intake, and a code of conduct with a named enforcement contact — none of which this workspace can create. |
+| WP-02 scope and decisions | **Partially resolved** | ADR 0001–0011 record the implemented contracts, including the community account policy; private-history ratification is still required. D-01 is resolved. D-03, D-05, D-13, D-15, D-17 remain open. |
+| WP-03 reference environments | **Not started** | Needs the Windows host, Docker host, load generator and reviewers. |
+| WP-04 migration framework and durability | **Complete on this machine, including a maintained cross-version rehearsal** | Ordered registry, transactional apply, preflight without migration, downgrade refusal, invariant verification, index rebuild, `FULL` durability default, preflight/migrate/verify commands, the non-migrating `backup`/`verify` inspection path and an explicit incomplete-upgrade state, and the attachment-durability contract with tests at each boundary ([ADR 0007](adr/0007-attachment-durability.md)). `make rehearsal` runs a **fresh-install recovery** check on a disposable destination (install → back up → verify → restore into an empty directory → compare bytes); its "touched archive" step flips archive bytes rather than only the archive's mtime. `make rollback-rehearsal` runs the **cross-version** path against a real archived prior release: install with the old executable, its snapshot as the rollback source, the upgraded installation's rows and bytes, a recorded rewrite boundary, and a rollback into a clean folder, plus an injected interruption before the upgrade's postconditions. A real Windows/Docker host rehearsal (WP-24) and an off-host restore destination remain, as does a measured RPO/RTO. |
+| WP-05 account/session/recovery | **Complete for the backend, the account UI and the documented offline path** | Any member may enroll a factor; operators must enrol one before privileged actions; session list, revoke-one, revoke-all; 15-minute recent-authentication gate with an audited reauthentication path; sign-in re-checks its credential inside the session transaction; an operator removes another account's lost factor under `operator.credential_recovery`; a locked-out owner is recovered on the host with `brrpbrrp recover-owner`, recorded as the host operator. Recovery-code race, demotion, socket-revocation, sign-in-race, factor-removal and offline-recovery tests pass. The revocation-during-stream half of T-IDENT-01 is now explicit rather than implied: streams are registered against the account and session that admitted them, so a revoked session, a changed password, a removed factor, a role change or a ban ends exactly the delivery it should, and a queued event is dropped when its generation is stale. Password changes, operator resets, factor removal, kicks, bans, deactivation, deletion and sign-out commit with invalidation of affected deliveries. Ended sessions are terminally refused; some operations also disconnect a surviving session whose credentials remain valid for reconnect. Deferred cleanup cannot admit a new event to an ended session. What remains is the real-host (Windows/Docker) rehearsal under WP-24. |
+| WP-06 central authorization | **Core implemented; effective-role revocation and delivery ordering locally verified, with one documented acquisition order** | Capability catalog, roles, delegation, owner ceremony, operator tier, non-disclosing denials, transaction-time re-authorization, full route inventory enforced by test. Role changes act on the *effective* holders of a role — including every account that holds the default role without an assignment row — and end only the streams the new authority no longer admits; a restricted event carries the authorization revision its audience was resolved at, so an audience computed before a revocation cannot be delivered after it, and a streamed download re-establishes the account's authority and session at admission. The commit/admission protocol is now one documented order — the store's connection first, the authority fence second, nothing waiting for the connection under the fence — and it covers credential and session transitions as well as authorization ones, with socket registration itself an admission ([ADR 0009](adr/0009-authority-commit-and-admission-ordering.md), including the route-to-commit/invalidation inventory). Evidence: `internal/api/effective_role_revocation_test.go`, `revocation_boundary_test.go`, `commit_ordering_test.go`, `internal/ws/hub_test.go`. Remaining: an independent review of the ordering contract (WP-28) and the platform host evidence. |
+| WP-07 roles/categories/restricted channels | **Complete behind the WP-08 gate, capability-driven** | Ownership, role CRUD and assignment, durable categories, visibility, grants, posting policy, the access inspector and invite-time role selection all have a management UI, and the UI is now driven by the caller's effective capabilities rather than an administrator flag, so a delegated manager reaches exactly what they were granted; ownership designation and transfer have a ceremony UI. The UI is blocked with the API while `BRRP_ENABLE_RESTRICTED_CHANNELS` is off. A restricted **voice** channel now enforces the same access rule, but it still has no private-call admission contract of its own (WP-19/WP-20, ADR 0003). |
+| WP-08 privacy across delivery surfaces | **Implemented for reads, files, events, queues and voice; locally verified, not independently reviewed** | Every delivery path the package lists is enforced and has evidence: filtered state/navigation/search/unread/pins/context/replies/counts, current-access file and preview delivery, scoped mentions/typing/voice presence/events, dispatch-time push checks, and revocation that reaches an in-flight download, the notification backlog, a queued event backlog and both an active and a resumable voice connection. A metadata response already being written can finish (ADR 0003, gap 2). The Go peer-eviction test alone carries no SDP/RTP; the separate browser transport journey negotiates real connections and measures RTP during permission withdrawal and regrant. Its current result and synthetic-capture limitations are recorded in the alpha.5 release record. Physical media qualification remains WP-19/WP-24 work. Screen-share and private-call media do not exist yet, so their scoping belongs to WP-19/WP-21. |
+| WP-23 trustworthy backups and recoverability | **Substantially complete on this machine; failed-copy state locally verified** | Every archive carries a versioned manifest with the application and schema version and a size and SHA-256 digest for the database and each attachment ([ADR 0008](adr/0008-backup-manifest-and-verification.md)); restore verifies those digests as it stages, `brrpbrrp verify-backup` checks any archive read-only anywhere on disk, an extra copy is recorded only when its digest matches the archive it copied, and `production-check` verifies the newest archive and copy instead of only dating them. The recorded status now separates the last attempt, the newest verified local generation and the newest generation that is *also* copied to independent storage: a failed copy counts in its own bounded retry, keeps the previous recoverable identity and its archive protected from count-based retention, and is repaired by retrying that copy rather than by writing another archive. The declared recovery point is taken at the database snapshot boundary, before the vacuum and the compression that follow it, and `production-check` names the last independently recoverable generation when the newest one has no copy. Retention now depends on an explicit successful persistence result rather than on the absence of one error sentinel, and it protects the archive this attempt produced, the archive the pre-attempt durable record named and the local archives of both independently recoverable generations, so a combined copy *and* status failure cannot prune what the ledger still names. What remains needs other machines: an off-host restore into clean Windows and Docker destinations, RPO/RTO against a reference dataset, disk-pressure and copy-destination faults, and the operator's own encrypted-copy workflow with its key-loss handling. |
+| WP-09 shared conversation model and resilient client state | **Channel slice implemented and locally tested** | Schema 6 maps channel conversations and receipts; alpha.5 prevents expired-key resurrection and legacy cross-channel replay. Outbox persistence is account-specific with a shared 50-record/64 KiB UTF-8 budget. Permanent refusal and expiry produce explicit text-only recovery without replacing drafts or reclaiming files. Out-of-order acknowledgements cannot move the read cursor backward. ADR 0010 describes remaining private-schema and reconnect-performance work. |
+| WP-12 account lifecycle | **Community removal slice implemented** | Schema 7, recent-auth typed confirmation, immutable Deleted member identity, transactional cleanup and retained history. Separate live-data erasure remains. Report/backups retention is disclosed. Export, private membership/history and broader deletion policy remain (ADR 0011). |
+| WP-14 notifications | **Channel mute slice implemented** | Schema 10 persists per-account preferences; server suppresses mention events and queued push, including rechecking each device; client suppresses late notices. History, mention records and unread counts remain. Per-conversation defaults, richer notification policy and platform qualification remain. |
+| WP-15 moderation | **Community report and slow-mode slices implemented** | Schema 8 durable posting intervals and schema 9 selected-message evidence, per-reporter deduplication/rate limits, current-readable-channel review, audit and 90-day retention. Private reporting, blocking/abuse workflow and policy qualification remain. |
+| WP-10–11, WP-13, WP-16–22, WP-24–33 | **Not complete** | DMs/groups/blocking, named/archived threads, broader UX/media work, host lifecycle, capacity, independent review, beta and final release. Existing small UI improvements and local packaging are partial evidence, not completed work packages. |
+
+No gate (G0–G8) has passed, and no capacity, latency, media or recovery target in
+section 10 is claimed.
+
+The 24 September 2026 second review added findings R2-01–R2-10 and the P2 plan. Its
+progress is recorded item by item in §6 of
+[the remediation ledger](completion-remediation-2026-09-24.md): current-authority and
+credential transactions, client authorization invalidation, live voice permissions,
+delegated-role journeys, unified archive validation, the maintained cross-version
+rehearsal, and the package consumer path. Two of those items are explicitly incomplete:
+R2-04's negotiated-RTP evidence and the platform lifecycles in P2-06/P2-07 need hosts
+this workspace does not have.
+
+The 25 September 2026 third review added findings R3-01–R3-06 and the P3 plan, and it is
+recorded in §7 of the same ledger. Its four reproduced defects now have implementation fixes
+and permanent regressions that fail without them: late incremental and unread responses can no
+longer cross a revocation (and the client withholds counts while a new snapshot is unverified),
+an implicit default-role holder's stream is cancelled while an account that keeps the capability
+is left alone, a failed independent copy keeps its bounded retry and the previous recoverable
+generation, the snapshot's declared time is the moment the database snapshot was taken, and that historical browser run passed with a non-cooperative sender control proving media denial
+was server-side. Consult the alpha.5 release record for the current suite and capture evidence. What that review still lists as open is the rendered failed-refresh and
+role-only/category-only journeys, the independent foundation review, and every host,
+platform and capacity qualification — none of which this workspace can establish by itself.
+
+## Earlier implementation record (schemas 3–6)
+
+The remainder of this historical record describes earlier tranches. Current status and corrections are above and in the alpha.5 release record.
+
+Schema 3 adds two stages in one migration:
+
+- **M-A:** `users.is_owner` (unique), `roles`, `role_assignments`,
+  `authorization_state`. Backfill gives every existing administrator the
+  administrator role and every other account the member role; no owner is
+  designated.
+- **M-B:** `categories`, `channels.visibility`, `channels.posting`,
+  `channels.authorization_revision`, `channel_role_access`,
+  `channel_user_access`. Backfill keeps every existing channel public,
+  members-postable, in the same order, with the same IDs and history, and turns
+  the previous free-text category names into durable categories.
+
+Schema 4 adds session identity: `sessions.last_seen_at`, `sessions.user_agent`,
+`sessions.privileged_at` and an index, with existing sessions backfilled so their
+last-seen time is their creation time.
+
+Schema 5 adds `invitation_roles`: an invitation may carry the role grants its
+recipient receives. An invitation made before the upgrade carries none and its
+recipient gets the default role, which is what every new account received
+before. The rows are a promise, not an authority: the inviter's delegation
+rights are checked when the invitation is written and checked again when it is
+accepted, so a link that outlives a demotion delivers the default role and
+nothing more.
+
+Schema 6 is the shared conversation descriptor and deletion-safe send receipts
+(M-C, [ADR 0010](adr/0010-conversation-model-receipts-outbox-and-cursors.md)).
+It creates `conversations` (one per channel, with the channel id as the
+conversation id, created by the migration and by a channel trigger so a channel
+can never exist without its conversation), `conversation_members`,
+`messages.conversation_id` (nullable, no foreign key yet, backfilled from
+`channel_id` and read through `COALESCE(conversation_id, channel_id)`) and
+`message_operations` receipts with their expiry and outcome indexes. Message
+ids, rowids, reply and attachment references and content are untouched, so the
+FTS index stays valid, and every existing message is given a receipt whose empty
+intent digest means "intent not recorded": a replay is answered from the message
+itself and a missing message is a non-recreating conflict. Nothing private is
+enabled by this schema, and the `NOT NULL`/foreign-key tightening that direct and
+group conversations will need is deliberately a later rowid-preserving rebuild
+with foreign keys disabled outside the transaction, as ADR 0010 states.
+
+New code: `internal/db/migrations.go`, `internal/db/migration3.sql`,
+`internal/db/migration4.sql`, `internal/db/migration5.sql`, `internal/db/roles.go`,
+`internal/db/unread.go`,
+`internal/db/users.go`, `internal/db/sessions.go`, `internal/db/accounts.go`
+(`RecoverOwner`), `internal/authz/`, `internal/api/authz.go`,
+`internal/api/roles.go`, `internal/api/channel_access.go`,
+`internal/api/sessions.go`, `internal/api/admin.go` (`removeLostFactor`), the
+`recover-owner` command in `cmd/brrpbrrp/main.go`, and the route policy table in
+`internal/api/router.go`. The pre-role `routePolicy.Administrator` flag is
+deleted; capability plus recent authentication is the only mechanism left.
+
+Voice presence was the last community-wide surface. It is now channel-scoped in
+three places: `internal/api/voice_access.go` publishes a channel's participant
+list only to that channel's audience (the web client merges one channel at a
+time), the snapshot in `internal/api/state.go` filters `voice_states` through the
+same policy rule as channel content, and joining or moving resolves the channel through
+`s.voiceChannel` so a guessed identifier is refused exactly like a missing channel.
+Revocation is no longer deferred to the next request either: withdrawing a grant,
+a role or administrator status runs `enforceVoiceAccess`, which ends the media
+connection, revokes the account's TURN credentials, sends `voice.access_revoked`
+with a reason and records `voice.access_revoked` in the audit log. The web client
+merges voice updates per channel and shows that reason instead of looking like a
+network drop.
+
+WP-01 stopped being a documentation gap. The owner chose MIT with a personal
+copyright holder, and chose a contributor license agreement over a developer
+certificate of origin so the project can still be relicensed later without tracking
+down every past contributor. `LICENSE`, `CLA.md`, `CLA-SIGNATORIES.md` and
+`SECURITY.md` now exist, with `web/package.json` declaring the license.
+
+Dependency notices became generated rather than hand-maintained:
+`scripts/licenses.mjs` reads the modules the compiler actually links into the
+binary, the frontend packages the web bundle contains, and the Go standard
+library, then writes `THIRD-PARTY-NOTICES.md`. It fails when a license cannot be
+read instead of guessing, `make check` fails when the file is stale, and the
+release helper now embeds that same output next to `LICENSE` in every package
+instead of maintaining a second generator.
+
+Revocation now reaches work already in flight rather than only the next request.
+`internal/api/delivery.go` registers every streamed response against its channel and
+hands it a context that the authorization change cancels, so a slow download of a
+9 MB file ends mid-copy instead of after the client has received it;
+`http.ServeContent` keeps working for range requests because the reader delegates
+`Seek` and re-checks only `Read`. Channel changes end that channel's streams, while
+account-wide changes (a role, a ban, a removed factor) end all of them, because the
+affected channels are not known at that point. The push worker's dispatch check is
+unchanged but now observable: `Server.pushHTTP` is built before the worker starts so
+a test can substitute a recording transport and *watch* a queued notice be dropped.
+
+Attachments are now published the same way a database commit is trusted. A file
+is written to a temporary file in its destination directory, flushed, renamed onto
+its final name and followed by a directory synchronization, and only then may the
+`attachments` row that references it be inserted (`internal/app/publish.go`,
+`publish_unix.go`, `publish_windows.go`). An interrupted upload therefore leaves
+no final name, no temporary file and no row; a process killed between publication
+and the insert leaves an unowned file that no one can read and the hourly sweep
+removes; and a committed reference always has its bytes on disk. The upload path
+in `internal/api/uploads.go` and the preview writer both go through it, and the
+contract, the boundaries it covers and the ones it does not are recorded in
+[ADR 0007](adr/0007-attachment-durability.md).
+
+Backups now describe themselves. A format 2 archive records the application and
+schema version that produced it and a size and SHA-256 digest for the database and
+for every attachment, written last because the inventory is only complete then.
+Restore validates structure, manifest agreement and the size budget before writing
+anything and hashes each entry as it stages it, so a touched archive is refused
+rather than installed; `brrpbrrp verify-backup` runs the same check read-only
+against an archive anywhere on disk, which is what an operator needs for the copy
+that lives on separate storage. `copyBackup` hashes while it streams and records
+the copy only when it matches the archive it copied,`production-check` verifies the newest archive and copy instead of only dating them and judges freshness by the snapshot's recorded time and generation rather than filesystem mtime, a mismatched valid copy fails identity, and Maintenance shows the newest archive's identity. Format 1 archives stay readable, and the command says
+so instead of implying a digest check it could not perform. The decision, what it
+does and does not prove, and the evidence are in
+[ADR 0008](adr/0008-backup-manifest-and-verification.md).
+
+`scripts/upgrade-recovery.mjs` (also `make rehearsal`) turns the **fresh-install
+recovery** promise into something anyone can execute: it builds a candidate,
+preflights an empty folder, installs, writes a message and an attachment through
+the HTTP API, backs the installation up, restores that archive into a second empty
+destination, verifies it and serves the restored copy long enough to compare the
+account, the channel, the message and the attachment bytes with what was written,
+printing every step and failing on the first unmet promise. Scope matters: this is
+recovery from a snapshot taken by the *same* build, on one machine, into a second
+directory. It does not exercise a rollback, an off-host destination, or a
+changed-mtime copy. Those remain open (WP-04/WP-23/WP-24) and are listed in the
+[remediation ledger](completion-remediation-2026-09-24.md).
+
+`scripts/upgrade-rollback.mjs` (also `make rollback-rehearsal`) is the cross-version
+rehearsal, and it uses a real archived prior release rather than a schema fixture. It
+installs with the old executable and writes a representative dataset (owner, member,
+three messages with a reply, a pin, an invitation, an uploaded file and an enrolled
+second factor), snapshots with the old executable as the rollback source, proves the
+candidate's own snapshot of the un-migrated installation is written in the current
+backup format and refused by the old executable, upgrades with this tree and checks
+every row, the exact attachment bytes and a working factor, records what changed after
+the snapshot, and rolls back with the old executable into a clean folder, where the
+snapshot's data is intact and the later writes are absent. It also injects the durable
+state an interruption before the upgrade's postconditions leaves behind and proves
+verification refuses it while starting the server completes it, rebuilds the search
+index and clears the marker. It needs an archived release for the platform, or
+`--old-release`/`--old-binary`, and fails rather than skipping when neither exists. It
+reports 53 checks and writes its JSON with `--report FILE`. What it still cannot show:
+a Windows service or container lifecycle, a representative-scale dataset, a second
+platform pair, an off-host destination, or measured RPO/RTO.
+
+Client work for WP-05 lives in `web/src/lib/components/AccountSecurity.svelte`
+(enrollment, signed-in devices, revoke-one/revoke-all, sign-in confirmation) and
+in the People panel's **Remove lost second factor** action, with
+`requiresFreshAuthentication` in `web/src/lib/api.ts` letting the archive and
+credential-recovery surfaces explain a refusal and link to that panel.
+
+Client work for WP-07 adds a **Roles** tab (`admin/Roles.svelte`) that edits the
+capability catalog within the caller's own authority, role assignment per account
+in the People panel, category creation, renaming and ordering plus the
+**Who can access this?** panel in the Channels tab (visibility, posting policy,
+role and member grants, the effective reader list, and the standing disclosure
+that community managers can read every community channel). Invitations carry an
+optional role selection. `web/src/lib/permissions.ts` mirrors the server's
+capability catalog, and `/api/roles` reports per-role `grantable`, `editable` and
+`deletable` so the panel disables a control the engine would refuse rather than
+letting the user discover it on submit. The client also reacts to
+`authorization.changed` by dropping cached conversations, closing an open reply
+thread and refetching the snapshot, which closes the client-cache gap ADR 0003
+recorded; the same invalidation runs when a refreshed snapshot carries different
+authority, so a refresh that only succeeds later cannot leave a revoked view on
+screen.
+
+Client authority is capability-driven rather than role-labelled. `/state` returns
+the caller's effective capabilities, `web/src/lib/workspace.svelte.ts` exposes them
+as `can`/`canAny`, and the server-tools entry, each admin tab, the account row menu
+and the channel reorder controls are gated by the capability the server actually
+checks, so a delegated manager reaches what they were granted and loses it when it
+is revoked. Ownership has an interface: `admin/OwnerCeremony.svelte` designates or
+transfers the owner from the People tab, requires the target username to be typed in
+confirmation, and explains the recent-authentication refusal with a link to account
+security. Sidebar grouping follows the durable category position the server returns,
+so a reordering survives a reload. Search and pins hold their own results, so they
+key on an authorization generation and discard an answer admitted under the old
+authority.
+
+The same generation now guards every completion that can arrive late, not just
+search and pins: an incremental message page, an unread count, a snapshot refresh
+and a channel-scoped search each record the authorization revision they were
+admitted under and are discarded if the workspace has moved past it, so a response
+that started before a revocation cannot restore a message, a count or a channel
+after it. Unread counts are additionally withheld — not merely ignored — while a
+newer snapshot is still unverified, so the badge cannot briefly show a number
+computed from authority the client has not confirmed. The rendered delegated-manager,
+role-change and owner-transfer journeys now exist in the browser suite
+(`web/e2e/authority.spec.mjs` and `web/e2e/ownership.spec.mjs`, run by
+`npm run test:e2e`), and the store's behavior is covered by
+`web/tests/workspace-state.test.mjs`.
+
+## Evidence
+
+Commands run on this working copy, in this order, all passing:
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Build | `go build ./...` | clean |
+| Static analysis | `go vet ./...` | clean |
+| Formatting | `gofmt -l internal cmd scripts` | clean |
+| Go tests with race detector | `go test -race ./...` | all packages ok |
+| Frontend unit tests | `cd web && npm test` | 84 passing (73 after P3, plus the four account/request regressions in the P4 tranche, plus four outbox and three client-state regressions in the WP-09 client slice) |
+| Frontend type/accessibility check | `cd web && npm run check` | 0 errors, 0 warnings |
+| Frontend formatting | `cd web && npx prettier --check …` | clean |
+| Upgrade from an alpha.3 fixture | `go test ./internal/db -run TestUpgradeFromAlphaPreservesWorkspace` | identities, non-ASCII names, channel IDs/order/category, replies, pins, reactions, attachments, sessions, MFA and search all preserved; categories created once each; administrators keep authority; ownership not inferred |
+| Interrupted migration | `go test ./internal/db -run TestFailedMigrationLeavesRecoverableState` | failed upgrade leaves schema 2, no partial objects, and a retry succeeds |
+| Downgrade refusal | `go test ./internal/db -run TestRepeatedMigrationAndDowngradeRefusal` | newer schema refused by both `Migrate` and `Open`, with an actionable message |
+| Search-index repair | `go test ./internal/db -run TestVerifyDetectsGapsAndIndexDamage` | a missing index entry is repaired from surviving messages; message rows and IDs unchanged |
+| Durability policy | `go test ./internal/db -run TestDurabilityPolicyIsExplicit` | default is FULL (2), NORMAL is opt-in, unknown values rejected |
+| Privacy across delivery surfaces | `go test ./internal/api -run TestRestrictedChannelPrivacy` | see below |
+| Remediation findings (F-01…F-16) | `go test ./internal/api -run 'TestDelegatedMemberManager|TestPrivateChannelLifecycle|TestReadSurfacesAgree|TestListenOnlyMember|TestARevokedSession'`, `go test ./internal/db -run 'TestInspectionAndSnapshotNeverMigrate|TestAnIncompleteUpgradeCannotBeSkipped'`, `go test ./internal/backup -run TestManySmallAttachments`, `go test ./internal/app -run 'TestDirectorySynchronization|TestAbandonedTemporary|TestVersionIdentity'`, `cd web && npm test`, `node scripts/check-docker-inputs.mjs --self-test`, `BRRP_GO=go node scripts/check-source-package.mjs` | each finding's evidence level, acceptance test and residual limits are recorded in [the remediation ledger](completion-remediation-2026-09-24.md); the two static package checks fail if the Docker context or the source package loses an input, and the Docker audit's `--self-test` fails if it stops detecting the incomplete-notices-stage defect |
+| Route policy inventory | `go test ./internal/api -run TestEveryRoute` | every route declares a capability or an explanation; no duplicates; public set is exactly the four bootstrap endpoints |
+| Operator commands | `brrpbrrp preflight|migrate|verify` | preflight reports schema 0 → pending 1,2,3,4,5,6 without creating or migrating; migrate creates schema 6; a second preflight reports no pending work, `wal`, `FULL`, integrity ok |
+| Invite-time role grants (WP-07) | `go test ./internal/api -run TestInvitationCarriesRoleGrants` | an invitation with no roles grants only the default role; an administrator cannot promise the administrator role (403) and an unknown role is a client mistake (400); a promised moderator role arrives and is real authority (the audit log opens, invitations stay refused); the pending list reports what it will grant; and a promise written by an administrator who is demoted before acceptance delivers the default role and nothing more |
+| Role list is policy-aware (WP-07) | `go test ./internal/api -run TestRoleListReportsWhatTheCallerMayDo` | every role reports `grantable`, `editable` and `deletable` from the same policy the engine enforces (an administrator may grant and edit the member and moderator roles but cannot delete a built-in role or touch the administrator role), so the management UI does not offer a control that would always be refused |
+| Licensed source and dependency notices (WP-01) | `BRRP_GO=go node scripts/licenses.mjs --check` | the notices cover the 39 components a release redistributes — the linked Go modules, the bundled frontend package and the Go standard library — with each license read from the component itself; the check fails on a stale file, an unrecognised or missing license stops generation, and every component's license text is reproduced |
+| Release packaging carries the license | `BRRP_GO=go go run scripts/release.go -notices FILE` | the release helper now generates its notices through the same script (29,489 bytes for this dependency set) instead of listing the whole module graph, and each native package and source bundle now includes `LICENSE` |
+| Voice presence follows channel access (WP-08) | `go test ./internal/api -run TestVoicePresenceFollowsChannelAccess` | a granted member's snapshot lists the participant and an account without access sees an empty list; `voice.join` and `voice.move` on the real identifier answer "Voice channel not found." and neither leaves an unauthorized account inside the SFU; a community manager sees the participant, which the access inspector discloses |
+| Voice events stay inside the audience (WP-08) | `go test ./internal/api -run TestVoiceStateEventsStayInsideTheChannelAudience` | the granted member and a manager receive the restricted channel's participant list; an account without access receives no voice event at all inside a bounded window; leaving publishes an empty list to the same audience, so no client keeps showing someone who has left |
+| A role change reaches the accounts that hold it implicitly (R3-02) | `go test ./internal/api -run TestEffectiveRoleRevocation` | an account that holds the default role with no assignment row is in the stream's audience; narrowing the default role ends its stream, its resumable connection, its in-flight download and its voice admission, while an account that still holds the capability through another role is left alone. With the effective-holder expansion removed the first case fails, so the test pins the implicit-holder path rather than a named assignment |
+| Revocation evicts an active voice peer (T-AUTH-02) | `go test ./internal/api -run TestRevocationReachesAnActiveVoiceStream` | with an SFU peer joined through a no-op signaling callback (no SDP/RTP), withdrawing the role that admitted the account removes it from the voice room while the connection is open, delivers `voice.access_revoked` with a reason, refuses the rejoin and the history request, and records one audit row. This proves **peer eviction and refusal**, not that flowing audio stopped; media qualification belongs to WP-19/WP-24 |
+| Revocation ends an in-flight download (T-AUTH-02) | `go test ./internal/api -run TestRevokedAccessEndsAnInFlightDownload` | a restricted 6.5 MB file paused after 8 KB and then revoked delivers fewer bytes than the file and the stream ends; a new request answers 404. With the revocation call removed the same test delivers all 6,815,744 bytes and fails, so it pins the behavior rather than the timing |
+| A queued notification cannot outlive access (T-AUTH-02) | `go test ./internal/api -run TestQueuedNotificationCannotOutliveAccess` | the push worker is held on one notice while a restricted notice waits behind it; the grant is withdrawn, the backlog drains, and the restricted device receives nothing while the trailing notice (and the same notice after the grant is restored) does |
+| A resumable voice connection cannot outlive access (T-AUTH-02) | `go test ./internal/api -run TestADetachedVoicePeerCannotResumeAfterRevocation` | a detached connection resumes successfully before the revocation, is gone from the voice room after it, and the same token is refused afterwards |
+| Client voice handling (WP-08) | `cd web && npm test` | an update for one channel replaces only that channel's entries, and an access revocation ends the stream with the server's reason on screen instead of a silent disconnect |
+| Client authorization handling (WP-08/WP-07) | `cd web && npm test` | an `authorization.changed` event clears every cached conversation and refetches the snapshot, and a channel the snapshot no longer returns is dropped from the cache and the active conversation moves on |
+| A late completion cannot cross a revocation (R3-01) | `cd web && npm test` | five regressions: an incremental message page, an unread count, a snapshot refresh and a channel-scoped search each admitted under the old revision are discarded after `authorization.changed` (the arriving messages do not enter the conversation, the count does not move, a stale snapshot does not become current, the search results stay as they were), while the same completion admitted under the current revision still applies — so the guard discriminates rather than dropping everything. Removing the generation check makes the first four fail |
+| Unread counts are withheld while a snapshot is unverified (R3-01) | `cd web && npm test` | after an `authorization.changed` event the unread total is not displayed from the last known snapshot until a refetch confirms it, and an incremental count admitted in that window does not restore it; the count returns once the confirmed snapshot arrives |
+| Recent-authentication gate (T-AUTH-04) | `go test ./internal/api -run TestRecentAuthenticationGatesOperatorActions` | a stale operator session is refused the archive and the ownership ceremony with an actionable 403; a wrong password is refused, a missing factor is refused, and password+code or a recovery code unlocks it |
+| Privileged enrollment policy (D-10) | `go test ./internal/api -run TestPrivilegedActionsRequireAnEnrolledSecondFactor` | an unenrolled administrator is refused the archive while an ordinary member keeps sending messages; the policy is a setting, not a silent bypass |
+| Sessions and revocation (T-IDENT-01) | `go test ./internal/api -run TestSessionListingAndRevocation` | three sessions listed with no token material; revoke-one signs out exactly one; another account's session id returns 404; revoke-all keeps the caller and removes the rest |
+| Revocation reaches live sockets | `go test ./internal/api -run TestRevokingOneSessionClosesOnlyItsSockets` | the revoked device's socket closes at the revocation; the surviving session's socket still completes a send |
+| Recovery-code race (T-IDENT-01) | `go test ./internal/api -run TestConcurrentRecoveryCodeUseSucceedsOnce` | 8 concurrent uses of one recovery code consume exactly one; the consumed code cannot sign in afterwards |
+| Sign-in races | `go test ./internal/api -run TestStaleCredentialsCannotCreateASession` | a password replaced mid-flight produces no session; a factor enrolled mid-flight cannot be skipped |
+| Demotion | `go test ./internal/api -run TestDemotionKeepsSecondFactorAndDropsAuthority` | a peer administrator cannot rewrite another administrator's roles; after demotion the existing session loses administration on its next request while the account keeps its second factor |
+| Lost-factor removal (T-IDENT-01) | `go test ./internal/api -run TestOperatorRemovesALostSecondFactor` | a member cannot remove a factor at all; an owner's factor is refused from the panel and named as a host-command job; a stale operator session is refused; the operator's own factor survives; the recovered account's sessions end, its password alone signs it in again, a retried removal reports that nothing was left, and the event is recorded against the acting operator |
+| Offline owner recovery (T-IDENT-01) | `go test ./internal/db -run TestOfflineOwnerRecovery` | three tests: recovery replaces the owner's password, removes its factor and three codes, ends exactly its two sessions and its push subscription, and leaves a second administrator's session, the member's history and every role assignment untouched; refusals for an administrator, a member, an unknown username, a missing username, a short password, an unbounded password and an installation with no owner, with no half-applied change and no audit row; and a deactivated, banned owner is unlocked with the audit row attributed to no account |
+| Offline actions read honestly in the audit list | `go test ./internal/api -run TestAuditLogNamesOfflineHostActions` | an actorless `owner.recovered_offline` row is presented as "host operator (offline)", so it is neither mistaken for the owner's own action nor confused with an account that was later erased |
+| Account-security UI rehearsal | `brrpbrrp serve` on a disposable data folder, driven in a browser | setup → Account panel → enrol authenticator (10 recovery codes) → session list narrows to the enrolling device → stale session shows "not recently confirmed" and the confirmation panel → confirm with a TOTP code → archive succeeds (9.7 KB ZIP); forcing a stale session again shows the refusal plus an "Open account security" link that lands on the Account tab |
+| Lockout rehearsal | `brrpbrrp serve` on a disposable data folder, `brrpbrrp recover-owner` between restarts, and the same server driven in a browser | setup → the ownership ceremony is refused until the account enrolls a factor (D-10) → the owner removes dana's lost factor in the browser, dana's session ends, her password alone signs her in again and the panel confirms it → `recover-owner` refuses while the service is running (`data folder is in use`), refuses `dana` (`not the installation owner`), an unknown name and a short password → the real recovery reports the password replacement, 10 removed codes and every device → the old session is 401, the old passphrase is rejected, the new one signs in with no second-factor challenge, `is_owner`/`is_admin` and the data are intact, the audit list reads `owner recovered_offline — host operator (offline)`, and the first privileged action is refused until a new factor is enrolled, after which the archive succeeds (10,733 bytes) |
+
+| Attachment durability at every boundary (WP-04, §6.3) | `go test ./internal/app -run TestPublish` and `go test ./internal/api -run 'TestAbortedUpload|TestUploadThatCannotPublish|TestReferenceWithout|TestOrphanFile'` | five publication tests: the final name is absent while the write runs, the temporary file sits in the destination directory, an existing file is never replaced, a failed write leaves the directory exactly as it was, and a path-like name is refused; four upload tests: an aborted body leaves no row and no file, an upload that cannot publish stores nothing (skipped only where directory permissions are not enforced), a row whose file was deleted answers 404 instead of serving something else, and the orphan sweep removes the unclaimed file while the claimed attachment and its bytes survive |
+| Backup manifest, inventory and tamper detection (WP-23, §6.3) | `go test ./internal/backup -run 'TestArchive|TestTouched|TestManifest|TestLegacy'`, `go test ./internal/api -run TestBackupCopy`, `go test ./internal/app -run TestProductionCheck` | the manifest records the application and schema version and a correct size and digest for the database and the attachment; verification is stable and repeats; an archive rebuilt with one attachment byte changed — correct ZIP checksum, unchanged manifest — fails verification and is refused by restore, which creates no database; a manifest listing an entry the archive lacks, or omitting one it has, is rejected; a format 1 archive still verifies and restores with identical attachment bytes; a copy whose digest disagrees is refused and leaves no published file while a matching copy is byte-identical; and an archive or copy that fails verification fails `production-check` with the matching reason |
+| Fresh-install recovery on a disposable destination (WP-04, WP-23) | `make rehearsal` (`node scripts/upgrade-recovery.mjs --report FILE`) | 23 checks, 0 failed (re-run with schema 6). Scope: same-build recovery on one machine, not an upgrade or rollback rehearsal. preflight on an empty folder reports schema 0 with six pending migrations and creates nothing; setup, a message and a 30-byte attachment are written through the API; the backup archive is produced and the schema is unchanged after it; `restore` into a second empty destination and `verify` report `Schema 6 verified: 1 users, 2 channels, 2 messages, 1 attachments`; the restored server signs the restored account in, serves the same channels, the message, and the attachment bytes with an identical SHA-256, and leaves no WAL side files at shutdown; `verify-backup` accepts the archive as `format 2, written by 0.4.0-alpha.4, schema 6, 1 attachment` and refuses the same archive after a single byte is flipped |
+| Cross-version upgrade and rollback with a real archived release (WP-04, WP-23) | `make rollback-rehearsal` (`node scripts/upgrade-rollback.mjs --report FILE`), launched from the archived `0.4.0-alpha.3` archive for this platform | 53 checks, 0 failed (re-run with schema 6). Identity: the baseline archive's SHA-256, the executable's SHA-256, `0.4.0-alpha.3`/schema 2/format 1 against `0.4.0-alpha.4`/schema 6/format 2. Dataset written through the old executable's API and read back before the snapshot: 2 accounts, 2 channels, 3 messages with 1 reply, 1 pin, 1 invitation, 1 attachment (30 bytes, SHA-256 recorded) and an enrolled second factor. The old executable's archive verifies as `format 1` and the candidate's snapshot of the same un-migrated installation as `format 2, written by 0.4.0-alpha.4, schema 2` with the schema unchanged; the old executable refuses that archive with `unsupported backup format`, and refuses to serve the upgraded folder with `database schema 6 is newer than this binary supports`. After the upgrade `verify` reports `Schema 6 verified: 2 users, 2 channels, 4 messages, 1 attachments`, the reply still belongs to its parent, the pin is listed, search finds the pre-upgrade text, the attachment bytes are identical, and the owner signs in with the factor the old executable enrolled. After the rollback the clean folder is schema 2, signs the owner in with the same factor, serves the same message, pin, invitation and attachment bytes, and contains neither the message nor the ban applied after the snapshot. Interruption: with the upgrade-state marker re-injected and the search index emptied, `verify` refuses (`an upgrade to 6 has not finished`), and starting the server rebuilds the index (0 matches before, 4 after), searches the pre-upgrade content and clears the marker. Not covered: Windows/Docker lifecycles, off-host copies, RPO/RTO, and interruption raced against a live migration rather than injected as its durable state |
+| Delivery ordering around an authorization change (R3-02) | `go test ./internal/api -run 'TestRevocationBoundary|TestAudienceRevision'`, `go test ./internal/ws -run TestHub` | the contract is pinned at its boundaries: a restricted event carries the authorization revision its audience was resolved at and is dropped when that revision is stale, an audience is resolved and written under one lock so a revocation cannot interleave between the two, a detached peer cannot resume across it, and a streamed download re-establishes the account's authority and session at admission so a revocation during the response ends it |
+| Failed independent copies keep their own accounting (R3-03) | `go test ./internal/api -run TestBackupCopy`, `go test ./internal/app -run TestProductionCheck` | a copy that fails verification leaves the generation's archive in place, records the failure as a failed attempt with its own bounded retry rather than as a fresh archive, reports the last verified local generation and the last independently recoverable generation separately, protects the previous recoverable generation from count-based retention until a new copy succeeds, and makes `production-check` name the newest independently recoverable generation instead of dating a broken one |
+| The declared recovery point is the snapshot boundary (R3-03) | `go test ./internal/backup -run TestSnapshotTime` | the time recorded in the manifest is the instant the database snapshot was taken, so the vacuum and compression that follow it cannot move the declared recovery point; with the timestamp taken after the vacuum the test fails |
+| A committed revocation refuses a pending write (R5-01, T-AUTH-02) | `go test ./internal/api -run TestARevocationCommittingDuringAPendingWriteIsRefused` | the real socket writer is paused immediately before its admission decision, a revocation commits through the API while the voice gate delays enforcement, and the writer is released: the queued private payload is not written, the next event the connection receives is the invalidation, the permitted manager still receives the event queued for it, and a regrant delivers a new event on the same connection. The admission decision runs under an authorization fence that every authorization-changing commit holds around both the commit and its hub invalidation, so the decision cannot interleave with the commit. With the invalidation delayed the test reports that the revoked member's socket received the payload |
+| Public voice presence requires `channel.read` (R5-02) | `go test ./internal/api -run TestPublicVoicePresenceStillRequiresChannelRead` | narrowing the default role denies an implicit holder the public voice room in its own `/state`; a permitted account then joins through the real SFU and the denied socket receives no `voice.state_updated`, while the manager keeps receiving it. Against the public broadcast the denied socket received the room and participant identifiers |
+| Failed status persistence blocks retention (R5-03) | `go test ./internal/api -run TestAFailedStatusWriteBlocksRetentionOfTheDurableRecoveryPoint` | a database trigger rejects the status write, a second backup runs at retention one, and the job reports the persistence failure while the durable generation's local archive and its independent copy both survive. With the write error swallowed the attempt returned success and pruned the recorded recovery point |
+| A missing copy source is a failed repair (R5-04) | `go test ./internal/api -run 'TestAMissingCopySource|TestANonRegularCopySource'` | a removed or non-regular recorded archive leaves a non-empty `CopyError`, a raised `CopyAttempts` and an outstanding copy, records `SourceMissing` and schedules a replacement snapshot on the short clock; a replacement snapshot then clears the state and records its independent copy. With the old no-op branch the missing source was treated as a successful repair |
+| One acquisition order removes the lock cycle (R6-01) | `go test ./internal/api -run TestAStandaloneInvalidationNeverWaitsForTheDatabaseUnderTheFence` | a transaction holds the store's single connection and a standalone invalidation reaches its revision read: the authority fence is free there, the concurrent commit completes without cancellation and the invalidation finishes afterwards. The order is documented on `Server.authority` and in [ADR 0009](adr/0009-authority-commit-and-admission-ordering.md): connection first, fence second, and nothing waits for the connection under the fence. With the revision read moved back under the fence the test reports that the invalidation holds the fence while waiting for the connection |
+| A committed credential change refuses a queued write, and registration is an admission (R6-02) | `go test ./internal/api -run 'TestACredentialCommitRefusesAQueuedWrite|TestASocketRegisteredAfterItsSessionEnded'` | an operator reset commits while the delivery registry is held (so the post-commit cleanup cannot run) and the real socket writer is paused immediately before admission: the old session's cookie already answers 401 and its queued private payload is still refused, while another member of the channel receives its event, the reset answers success and the replacement credential signs in. Separately, a connection whose session ended between the route guard and registration is closed instead of admitted, and a current session receives the ordinary hello. The per-transition commit helper and invalidation audience are inventoried in ADR 0009 |
+| Combined copy and status failure preserves the durable recovery point (R6-03) | `go test ./internal/api -run 'TestACombinedCopyAndStatusFailure|TestAStatusInsertFailure|TestAFinalStatusWriteFailure'` | a rejected status UPDATE, a lost status row with a rejected INSERT, and a failed final update each leave the archive the durable record names on disk with its recorded digest, together with the generation this attempt verified; the combined case is re-checked through a reopened `db.Store`/`api.Server` and then converges on the recorded generation. Retention now depends on an explicit successful persistence result and protects the new, previous and independently recoverable local archives |
+| Shared conversation mapping and deletion-safe send receipts (WP-09 first slice, D-11) | `go test ./internal/db -run TestUpgradeFromAlphaPreservesWorkspace`, `go test ./internal/api -run 'TestASendReceipt|TestAnOperationKeyIsBoundToItsIntent|TestAnExpiredReceipt|TestConcurrentRetriesOfOne|TestALegacyBackfilledReceipt|TestAChannelConversationIsCreated'` | schema 6 creates one conversation per channel (id = channel id, by migration and by a channel trigger), `conversation_members`, and `messages.conversation_id` backfilled and read through `COALESCE(conversation_id, channel_id)` while ids, rowids, replies, pins, reactions, attachments and FTS results stay unchanged; one acknowledged send maps to one receipt written in the same transaction, a replay returns the message, a retry after deletion or purge answers a non-recreating conflict (immediately) or an expired outcome after the window, a reused key with different content or another conversation is a conflict, and eight concurrent retries of one key create exactly one message. Pruning is bounded below the retry window. No DM, group or private surface exists; the contract is [ADR 0010](adr/0010-conversation-model-receipts-outbox-and-cursors.md) |
+| Delegated roles, rendered privacy and ownership in the browser (WP-06, WP-07, WP-08) | `npm run test:e2e`, which builds `dist/brrpbrrp-e2e` and spawns the server itself; the journeys run in a declared project order against one installation | Eight journey cases across six projects, of which six projects pass and the voice journey stops at microphone acquisition on this host (the capture-environment stall recorded in review 5, reproduced in isolation with the release and voice projects alone). **Release**: first setup, persistent chat, a reply thread with an attachment and a retry, cross-tab edit/delete, the channel switcher, search, sign-out and offline reload. **Account-switch**: a channel move held across an in-place sign-in cannot reorder the next account, a `held-response-only` channel from the old account's response never appears, no position toast leaks, and the same account's move still reorders as the permitted control (this journey fails against the pre-fix default-session admission). **Authority**: an invitation-only account opens the panel and sees only *Invitations*, creates a link, loses `invite.manage` while the panel is open (the tab goes without a reload and the account is told it holds nothing here) and gets it back the same way; the failed-refresh case (second privacy journey) opens pins, a reply thread, search and an inline image preview on content the account itself sent, holds each panel's answer **after** the server admitted it so the answer really carries restricted content, takes `channel.read` away while the confirming refresh fails, and shows that nothing renders at the revocation or when the held answer lands, with the same account recovering by navigation. Three pre-fix mutations fail it: dropping `PinsPanel`'s answer guard, dropping `SearchPanel`'s authorization dependency, and dropping the thread clearing in `clearActiveConversation`; an audit-only account sees only *Maintenance* with the audit list and none of the health grid, setup checks or backup controls; the owner still sees every tab and the audit log is displayed as always-on and disabled. **Privacy**: an ordinary member reads a channel, quotes a message, then the default role loses `channel.read` while a history response is deliberately held in flight — the message, the quoted reply and the channel entry are gone from the DOM, the held response lands and restores nothing, and restoring the grant lets the account read the conversation again by navigating, with no reload or re-sign-in. A third case proves the durable half of a send: with device persistence turned on through the preference, a send whose delivery is refused and never confirmed is rebuilt from the account's own device scope after a reload, what the person wrote is on screen again, and the retry submits the same operation key so exactly one message exists afterwards (removing the restore fails this journey). **Ownership**: the ceremony reports that no owner is designated, refuses a transfer until the account enrols a factor and offers the place to do so, completes both the first designation and a later transfer, removes the operator surface from the former owner without a reload (no ownership ceremony, no backup control), refuses that account's attempt to delete the new owner with the ownership message, records `owner designated` in the audit list, and shows the new owner the surface although no role grants it. **Voice**: two accounts join `Lounge` with a fake capture device and a real `RTCPeerConnection` per client, the speaker's inbound audio bytes keep arriving, the speaker's role loses `voice.speak` with neither client touched, the inbound bytes stop and `voice.access_revoked` arrives with its reason, and restoring the capability lets them resume; a non-cooperative sender control then shows the server refusing the withdrawn speaker's own outbound media while its socket stays open, so the stop is enforcement rather than the two clients politely agreeing |
+| Roles, categories and restricted channels in the browser (WP-07) | `brrpbrrp serve` on a disposable data folder with `BRRP_ENABLE_RESTRICTED_CHANNELS=true`, driven in a browser | setup as the first administrator → **Channels** → create the durable category *Operations* and the channel *briefing* inside it (the sidebar regroups under OPERATIONS, and the category's channel count follows) → **Who can access this?** reports "Public — every member can read it", "Everyone who can read it may post", "1 accounts" and the standing disclosure that community managers can read every community channel → set visibility to Private and grant the Moderator role → save, and the row reads `Operations · Text channel · Private` while the sidebar shows a shield on `briefing` → **People** offers only promising roles (the *Administrator* option is absent because the administrator cannot act on a role at its own position; checking *Moderator* and creating the link shows `Expires … · Moderator` on the pending entry) → an invitation with no roles accepted in a separate browser context signs that account in as a plain member, whose workspace contains only `general` and `Lounge`, while history, first-unread and channel-scoped search on the real `briefing` id all answer a non-disclosing 404 and the access inspector answers 403 → the invitation that promised *Moderator* signed that account in holding Member + Moderator, and its workspace contained `briefing` → **Roles** lists Administrator/Moderator/Member with member counts, disables the three operator capabilities for a non-owner administrator, and created the custom role *Announcer* (position 20, 8 capabilities) → assigning it to a member in the People panel took effect without a reload in that member's open tab: `briefing` appeared in its sidebar with the private flag, and revoking it removed the channel again, moved the tab back to `general` and left none of the private message text on the page |
+
+The voice evidence above is socket- and SFU-level: a real peer in the SFU, real
+WebSocket clients, and a bounded read that proves silence. A rehearsal with a real
+microphone, a second device and a forced relay is the media qualification the plan
+assigns to WP-24/WP-33 and is not claimed here.
+
+The privacy test (`internal/api/privacy_test.go`) is the T-AUTH-01 scenario with a
+revocation step: with restricted channels enabled, an authenticated outsider that
+knows the real channel, message and attachment identifiers receives a
+non-disclosing 404 from history, pins, first-unread, single message, context,
+replies, read cursor, send, reaction and file download; receives no search hit from
+either global or channel-scoped search; sees no channel title or unread count in
+workspace state; and is refused the access inspector with 403. After the grant is
+removed, the previously authorized member receives 404 from the same surfaces, the
+search no longer returns the message, and the authorization revision has advanced.
+
+## Decisions taken with defaults pending ratification
+
+Recorded as ADRs so they can be reviewed rather than discovered:
+
+1. [Roles, ownership and the operator tier](adr/0001-roles-ownership-and-operator-tier.md)
+2. [Schema migration, preflight verification and durability](adr/0002-schema-migration-and-durability.md)
+3. [Restricted-channel enforcement ships disabled](adr/0003-restricted-channel-exposure.md)
+4. [Sessions, recent authentication and privileged enrollment](adr/0004-sessions-recent-authentication-and-privileged-enrollment.md)
+5. [Credential lockout recovery](adr/0005-credential-lockout-recovery.md)
+6. [Licensing, copyright and contribution terms](adr/0006-licensing-and-contribution-terms.md)
+7. [Attachment durability and publication order](adr/0007-attachment-durability.md)
+8. [Backup manifest, inventory and verification](adr/0008-backup-manifest-and-verification.md)
+
+Three defaults need an explicit owner decision: `BRRP_SQLITE_SYNCHRONOUS=FULL` as
+the production baseline (D-16), `BRRP_ENABLE_RESTRICTED_CHANNELS=false` as the
+exposure gate (D-06/WP-08), and `RequirePrivilegedMFA=true` as the enrollment
+requirement (D-10). A fourth was added with the sign-in-budget finding and is
+recorded as D-17 in the remediation ledger: `BRRP_LOGIN_ATTEMPTS` now exists (default
+20 per address per five minutes, raising it is supported and documented), but whether
+that default suits a community server and whether the throttle should also key on the
+account instead of counting successful sign-ins against one address budget are open.
+`RequirePrivilegedMFA=true` remains the enrollment policy (D-10) — with it on, an
+owner or administrator who has not enrolled a factor cannot archive the server, take
+over an account or move ownership, and
+with it off the 15-minute recent-authentication gate is the only barrier on those
+actions. One product disclosure needs owner review: community channel managers
+can read every community channel, including restricted ones, and the application
+says so.
+
+ADR 0006 needs four owner confirmations rather than a decision: the exact spelling
+of the copyright holder in `LICENSE` (written as *Cameron Amer* from this
+workspace), whether the manual CLA signing process stays or a signing service
+replaces it, the response targets stated in [SECURITY.md](../SECURITY.md), and one
+review pass over the agreement text by whoever advises the owner on licensing. The
+security intake itself is not live and cannot be until the repository exists.
+
+The 25 September 2026 sixth and seventh reviews added findings R6-01–R6-04 and the P6 plan;
+they are recorded in §9 of the same ledger. All three reproduced code failures now have
+implementation fixes and permanent regressions observed failing against the old behavior:
+the authorization/database lock cycle is replaced by one documented acquisition order
+([ADR 0009](adr/0009-authority-commit-and-admission-ordering.md)), every credential and
+session transition commits together with invalidation of affected deliveries
+(including socket registration, which is now an admission), and backup retention depends on an
+explicit persistence result so a combined copy-and-status failure cannot prune the archive the
+durable ledger still names. The WP-09 design contradiction is reconciled in
+[ADR 0010](adr/0010-conversation-model-receipts-outbox-and-cursors.md), and the server half of
+its first slice is implemented as schema 6. The rendered failed-refresh case the reviews
+listed as missing now exists in the privacy journey (pins, an open thread, search and an inline
+image preview, each holding an answer the server had already admitted, with the confirming
+refresh failing), and the address-wide sign-in budget it exposed is now the operator setting
+`BRRP_LOGIN_ATTEMPTS` rather than a fixed 20 per address. What the reviews still list as open is
+the independent review, D-08, the voice and admin panels of the rendered failed-refresh case,
+and every host, platform, media and capacity qualification.
+
+## Next actions in dependency order
+
+1. Review the implemented authority/session/delivery ordering and private-channel boundary independently (WP-28); keep restricted-channel exposure gated. The review must include the alpha.5 fixes for credential self-service, post-commit socket delivery, account removal and push registration.
+2. Ratify private-history lifecycle and contact defaults. Implement and test the rowid-preserving migration that lets the shared message pipeline address non-channel conversations before adding any private UI.
+3. Deliver canonical 1:1 requests and consent, then blocking and small groups (WP-10–11). Prove no operator/admin bypass, no unaccepted attachments/calls, and consistent search/files/events/notifications/read permissions. Community reports do not supply private-report policy.
+4. Expand organized threads, notification controls, accessibility/mobile journeys and moderation around those shared services. Preserve recoverable text, monotonic cursors and selected-evidence privacy.
+5. Implement media admission and desktop screen sharing, then qualify device/network behavior and load on the intended support matrix. Existing voice automation is transport evidence only; it cannot replace audible physical-device calls.
+6. In parallel, connect the real Windows/Tailscale and Linux Docker test hosts, rehearse install/update/reboot/lockout/rollback and independent restore with exact candidate artifacts. Record RPO/RTO, capacity and soak evidence. This workspace has no Docker engine or connected Windows host.
+7. Establish the canonical public repository, maintainer/security contacts, hosted CI, immutable artifact identity, signing and release process. Conduct the prescribed independent review, 14-day beta and seven-day final-candidate observation before proposing v1.0.0 publication.
+
+No unpublished prerelease is a substitute for those acceptance results. The current stop point is a tested, packaged alpha milestone with an explicit remaining scope.

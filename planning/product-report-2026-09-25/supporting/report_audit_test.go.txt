@@ -1,0 +1,23 @@
+package api
+import (
+ "net/http"
+ "testing"
+ "time"
+ "brrpbrrp/internal/db"
+)
+func TestReportOriginalRetryAfterReceiptPruning(t *testing.T) {
+ s, handler := testServer(t)
+ admin := setupAdmin(t,s,handler)
+ channelID := textChannelID(t,s)
+ input := messageInput{Content:"original delayed payload",IdempotencyKey:"report-original-key"}
+ created := request(t,handler,"POST","/api/channels/"+channelID+"/messages",input,admin)
+ if created.Code != http.StatusCreated { t.Fatalf("setup %d",created.Code) }
+ message := readJSON[db.Message](t,created)
+ if w:=request(t,handler,"DELETE","/api/messages/"+message.ID,map[string]any{"confirm":message.ID},admin);w.Code!=http.StatusOK{t.Fatalf("delete %d",w.Code)}
+ old:=db.Timestamp(time.Now().Add(-31*24*time.Hour))
+ if _,err:=s.store.Exec(`UPDATE message_operations SET created_at=?,expires_at=? WHERE idempotency_key=?`,old,old,input.IdempotencyKey);err!=nil{t.Fatal(err)}
+ if _,err:=s.store.PruneSendReceipts(t.Context(),s.store,db.Timestamp(time.Now().Add(-receiptPruneAfter)));err!=nil{t.Fatal(err)}
+ retry:=request(t,handler,"POST","/api/channels/"+channelID+"/messages",input,admin)
+ t.Logf("original identical retry after prune: status=%d stored_messages=%d body=%s",retry.Code,messagesIn(t,s,channelID),retry.Body.String())
+ if retry.Code == http.StatusCreated {t.Fatalf("original expired operation recreated deleted message after receipt pruning")}
+}

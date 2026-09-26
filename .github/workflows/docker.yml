@@ -1,0 +1,34 @@
+name: Docker
+# Called by .github/workflows/check.yml, where the image result is one of the jobs the
+# manual packaging job requires, so a distribution cannot be promoted while the image
+# build or its container lifecycle check has failed. Runtime-triggered runs come from
+# that caller alone; dispatch this workflow directly only to build an image by itself.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Validate Compose configurations
+        run: |
+          docker compose --env-file .env.docker.example config --quiet
+          docker compose --env-file .env.docker.example -f compose.yaml -f compose.turn.yaml config --quiet
+          BRRP_BACKUP_HOST_DIR=/tmp/brrpbrrp-backup-ci docker compose --env-file .env.docker.example -f compose.yaml -f compose.backup.yaml config --quiet
+          BRRP_BACKUP_HOST_DIR=/tmp/brrpbrrp-backup-ci docker compose --env-file .env.docker.example -f compose.yaml -f compose.turn.yaml -f compose.backup.yaml config --quiet
+      - name: Check Dockerfile
+        run: docker buildx build --check .
+      - name: Build x64 image
+        run: docker buildx build --platform linux/amd64 --load -t brrpbrrp:ci .
+      - name: Test container lifecycle and persistent data
+        run: node scripts/check-docker.mjs brrpbrrp:ci
+      - name: Build ARM64 image
+        run: docker buildx build --platform linux/arm64 --output type=oci,dest=/tmp/brrpbrrp-arm64.oci.tar .

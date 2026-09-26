@@ -1,0 +1,103 @@
+{
+  "date": "2026-09-15T05:52:30.447Z",
+  "environment": "Development Mac, loopback HTTP, synthetic fixture; transfer bodies exclude headers",
+  "startup": {
+    "before": [
+      {
+        "kind": "JS",
+        "requested": "identity",
+        "served": "identity",
+        "bytes": 211620
+      },
+      {
+        "kind": "JS",
+        "requested": "gzip",
+        "served": "identity",
+        "bytes": 211620
+      },
+      {
+        "kind": "JS",
+        "requested": "br",
+        "served": "identity",
+        "bytes": 211620
+      },
+      {
+        "kind": "CSS",
+        "requested": "identity",
+        "served": "identity",
+        "bytes": 47816
+      },
+      {
+        "kind": "CSS",
+        "requested": "gzip",
+        "served": "identity",
+        "bytes": 47816
+      },
+      {
+        "kind": "CSS",
+        "requested": "br",
+        "served": "identity",
+        "bytes": 47816
+      }
+    ],
+    "after": [
+      {
+        "kind": "JS",
+        "requested": "identity",
+        "served": "identity",
+        "bytes": 168012
+      },
+      {
+        "kind": "JS",
+        "requested": "gzip",
+        "served": "gzip",
+        "bytes": 57942
+      },
+      {
+        "kind": "JS",
+        "requested": "br",
+        "served": "br",
+        "bytes": 50499
+      },
+      {
+        "kind": "CSS",
+        "requested": "identity",
+        "served": "identity",
+        "bytes": 41407
+      },
+      {
+        "kind": "CSS",
+        "requested": "gzip",
+        "served": "gzip",
+        "bytes": 8780
+      },
+      {
+        "kind": "CSS",
+        "requested": "br",
+        "served": "br",
+        "bytes": 7754
+      }
+    ]
+  },
+  "eventPayloads": {
+    "oldStatePlus50Messages": 21747,
+    "singleReaction": 381,
+    "newMessagePlusUnread": 661,
+    "unvisitedChannelUnreadOnly": 280
+  },
+  "image": {
+    "originalBytes": 799700,
+    "previewBytes": 36887,
+    "coldMs": 86.4246,
+    "warmP50Ms": 0.6949170000000322,
+    "warmP95Ms": 1.0273899999999685
+  },
+  "statuses": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+  ]
+}

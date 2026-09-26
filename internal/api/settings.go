@@ -1,0 +1,133 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
+	"strings"
+
+	"brrpbrrp/internal/app"
+	"brrpbrrp/internal/authz"
+	"brrpbrrp/internal/db"
+)
+
+func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request, user db.User) {
+	respond(w, 200, s.Settings())
+}
+
+func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.User) {
+	var input struct {
+		Settings db.Settings `json:"settings"`
+		Confirm  string      `json:"confirm"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	settings := input.Settings
+	if settings.BackupHours == 0 {
+		settings.BackupHours = 24
+	}
+	if settings.BackupKeep == 0 {
+		settings.BackupKeep = 7
+	}
+	if settings.BackupHours < 1 || settings.BackupHours > 168 || settings.BackupKeep < 1 || settings.BackupKeep > 30 {
+		problem(w, 400, "Keep 1–30 backups and choose an interval of 1–168 hours.")
+		return
+	}
+	if strings.TrimSpace(settings.ServerName) == "" || len(settings.ServerName) > 80 || settings.MaxUploadBytes < 1 || settings.MaxUploadBytes > min(int64(app.MaxUpload), s.config.MaxUploadBytes) || settings.RetentionDays < 0 || settings.RetentionDays > 36500 || settings.VoiceBitrate < 8 || settings.VoiceBitrate > 64 || settings.TURNPort < 1024 || settings.TURNPort > 65535 || (settings.Theme != "light" && settings.Theme != "dark") {
+		problem(w, 400, "Some settings are outside the supported range.")
+		return
+	}
+	if settings.TURN && net.ParseIP(settings.TURNExternalIP) == nil {
+		problem(w, 400, "TURN needs the server's reachable IPv4 address.")
+		return
+	}
+	if settings.Purge && settings.RetentionDays < 1 {
+		problem(w, 400, "Choose at least one retention day before enabling automatic deletion.")
+		return
+	}
+	// The audit log is mandatory. A community whose administrators can silence
+	// the record of their own authority, credential and access changes cannot be
+	// reviewed after an incident, so the setting cannot be turned off at all.
+	if !settings.Audit {
+		problem(w, 400, "The audit log cannot be turned off. It records authority, credential and access changes.")
+		return
+	}
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer tx.Rollback()
+	// Authority is re-established inside the transaction, and it is established
+	// before the running configuration is touched at all.
+	principal, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.SettingsManage)
+	if err != nil {
+		s.authorityFailed(w, err)
+		return
+	}
+	s.settingsUpdateMu.Lock()
+	defer s.settingsUpdateMu.Unlock()
+	previous := s.Settings()
+	// Security policy is not routine settings. Switching the privileged
+	// second-factor requirement off weakens every operator action that depends on
+	// it, so it needs owner authority and a recent strong sign-in rather than the
+	// ordinary settings.manage capability.
+	if settings.RequirePrivilegedMFA != previous.RequirePrivilegedMFA {
+		if !principal.IsOwner {
+			problem(w, http.StatusForbidden, "Only the owner can change the second-factor policy for privileged accounts.")
+			return
+		}
+		// The freshness and enrolled-factor checks run through this transaction, not
+		// through the store. The store holds a single connection, which this
+		// transaction already owns and cannot release until it commits, so asking
+		// the store here waited on the caller's own connection and the change could
+		// not complete at all.
+		if err := s.requirePrivilegedSecurityPolicyInTx(r.Context(), tx, user.ID, principal.IsOwner || principal.IsAdministrator()); err != nil {
+			var refused problemError
+			if errors.As(err, &refused) {
+				problem(w, refused.Status, refused.Message)
+			} else {
+				s.authorityFailed(w, err)
+			}
+			return
+		}
+	}
+	if settings.Purge && (!previous.Purge || settings.RetentionDays < previous.RetentionDays) && input.Confirm != previous.ServerName {
+		problem(w, 400, "Confirm the server name before enabling or shortening automatic retention.")
+		return
+	}
+	if err := s.turn.Configure(settings.TURN, settings.TURNExternalIP, settings.TURNPort); err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	encoded, _ := json.Marshal(settings)
+	if _, err := tx.Exec(`INSERT INTO settings(key,value,updated_at) VALUES('public',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, string(encoded), db.Now()); err != nil {
+		_ = s.turn.Configure(previous.TURN, previous.TURNExternalIP, previous.TURNPort)
+		s.failed(w, err)
+		return
+	}
+	action := "settings.updated"
+	if settings.RequirePrivilegedMFA != previous.RequirePrivilegedMFA {
+		action = "settings.security_policy_changed"
+	}
+	if err := s.auditTx(r.Context(), tx, user.ID, action, ""); err != nil {
+		_ = s.turn.Configure(previous.TURN, previous.TURNExternalIP, previous.TURNPort)
+		s.failed(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		_ = s.turn.Configure(previous.TURN, previous.TURNExternalIP, previous.TURNPort)
+		s.failed(w, err)
+		return
+	}
+	s.settingsMu.Lock()
+	s.settings = settings
+	s.settingsMu.Unlock()
+	if !settings.Voice {
+		s.voice.Close()
+	}
+	s.hub.Broadcast("settings.updated", settings)
+	respond(w, 200, settings)
+}

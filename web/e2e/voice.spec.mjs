@@ -1,0 +1,253 @@
+import { expect, test } from '@playwright/test';
+import {
+  assignOnly,
+  createAccount,
+  createRole,
+  setRolePermissions,
+  signIn,
+  signInOverApi
+} from './support.mjs';
+
+// R2-04's acceptance is about media, not about peer state: withdrawing voice.speak must stop
+// audio being forwarded, and no client cooperation may be needed for that. Signaling and SFU
+// flags are covered by Go tests; this journey measures the negotiated transport instead, in a
+// real Chromium with a deterministic synthetic audio track, by reading the WebRTC byte counters of the
+// listener's peer connection before, during and after the withdrawal.
+//
+// The sending peer is deliberately made non-cooperative, because a client that politely stops
+// capturing when it is told it may not speak proves nothing about the server: capture is forced
+// back on and its outbound counter is asserted to keep growing while the listener's inbound
+// counter stops. That combination is what makes the denial server-side.
+//
+// It also covers the permitted side of the contract: the same speaker gets audible again when
+// the capability is returned.
+//
+// This is synthetic Chromium/loopback evidence with a Web Audio oscillator. It is not audible
+// quality, not a real microphone, not a forced relay and not a second network.
+const SPEAKER = { username: 'speaker', password: 'a speaker passphrase' };
+const LISTENER = { username: 'listener', password: 'a listener passphrase' };
+const DEFAULT_ROLE_WITHOUT_SPEAK = ['channel.read', 'message.send', 'voice.connect'];
+const SPEAKERS_WITHOUT_SPEAK = ['channel.read', 'message.send', 'voice.connect'];
+const SPEAKERS_WITH_SPEAK = ['channel.read', 'message.send', 'voice.connect', 'voice.speak'];
+
+// capturePeers keeps a handle on every peer connection the page creates, so the journey
+// can read the transport counters the application itself never exposes.
+async function capturePeers(page) {
+  await page.addInitScript(() => {
+    // Chromium's fake-device capture can hang in the host audio service before a track
+    // exists. Generate a real MediaStream with Web Audio for this transport-only journey.
+    // The application's negotiation, actual RTP, SFU forwarding, withdrawal and regrant
+    // remain unchanged; this does not validate OS microphone capture or permission UI.
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      if (!constraints?.audio || constraints.video)
+        throw new Error('This fixture supplies audio only.');
+      const audio = new AudioContext();
+      await audio.resume();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      const destination = audio.createMediaStreamDestination();
+      oscillator.frequency.value = 440;
+      gain.gain.value = 0.1;
+      oscillator.connect(gain).connect(destination);
+      oscillator.start();
+      const track = destination.stream.getAudioTracks()[0];
+      const stop = track.stop.bind(track);
+      let stopped = false;
+      track.stop = () => {
+        if (stopped) return;
+        stopped = true;
+        oscillator.stop();
+        void audio.close();
+        stop();
+      };
+      return destination.stream;
+    };
+    const Original = window.RTCPeerConnection;
+    if (!Original) return;
+    window.__brrpPeers = [];
+    window.RTCPeerConnection = class extends Original {
+      constructor(...args) {
+        super(...args);
+        window.__brrpPeers.push(this);
+      }
+    };
+  });
+}
+
+async function audioBytes(page) {
+  return page.evaluate(async () => {
+    let inbound = 0;
+    let outbound = 0;
+    for (const peer of window.__brrpPeers ?? []) {
+      if (peer.connectionState !== 'connected') continue;
+      const report = await peer.getStats();
+      report.forEach((entry) => {
+        if (entry.kind !== 'audio') return;
+        if (entry.type === 'inbound-rtp') inbound += entry.bytesReceived ?? 0;
+        if (entry.type === 'outbound-rtp') outbound += entry.bytesSent ?? 0;
+      });
+    }
+    return { inbound, outbound };
+  });
+}
+
+// forceTransmission turns the page's capture back on and re-attaches it wherever the
+// application detached it, so the sender keeps sending RTP regardless of what it was told.
+async function forceTransmission(page) {
+  return page.evaluate(async () => {
+    let attached = 0;
+    for (const peer of window.__brrpPeers ?? []) {
+      if (peer.connectionState !== 'connected') continue;
+      for (const sender of peer.getSenders()) {
+        if (sender.track) {
+          if (sender.track.kind !== 'audio') continue;
+          sender.track.enabled = true;
+          attached++;
+          continue;
+        }
+        // Voice is audio-only, so a detached sender is an audio sender: give it a fresh
+        // capture back and keep publishing.
+        if (!window.__brrpForced) {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          window.__brrpForced = stream.getAudioTracks()[0];
+        }
+        await sender.replaceTrack(window.__brrpForced);
+        attached++;
+      }
+    }
+    return attached;
+  });
+}
+
+// The sidebar control is the one that outlives a join: clicking "Join voice" closes the room
+// dialog, so the joined state is read from the sidebar and the dialog is reopened only when
+// the journey needs the participant list (the checked-in test used to wait inside the dialog
+// that had just closed, which is review R3-04).
+function sidebarVoice(page) {
+  return page.locator('aside.channel-sidebar .voice-controls');
+}
+
+async function joinVoice(page, account) {
+  await signIn(page, account);
+  const channel = page
+    .locator('nav.channel-navigation button.voice-link')
+    .filter({ hasText: 'Lounge' });
+  await expect(channel).toBeVisible();
+  await channel.click();
+  const panel = page.getByRole('dialog', { name: 'Lounge', exact: true });
+  await expect(panel).toBeVisible();
+  await panel.getByRole('button', { name: 'Join voice' }).click();
+  // Joining closes the dialog; the sidebar reports the connected state it is left in.
+  await expect(sidebarVoice(page).getByRole('button', { name: 'Leave voice' })).toBeVisible({
+    timeout: 30000
+  });
+  await expect(sidebarVoice(page)).toContainText('Voice connected');
+  return panel;
+}
+
+// openRoom reopens the room dialog, which is where the participant list and per-participant
+// state live.
+async function openRoom(page) {
+  await sidebarVoice(page)
+    .getByRole('button', { name: /Voice connected/ })
+    .click();
+  const panel = page.getByRole('dialog', { name: 'Lounge', exact: true });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+test('withdrawing voice.speak stops the forwarded audio, and returning it resumes', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(420000);
+  await signInOverApi(request);
+
+  // The default role grants voice.speak to everyone, so the speaker's own role is the
+  // only thing this journey can take it away from: narrowing the default role first keeps
+  // the withdrawal meaningful.
+  const roles = await (await request.get('/api/roles')).json();
+  const defaultRole = roles.find((role) => role.is_default);
+  const originalDefault = defaultRole.permissions;
+  let speakersRole = '';
+  let listenerContext;
+  try {
+    await setRolePermissions(request, defaultRole.id, DEFAULT_ROLE_WITHOUT_SPEAK);
+
+    speakersRole = await createRole(request, 'speakers', SPEAKERS_WITH_SPEAK);
+    const speakerID = await createAccount(request, SPEAKER);
+    await createAccount(request, LISTENER);
+    await assignOnly(request, speakerID, [speakersRole]);
+
+    await capturePeers(page);
+    listenerContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+    const listenerPage = await listenerContext.newPage();
+    await capturePeers(listenerPage);
+
+    await joinVoice(page, SPEAKER);
+    await joinVoice(listenerPage, LISTENER);
+
+    // Both peers are in the call, and each sees the other. The dialog is reopened through
+    // the sidebar control rather than assumed to be open.
+    const speakerPanel = await openRoom(page);
+    const listenerPanel = await openRoom(listenerPage);
+    await expect(speakerPanel.getByText('listener')).toBeVisible({ timeout: 20000 });
+    await expect(listenerPanel.getByText('speaker')).toBeVisible({ timeout: 20000 });
+
+    // Audio is flowing: the listener's transport is receiving bytes that keep arriving.
+    const flowing = async (target) => {
+      let previous = await audioBytes(target);
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await target.waitForTimeout(1000);
+        const current = await audioBytes(target);
+        if (current.inbound > previous.inbound + 2000) return current;
+        previous = current;
+      }
+      return previous;
+    };
+    const before = await flowing(listenerPage);
+    await expect
+      .poll(async () => (await audioBytes(listenerPage)).inbound, { timeout: 20000 })
+      .toBeGreaterThan(before.inbound);
+
+    // The capability is withdrawn. The speaker keeps its client as it is: the denial must
+    // not depend on the sender volunteering a mute.
+    await setRolePermissions(request, speakersRole, SPEAKERS_WITHOUT_SPEAK);
+    await listenerPage.waitForTimeout(3000);
+    const afterWithdrawal = await audioBytes(listenerPage);
+
+    // Now make the sender non-cooperative: whatever the application did with capture, put it
+    // back and keep it on. The sender's own outbound counter is asserted to keep growing,
+    // which is what turns the following inbound measurement into server evidence.
+    await forceTransmission(page);
+    const transmitting = await audioBytes(page);
+    await listenerPage.waitForTimeout(4000);
+    await forceTransmission(page);
+    const stillTransmitting = await audioBytes(page);
+    const settled = await audioBytes(listenerPage);
+    expect(
+      stillTransmitting.outbound,
+      'the sending peer stopped transmitting, so the measurement below cannot show server enforcement'
+    ).toBeGreaterThan(transmitting.outbound + 2000);
+    expect(
+      settled.inbound - afterWithdrawal.inbound,
+      'audio kept being forwarded after voice.speak was withdrawn'
+    ).toBeLessThan(2000);
+    // The call itself is intact: the peer was muted, not evicted.
+    await expect(listenerPanel.getByText('speaker')).toBeVisible();
+
+    // Returning the capability is the permitted half of the same contract.
+    await setRolePermissions(request, speakersRole, SPEAKERS_WITH_SPEAK);
+    const resumed = await flowing(listenerPage);
+    expect(resumed.inbound, 'audio did not resume after voice.speak was returned').toBeGreaterThan(
+      settled.inbound + 2000
+    );
+  } finally {
+    // Whatever happened, the installation is left as it was found: the shared default role
+    // restored and the journey's own browser closed, so a failure here does not narrow
+    // another journey's coverage.
+    if (listenerContext) await listenerContext.close().catch(() => {});
+    await setRolePermissions(request, defaultRole.id, originalDefault);
+  }
+});

@@ -1,0 +1,25 @@
+[Unit]
+Description=BrrpBrrp community chat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=brrpbrrp
+Group=brrpbrrp
+WorkingDirectory=/var/lib/brrpbrrp
+ExecStart=/usr/local/bin/brrpbrrp serve --config /etc/brrpbrrp/server.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/brrpbrrp
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,692 @@
+{
+  "Conservative": {
+    "assumptions": {
+      "d0": 50,
+      "g": 0.05,
+      "g2": 0.025,
+      "attempt": 0.4,
+      "activate": 0.2,
+      "retain": 0.9,
+      "members": 6,
+      "dedup": 0.9
+    },
+    "months": [
+      {
+        "month": 1,
+        "downloads": 50,
+        "cumulative_downloads": 50,
+        "new_communities": 4.0,
+        "active_communities": 4.0,
+        "active_account_memberships": 24.0,
+        "estimated_people": 21.6
+      },
+      {
+        "month": 2,
+        "downloads": 52.5,
+        "cumulative_downloads": 102.5,
+        "new_communities": 4.2,
+        "active_communities": 7.800000000000001,
+        "active_account_memberships": 46.800000000000004,
+        "estimated_people": 42.120000000000005
+      },
+      {
+        "month": 3,
+        "downloads": 55.125,
+        "cumulative_downloads": 157.625,
+        "new_communities": 4.41,
+        "active_communities": 11.43,
+        "active_account_memberships": 68.58,
+        "estimated_people": 61.722
+      },
+      {
+        "month": 4,
+        "downloads": 57.88125,
+        "cumulative_downloads": 215.50625,
+        "new_communities": 4.6305000000000005,
+        "active_communities": 14.9175,
+        "active_account_memberships": 89.505,
+        "estimated_people": 80.5545
+      },
+      {
+        "month": 5,
+        "downloads": 60.775312500000005,
+        "cumulative_downloads": 276.2815625,
+        "new_communities": 4.862025000000001,
+        "active_communities": 18.287775000000003,
+        "active_account_memberships": 109.72665000000002,
+        "estimated_people": 98.75398500000001
+      },
+      {
+        "month": 6,
+        "downloads": 63.81407812500001,
+        "cumulative_downloads": 340.095640625,
+        "new_communities": 5.105126250000001,
+        "active_communities": 21.564123750000004,
+        "active_account_memberships": 129.38474250000002,
+        "estimated_people": 116.44626825000002
+      },
+      {
+        "month": 7,
+        "downloads": 67.00478203125002,
+        "cumulative_downloads": 407.10042265625,
+        "new_communities": 5.360382562500002,
+        "active_communities": 24.768093937500005,
+        "active_account_memberships": 148.60856362500004,
+        "estimated_people": 133.74770726250006
+      },
+      {
+        "month": 8,
+        "downloads": 70.35502113281252,
+        "cumulative_downloads": 477.4554437890625,
+        "new_communities": 5.628401690625003,
+        "active_communities": 27.919686234375007,
+        "active_account_memberships": 167.51811740625004,
+        "estimated_people": 150.76630566562505
+      },
+      {
+        "month": 9,
+        "downloads": 73.87277218945316,
+        "cumulative_downloads": 551.3282159785157,
+        "new_communities": 5.909821775156253,
+        "active_communities": 31.03753938609376,
+        "active_account_memberships": 186.22523631656256,
+        "estimated_people": 167.6027126849063
+      },
+      {
+        "month": 10,
+        "downloads": 77.56641079892582,
+        "cumulative_downloads": 628.8946267774415,
+        "new_communities": 6.205312863914066,
+        "active_communities": 34.13909831139845,
+        "active_account_memberships": 204.8345898683907,
+        "estimated_people": 184.35113088155165
+      },
+      {
+        "month": 11,
+        "downloads": 81.4447313388721,
+        "cumulative_downloads": 710.3393581163136,
+        "new_communities": 6.515578507109769,
+        "active_communities": 37.240766987368374,
+        "active_account_memberships": 223.44460192421025,
+        "estimated_people": 201.10014173178922
+      },
+      {
+        "month": 12,
+        "downloads": 85.51696790581572,
+        "cumulative_downloads": 795.8563260221293,
+        "new_communities": 6.841357432465258,
+        "active_communities": 40.358047721096796,
+        "active_account_memberships": 242.14828632658077,
+        "estimated_people": 217.9334576939227
+      },
+      {
+        "month": 13,
+        "downloads": 87.65489210346111,
+        "cumulative_downloads": 883.5112181255904,
+        "new_communities": 7.012391368276889,
+        "active_communities": 43.334634317264005,
+        "active_account_memberships": 260.007805903584,
+        "estimated_people": 234.00702531322563
+      },
+      {
+        "month": 14,
+        "downloads": 89.84626440604762,
+        "cumulative_downloads": 973.357482531638,
+        "new_communities": 7.18770115248381,
+        "active_communities": 46.188872038021415,
+        "active_account_memberships": 277.13323222812846,
+        "estimated_people": 249.41990900531562
+      },
+      {
+        "month": 15,
+        "downloads": 92.09242101619881,
+        "cumulative_downloads": 1065.4499035478368,
+        "new_communities": 7.367393681295906,
+        "active_communities": 48.937378515515185,
+        "active_account_memberships": 293.6242710930911,
+        "estimated_people": 264.261843983782
+      },
+      {
+        "month": 16,
+        "downloads": 94.39473154160378,
+        "cumulative_downloads": 1159.8446350894405,
+        "new_communities": 7.551578523328303,
+        "active_communities": 51.59521918729197,
+        "active_account_memberships": 309.5713151237518,
+        "estimated_people": 278.61418361137663
+      },
+      {
+        "month": 17,
+        "downloads": 96.75459983014386,
+        "cumulative_downloads": 1256.5992349195844,
+        "new_communities": 7.74036798641151,
+        "active_communities": 54.176065254974276,
+        "active_account_memberships": 325.05639152984565,
+        "estimated_people": 292.5507523768611
+      },
+      {
+        "month": 18,
+        "downloads": 99.17346482589745,
+        "cumulative_downloads": 1355.772699745482,
+        "new_communities": 7.933877186071797,
+        "active_communities": 56.69233591554865,
+        "active_account_memberships": 340.15401549329187,
+        "estimated_people": 306.1386139439627
+      },
+      {
+        "month": 19,
+        "downloads": 101.65280144654488,
+        "cumulative_downloads": 1457.4255011920268,
+        "new_communities": 8.132224115723591,
+        "active_communities": 59.15532643971737,
+        "active_account_memberships": 354.9319586383042,
+        "estimated_people": 319.4387627744738
+      },
+      {
+        "month": 20,
+        "downloads": 104.1941214827085,
+        "cumulative_downloads": 1561.6196226747352,
+        "new_communities": 8.335529718616682,
+        "active_communities": 61.57532351436232,
+        "active_account_memberships": 369.4519410861739,
+        "estimated_people": 332.50674697755653
+      },
+      {
+        "month": 21,
+        "downloads": 106.7989745197762,
+        "cumulative_downloads": 1668.4185971945114,
+        "new_communities": 8.543917961582096,
+        "active_communities": 63.96170912450818,
+        "active_account_memberships": 383.7702547470491,
+        "estimated_people": 345.3932292723442
+      },
+      {
+        "month": 22,
+        "downloads": 109.46894888277059,
+        "cumulative_downloads": 1777.887546077282,
+        "new_communities": 8.757515910621647,
+        "active_communities": 66.32305412267901,
+        "active_account_memberships": 397.93832473607404,
+        "estimated_people": 358.14449226246666
+      },
+      {
+        "month": 23,
+        "downloads": 112.20567260483985,
+        "cumulative_downloads": 1890.093218682122,
+        "new_communities": 8.97645380838719,
+        "active_communities": 68.6672025187983,
+        "active_account_memberships": 412.0032151127898,
+        "estimated_people": 370.80289360151085
+      },
+      {
+        "month": 24,
+        "downloads": 115.01081441996084,
+        "cumulative_downloads": 2005.1040331020827,
+        "new_communities": 9.200865153596869,
+        "active_communities": 71.00134742051534,
+        "active_account_memberships": 426.00808452309207,
+        "estimated_people": 383.40727607078287
+      }
+    ]
+  },
+  "Base": {
+    "assumptions": {
+      "d0": 200,
+      "g": 0.1,
+      "g2": 0.05,
+      "attempt": 0.5,
+      "activate": 0.24,
+      "retain": 0.94,
+      "members": 9,
+      "dedup": 0.9
+    },
+    "months": [
+      {
+        "month": 1,
+        "downloads": 200,
+        "cumulative_downloads": 200,
+        "new_communities": 24.0,
+        "active_communities": 24.0,
+        "active_account_memberships": 216.0,
+        "estimated_people": 194.4
+      },
+      {
+        "month": 2,
+        "downloads": 220.00000000000003,
+        "cumulative_downloads": 420.0,
+        "new_communities": 26.400000000000002,
+        "active_communities": 48.96,
+        "active_account_memberships": 440.64,
+        "estimated_people": 396.576
+      },
+      {
+        "month": 3,
+        "downloads": 242.00000000000006,
+        "cumulative_downloads": 662.0,
+        "new_communities": 29.040000000000006,
+        "active_communities": 75.0624,
+        "active_account_memberships": 675.5616,
+        "estimated_people": 608.00544
+      },
+      {
+        "month": 4,
+        "downloads": 266.2000000000001,
+        "cumulative_downloads": 928.2,
+        "new_communities": 31.94400000000001,
+        "active_communities": 102.502656,
+        "active_account_memberships": 922.523904,
+        "estimated_people": 830.2715136
+      },
+      {
+        "month": 5,
+        "downloads": 292.82000000000016,
+        "cumulative_downloads": 1221.0200000000002,
+        "new_communities": 35.13840000000002,
+        "active_communities": 131.49089664000002,
+        "active_account_memberships": 1183.4180697600002,
+        "estimated_people": 1065.0762627840002
+      },
+      {
+        "month": 6,
+        "downloads": 322.1020000000002,
+        "cumulative_downloads": 1543.1220000000003,
+        "new_communities": 38.65224000000002,
+        "active_communities": 162.25368284160004,
+        "active_account_memberships": 1460.2831455744004,
+        "estimated_people": 1314.2548310169605
+      },
+      {
+        "month": 7,
+        "downloads": 354.31220000000025,
+        "cumulative_downloads": 1897.4342000000006,
+        "new_communities": 42.517464000000025,
+        "active_communities": 195.03592587110404,
+        "active_account_memberships": 1755.3233328399365,
+        "estimated_people": 1579.7909995559428
+      },
+      {
+        "month": 8,
+        "downloads": 389.7434200000003,
+        "cumulative_downloads": 2287.177620000001,
+        "new_communities": 46.769210400000034,
+        "active_communities": 230.10298071883784,
+        "active_account_memberships": 2070.9268264695406,
+        "estimated_people": 1863.8341438225866
+      },
+      {
+        "month": 9,
+        "downloads": 428.7177620000004,
+        "cumulative_downloads": 2715.895382000001,
+        "new_communities": 51.446131440000045,
+        "active_communities": 267.7429333157076,
+        "active_account_memberships": 2409.6863998413683,
+        "estimated_people": 2168.7177598572316
+      },
+      {
+        "month": 10,
+        "downloads": 471.58953820000045,
+        "cumulative_downloads": 3187.4849202000014,
+        "new_communities": 56.59074458400005,
+        "active_communities": 308.2691019007652,
+        "active_account_memberships": 2774.4219171068867,
+        "estimated_people": 2496.979725396198
+      },
+      {
+        "month": 11,
+        "downloads": 518.7484920200005,
+        "cumulative_downloads": 3706.233412220002,
+        "new_communities": 62.24981904240006,
+        "active_communities": 352.0227748291193,
+        "active_account_memberships": 3168.204973462074,
+        "estimated_people": 2851.3844761158666
+      },
+      {
+        "month": 12,
+        "downloads": 570.6233412220006,
+        "cumulative_downloads": 4276.856753442003,
+        "new_communities": 68.47480094664007,
+        "active_communities": 399.3762092860122,
+        "active_account_memberships": 3594.3858835741103,
+        "estimated_people": 3234.9472952166993
+      },
+      {
+        "month": 13,
+        "downloads": 599.1545082831007,
+        "cumulative_downloads": 4876.011261725103,
+        "new_communities": 71.89854099397208,
+        "active_communities": 447.31217772282355,
+        "active_account_memberships": 4025.809599505412,
+        "estimated_people": 3623.228639554871
+      },
+      {
+        "month": 14,
+        "downloads": 629.1122336972558,
+        "cumulative_downloads": 5505.123495422359,
+        "new_communities": 75.49346804367069,
+        "active_communities": 495.9669151031248,
+        "active_account_memberships": 4463.702235928123,
+        "estimated_people": 4017.3320123353105
+      },
+      {
+        "month": 15,
+        "downloads": 660.5678453821185,
+        "cumulative_downloads": 6165.6913408044775,
+        "new_communities": 79.26814144585423,
+        "active_communities": 545.4770416427915,
+        "active_account_memberships": 4909.293374785124,
+        "estimated_people": 4418.364037306612
+      },
+      {
+        "month": 16,
+        "downloads": 693.5962376512246,
+        "cumulative_downloads": 6859.287578455702,
+        "new_communities": 83.23154851814694,
+        "active_communities": 595.9799676623709,
+        "active_account_memberships": 5363.819708961338,
+        "estimated_people": 4827.437738065204
+      },
+      {
+        "month": 17,
+        "downloads": 728.2760495337858,
+        "cumulative_downloads": 7587.563627989488,
+        "new_communities": 87.39312594405429,
+        "active_communities": 647.6142955466829,
+        "active_account_memberships": 5828.528659920146,
+        "estimated_people": 5245.6757939281315
+      },
+      {
+        "month": 18,
+        "downloads": 764.6898520104751,
+        "cumulative_downloads": 8352.253479999963,
+        "new_communities": 91.762782241257,
+        "active_communities": 700.5202200551389,
+        "active_account_memberships": 6304.681980496251,
+        "estimated_people": 5674.213782446625
+      },
+      {
+        "month": 19,
+        "downloads": 802.9243446109989,
+        "cumulative_downloads": 9155.177824610962,
+        "new_communities": 96.35092135331986,
+        "active_communities": 754.8399282051504,
+        "active_account_memberships": 6793.559353846354,
+        "estimated_people": 6114.203418461719
+      },
+      {
+        "month": 20,
+        "downloads": 843.0705618415489,
+        "cumulative_downloads": 9998.248386452511,
+        "new_communities": 101.16846742098586,
+        "active_communities": 810.7179999338272,
+        "active_account_memberships": 7296.461999404444,
+        "estimated_people": 6566.815799464
+      },
+      {
+        "month": 21,
+        "downloads": 885.2240899336264,
+        "cumulative_downloads": 10883.472476386138,
+        "new_communities": 106.22689079203516,
+        "active_communities": 868.3018107298327,
+        "active_account_memberships": 7814.716296568495,
+        "estimated_people": 7033.244666911645
+      },
+      {
+        "month": 22,
+        "downloads": 929.4852944303077,
+        "cumulative_downloads": 11812.957770816445,
+        "new_communities": 111.53823533163693,
+        "active_communities": 927.7419374176795,
+        "active_account_memberships": 8349.677436759115,
+        "estimated_people": 7514.709693083204
+      },
+      {
+        "month": 23,
+        "downloads": 975.9595591518231,
+        "cumulative_downloads": 12788.917329968268,
+        "new_communities": 117.11514709821877,
+        "active_communities": 989.1925682708376,
+        "active_account_memberships": 8902.733114437538,
+        "estimated_people": 8012.459802993785
+      },
+      {
+        "month": 24,
+        "downloads": 1024.7575371094142,
+        "cumulative_downloads": 13813.674867077681,
+        "new_communities": 122.9709044531297,
+        "active_communities": 1052.811918627717,
+        "active_account_memberships": 9475.307267649452,
+        "estimated_people": 8527.776540884508
+      }
+    ]
+  },
+  "Upside": {
+    "assumptions": {
+      "d0": 600,
+      "g": 0.15,
+      "g2": 0.075,
+      "attempt": 0.6,
+      "activate": 0.3,
+      "retain": 0.96,
+      "members": 12,
+      "dedup": 0.9
+    },
+    "months": [
+      {
+        "month": 1,
+        "downloads": 600,
+        "cumulative_downloads": 600,
+        "new_communities": 108.0,
+        "active_communities": 108.0,
+        "active_account_memberships": 1296.0,
+        "estimated_people": 1166.4
+      },
+      {
+        "month": 2,
+        "downloads": 690.0,
+        "cumulative_downloads": 1290.0,
+        "new_communities": 124.19999999999999,
+        "active_communities": 227.88,
+        "active_account_memberships": 2734.56,
+        "estimated_people": 2461.104
+      },
+      {
+        "month": 3,
+        "downloads": 793.4999999999999,
+        "cumulative_downloads": 2083.5,
+        "new_communities": 142.82999999999996,
+        "active_communities": 361.59479999999996,
+        "active_account_memberships": 4339.1376,
+        "estimated_people": 3905.22384
+      },
+      {
+        "month": 4,
+        "downloads": 912.5249999999997,
+        "cumulative_downloads": 2996.0249999999996,
+        "new_communities": 164.25449999999995,
+        "active_communities": 511.3855079999999,
+        "active_account_memberships": 6136.626095999999,
+        "estimated_people": 5522.963486399999
+      },
+      {
+        "month": 5,
+        "downloads": 1049.4037499999997,
+        "cumulative_downloads": 4045.428749999999,
+        "new_communities": 188.8926749999999,
+        "active_communities": 679.8227626799998,
+        "active_account_memberships": 8157.873152159997,
+        "estimated_people": 7342.0858369439975
+      },
+      {
+        "month": 6,
+        "downloads": 1206.8143124999997,
+        "cumulative_downloads": 5252.243062499999,
+        "new_communities": 217.22657624999994,
+        "active_communities": 869.8564284227996,
+        "active_account_memberships": 10438.277141073595,
+        "estimated_people": 9394.449426966235
+      },
+      {
+        "month": 7,
+        "downloads": 1387.8364593749995,
+        "cumulative_downloads": 6640.079521874998,
+        "new_communities": 249.8105626874999,
+        "active_communities": 1084.8727339733873,
+        "active_account_memberships": 13018.472807680648,
+        "estimated_people": 11716.625526912583
+      },
+      {
+        "month": 8,
+        "downloads": 1596.0119282812493,
+        "cumulative_downloads": 8236.091450156247,
+        "new_communities": 287.28214709062485,
+        "active_communities": 1328.7599717050766,
+        "active_account_memberships": 15945.11966046092,
+        "estimated_people": 14350.607694414828
+      },
+      {
+        "month": 9,
+        "downloads": 1835.4137175234366,
+        "cumulative_downloads": 10071.505167679685,
+        "new_communities": 330.3744691542186,
+        "active_communities": 1605.984041991092,
+        "active_account_memberships": 19271.808503893102,
+        "estimated_people": 17344.627653503794
+      },
+      {
+        "month": 10,
+        "downloads": 2110.725775151952,
+        "cumulative_downloads": 12182.230942831637,
+        "new_communities": 379.93063952735133,
+        "active_communities": 1921.6753198387996,
+        "active_account_memberships": 23060.103838065595,
+        "estimated_people": 20754.093454259037
+      },
+      {
+        "month": 11,
+        "downloads": 2427.3346414247444,
+        "cumulative_downloads": 14609.565584256381,
+        "new_communities": 436.92023545645395,
+        "active_communities": 2281.7285425017017,
+        "active_account_memberships": 27380.74251002042,
+        "estimated_people": 24642.668259018377
+      },
+      {
+        "month": 12,
+        "downloads": 2791.434837638456,
+        "cumulative_downloads": 17401.000421894838,
+        "new_communities": 502.458270774922,
+        "active_communities": 2692.917671576555,
+        "active_account_memberships": 32315.012058918663,
+        "estimated_people": 29083.510853026797
+      },
+      {
+        "month": 13,
+        "downloads": 3000.79245046134,
+        "cumulative_downloads": 20401.792872356178,
+        "new_communities": 540.1426410830412,
+        "active_communities": 3125.343605796534,
+        "active_account_memberships": 37504.12326955841,
+        "estimated_people": 33753.71094260257
+      },
+      {
+        "month": 14,
+        "downloads": 3225.8518842459407,
+        "cumulative_downloads": 23627.64475660212,
+        "new_communities": 580.6533391642693,
+        "active_communities": 3580.983200728942,
+        "active_account_memberships": 42971.7984087473,
+        "estimated_people": 38674.618567872574
+      },
+      {
+        "month": 15,
+        "downloads": 3467.790775564386,
+        "cumulative_downloads": 27095.435532166506,
+        "new_communities": 624.2023396015894,
+        "active_communities": 4061.9462123013736,
+        "active_account_memberships": 48743.35454761649,
+        "estimated_people": 43869.01909285484
+      },
+      {
+        "month": 16,
+        "downloads": 3727.8750837317148,
+        "cumulative_downloads": 30823.31061589822,
+        "new_communities": 671.0175150717087,
+        "active_communities": 4570.485878881027,
+        "active_account_memberships": 54845.830546572324,
+        "estimated_people": 49361.24749191509
+      },
+      {
+        "month": 17,
+        "downloads": 4007.465715011593,
+        "cumulative_downloads": 34830.776330909815,
+        "new_communities": 721.3438287020867,
+        "active_communities": 5109.010272427873,
+        "active_account_memberships": 61308.12326913448,
+        "estimated_people": 55177.31094222103
+      },
+      {
+        "month": 18,
+        "downloads": 4308.025643637462,
+        "cumulative_downloads": 39138.80197454728,
+        "new_communities": 775.4446158547431,
+        "active_communities": 5680.094477385502,
+        "active_account_memberships": 68161.13372862602,
+        "estimated_people": 61345.02035576342
+      },
+      {
+        "month": 19,
+        "downloads": 4631.1275669102715,
+        "cumulative_downloads": 43769.929541457546,
+        "new_communities": 833.6029620438488,
+        "active_communities": 6286.49366033393,
+        "active_account_memberships": 75437.92392400716,
+        "estimated_people": 67894.13153160644
+      },
+      {
+        "month": 20,
+        "downloads": 4978.4621344285415,
+        "cumulative_downloads": 48748.39167588609,
+        "new_communities": 896.1231841971374,
+        "active_communities": 6931.15709811771,
+        "active_account_memberships": 83173.88517741252,
+        "estimated_people": 74856.49665967128
+      },
+      {
+        "month": 21,
+        "downloads": 5351.846794510682,
+        "cumulative_downloads": 54100.23847039677,
+        "new_communities": 963.3324230119226,
+        "active_communities": 7617.243237204924,
+        "active_account_memberships": 91406.9188464591,
+        "estimated_people": 82266.2269618132
+      },
+      {
+        "month": 22,
+        "downloads": 5753.235304098983,
+        "cumulative_downloads": 59853.47377449575,
+        "new_communities": 1035.5823547378168,
+        "active_communities": 8348.135862454543,
+        "active_account_memberships": 100177.63034945451,
+        "estimated_people": 90159.86731450906
+      },
+      {
+        "month": 23,
+        "downloads": 6184.727951906406,
+        "cumulative_downloads": 66038.20172640216,
+        "new_communities": 1113.2510313431528,
+        "active_communities": 9127.461459299513,
+        "active_account_memberships": 109529.53751159416,
+        "estimated_people": 98576.58376043475
+      },
+      {
+        "month": 24,
+        "downloads": 6648.582548299386,
+        "cumulative_downloads": 72686.78427470154,
+        "new_communities": 1196.7448586938892,
+        "active_communities": 9959.107859621423,
+        "active_account_memberships": 119509.29431545708,
+        "estimated_people": 107558.36488391137
+      }
+    ]
+  }
+}

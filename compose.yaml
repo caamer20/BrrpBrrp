@@ -1,0 +1,45 @@
+name: brrpbrrp
+
+services:
+  brrpbrrp:
+    image: brrpbrrp:local
+    build:
+      context: .
+    restart: unless-stopped
+    stop_grace_period: 20s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    environment:
+      BRRP_DATA_DIR: /data
+      BRRP_ADDR: ":8082"
+      BRRP_BASE_URL: ${BRRP_BASE_URL:-https://localhost:8082}
+      BRRP_TLS_MODE: ${BRRP_TLS_MODE:-auto}
+      BRRP_BEHIND_PROXY: ${BRRP_BEHIND_PROXY:-false}
+      BRRP_TRUSTED_PROXIES: ${BRRP_TRUSTED_PROXIES:-}
+      BRRP_ALLOW_INSECURE_HTTP: "false"
+      BRRP_DOMAIN: ${BRRP_DOMAIN:-}
+      BRRP_ACME_EMAIL: ${BRRP_ACME_EMAIL:-}
+      BRRP_CERT_FILE: ${BRRP_CERT_FILE:-certs/tls.crt}
+      BRRP_KEY_FILE: ${BRRP_KEY_FILE:-certs/tls.key}
+      BRRP_VOICE_EXTERNAL_IP: ${BRRP_VOICE_EXTERNAL_IP:-}
+      BRRP_VOICE_PORT_MIN: "50000"
+      BRRP_VOICE_PORT_MAX: "50100"
+      BRRP_LOG_LEVEL: ${BRRP_LOG_LEVEL:-info}
+    ports:
+      - "${BRRP_BIND_IP:-127.0.0.1}:${BRRP_WEB_PORT:-8082}:8082/tcp"
+      - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:50000-50100:50000-50100/udp"
+    volumes:
+      - brrpbrrp-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  brrpbrrp-data:

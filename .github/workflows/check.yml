@@ -1,0 +1,114 @@
+name: Check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run check
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      - run: npm run format:check
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: go vet ./...
+      - run: go test -race -timeout 20m ./...
+      - run: go build ./cmd/brrpbrrp
+      # The released binary redistributes these dependencies, so the notices must
+      # match them: a stale file or an unreadable license fails here.
+      - run: node scripts/licenses.mjs --check
+      # The Docker image cannot be built on every host, so its inputs are audited
+      # statically here; --self-test proves the audit still detects the defect it was
+      # written for.
+      - run: node scripts/check-docker-inputs.mjs
+      - run: node scripts/check-docker-inputs.mjs --self-test
+      # The source package must contain every document it links to, every script its
+      # Makefile runs and every Docker build input, and must exclude the operator's own
+      # host notes.
+      - run: node scripts/check-source-package.mjs
+  browser:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm audit --audit-level=moderate
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:e2e
+        working-directory: web
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: browser-report
+          path: web/playwright-report/
+  docker:
+    uses: ./.github/workflows/docker.yml
+  # The single promotion gate: native packages are built only when the OS matrix,
+  # browser journeys and the Docker image with its container lifecycle check have all
+  # passed. Previously the Docker checks lived in a separate workflow and nothing
+  # joined them to a promotion decision (completion review F-15).
+  packages:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [test, browser, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
+      - run: go mod download
+      - run: go run scripts/release.go
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: brrpbrrp-native-packages
+          path: dist/releases/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: brrpbrrp-docker-source
+          path: |
+            dist/brrpbrrp-docker-source-*.zip
+            dist/DOCKER-SOURCE-SHA256SUMS

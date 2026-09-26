@@ -1,0 +1,8 @@
+# Add this file only when copying scheduled backups to a separate mounted disk.
+# The host directory must exist and be writable by container UID/GID 10001.
+services:
+  brrpbrrp:
+    environment:
+      BRRP_BACKUP_COPY_DIR: /backup-copy
+    volumes:
+      - ${BRRP_BACKUP_HOST_DIR:?Set BRRP_BACKUP_HOST_DIR to an absolute host directory}:/backup-copy

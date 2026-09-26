@@ -1,0 +1,7 @@
+# Add this file only when enabling the app's built-in TURN relay.
+# Its listen port must match Manage server > Settings > TURN port.
+services:
+  brrpbrrp:
+    ports:
+      - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:${BRRP_TURN_PORT:-3478}:${BRRP_TURN_PORT:-3478}/udp"
+      - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:49152-49999:49152-49999/udp"

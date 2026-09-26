@@ -1,0 +1,25 @@
+# Only source inputs enter the build context; local data and credentials stay out.
+**
+!Dockerfile
+!go.mod
+!go.sum
+!LICENSE
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!scripts/
+scripts/**
+!scripts/licenses.mjs
+!scripts/release.go
+!web/
+web/**
+!web/*.go
+!web/*.json
+!web/*.ts
+!web/*.mjs
+!web/index.html
+!web/src/
+!web/src/**
+!web/public/
+!web/public/**

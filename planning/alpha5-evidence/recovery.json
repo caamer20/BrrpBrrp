@@ -1,0 +1,140 @@
+{
+  "rehearsal": "upgrade-recovery",
+  "passed": true,
+  "target_schema": 10,
+  "pending_migrations": [
+    "1 baseline workspace, chat, files, moderation",
+    "2 replies, pins, invitations, account mfa",
+    "3 ownership, roles, categories and restricted channels",
+    "4 session identity and recent authentication",
+    "5 invite-time role selection",
+    "6 shared conversation mapping and send receipts",
+    "7 removed account identities preserve conversation history",
+    "8 channel slow mode and durable send clocks",
+    "9 community message reports and review evidence",
+    "10 account-scoped channel notification preferences"
+  ],
+  "durability": {
+    "configured": "FULL",
+    "effective": "FULL"
+  },
+  "archive_bytes": 13861,
+  "verified": "Schema 10 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+  "attachment_sha256": "acbf710bd068f4945a4641fcbf2be3f4eff2e06a3ceac852e126a52705fe33f1",
+  "checks": [
+    {
+      "name": "reports an uninitialised database",
+      "ok": true
+    },
+    {
+      "name": "lists every pending migration",
+      "ok": true,
+      "detail": "10 pending, target schema 10"
+    },
+    {
+      "name": "declares its durability setting",
+      "ok": true,
+      "detail": "FULL"
+    },
+    {
+      "name": "does not create a database",
+      "ok": true,
+      "detail": "directory still empty"
+    },
+    {
+      "name": "first-time setup accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "owner can sign in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "workspace has a text channel",
+      "ok": true,
+      "detail": "#general"
+    },
+    {
+      "name": "message accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "attachment accepted",
+      "ok": "01a0dc5a-ff9e-7d27-a1ba-aa984ff503c5",
+      "detail": "30 bytes, id 01a0dc5a-ff9e-7d27-a1ba-aa984ff503c5"
+    },
+    {
+      "name": "message with attachment accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "source server stopped cleanly",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "backup produced an archive",
+      "ok": true,
+      "detail": "13861 bytes"
+    },
+    {
+      "name": "verify-backup accepts the archive",
+      "ok": true,
+      "detail": "Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks."
+    },
+    {
+      "name": "verify-backup refuses a touched archive",
+      "ok": true,
+      "detail": "BrrpBrrp: zip: checksum error"
+    },
+    {
+      "name": "backup did not change the schema",
+      "ok": true,
+      "detail": "schema 10"
+    },
+    {
+      "name": "restore accepted the archive",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "restored copy verifies",
+      "ok": true,
+      "detail": "Schema 10 verified: 1 users, 2 channels, 2 messages, 1 attachments"
+    },
+    {
+      "name": "verified counts match what was written",
+      "ok": true,
+      "detail": "Schema 10 verified: 1 users, 2 channels, 2 messages, 1 attachments"
+    },
+    {
+      "name": "restored copy keeps the account",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "restored copy has the same channels",
+      "ok": true,
+      "detail": "2 channels"
+    },
+    {
+      "name": "restored copy serves the message",
+      "ok": true,
+      "detail": "2 messages"
+    },
+    {
+      "name": "attachment bytes are identical",
+      "ok": true,
+      "detail": "30 bytes, sha256 acbf710bd068"
+    },
+    {
+      "name": "stopped server left no WAL side files",
+      "ok": true,
+      "detail": "checkpointed on shutdown"
+    }
+  ]
+}

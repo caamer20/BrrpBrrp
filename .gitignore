@@ -1,0 +1,24 @@
+/data/
+/dist/
+/.tools/
+/.cache/
+/web/node_modules/
+/web/dist/
+/web/playwright-report/
+/web/test-results/
+.env
+.env.docker
+*.log
+*.test
+coverage.out
+.DS_Store
+/StartupProfileData-NonInteractive
+/.freebuff/
+/.codex/
+/.agents/
+
+# Operator-specific notes are also excluded from distributable source packages.
+/docs/tailscale-setup-legacy.md
+/docs/windows-startup-fix.md
+/docs/next-release.md
+/docs/references/
