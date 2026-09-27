@@ -29,13 +29,13 @@ The stable user ID remains only as the identity of retained history. Send-receip
 
 ## Reports and backups
 
-Reporting deliberately preserves the selected message's bounded text and the reporter's explanation for up to 90 days. That evidence can survive deletion of the source message or author. Physical account erasure sets report account references to null; account removal shows the retained identity as **Deleted member**. Deleting the source channel cascades its reports, since its permissions no longer exist.
+Reporting deliberately preserves the selected message's bounded text and the reporter's explanation for up to 90 days from report creation. That evidence can survive deletion of the source message or author. Physical account erasure sets report account references to null; account removal shows the retained identity as **Deleted member**. Deleting the source channel cascades its reports, since its permissions no longer exist.
 
 Reports are visible only to holders of `message.delete_any` who can currently read the source channel. Expired reports immediately disappear from APIs and are physically purged in hourly batches of at most 500. A backlog can remain on disk beyond the availability deadline until maintenance catches up. Backups retain their own snapshots until the operator removes them; neither account action edits existing backups. This is a product data policy, not a claim of legal erasure compliance.
 
 ## Boundary for later private conversations
 
-This release has no DMs/groups. Before enabling them, ratify ownership transfer, membership removal, retained-history visibility and the distinction between hiding a conversation and erasing authored content. Do not let administrators acquire private membership through this lifecycle operation. Schema 6 membership rows alone do not establish a private-conversation feature.
+The alpha.5 checkpoint described by this ADR had no DMs/groups. Alpha.6's opt-in direct conversations and their lifecycle behavior are now recorded in [ADR 0012](0012-private-conversations-consent-and-shared-storage.md); groups remain unimplemented. Before broad private-message exposure, ratify ownership transfer, membership removal, retained-history visibility and the distinction between hiding a conversation and erasing authored content. Do not let administrators acquire private membership through this lifecycle operation. Schema 6 membership rows alone did not establish a private-conversation feature.
 
 ## Evidence
 

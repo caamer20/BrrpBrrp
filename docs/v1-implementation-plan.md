@@ -5,9 +5,10 @@
 **Status:** Proposed implementation and release contract; owner decisions remain open  
 **Scope of this task:** Documentation only. No application, schema, configuration, dependency, infrastructure or release changes are authorized by this document.
 
-> **Current implementation: 0.4.0-alpha.5, schema 10, backup format 2.**
-> Roles, migration/recovery, channel send recovery, account removal, reporting,
-> slow mode and channel notification muting have local implementations. See the
+> **Current implementation: 0.4.0-alpha.6, schema 12, backup format 2.**
+> Roles, migration/recovery, send recovery, account removal, community reporting,
+> slow mode, channel notification muting and opt-in consented DMs/blocking have
+> local implementations. Alpha.5 remains the packaged checkpoint. See the
 > [progress and evidence ledger](v1-progress.md) and the
 > [architecture decision records](adr/). This plan remains the contract; the
 > ledger records what exists and what does not.
@@ -154,7 +155,7 @@ Recommendations below provide a planning baseline, not approvals. Resolve a deci
 
 | ID | Decision | Recommended baseline | Due / consequence |
 | --- | --- | --- | --- |
-| D-01 | Source license, copyright holder and contributor terms | Owner selects an appropriate license and rights process; no license is inferred | G0; blocks public source/contribution launch |
+| D-01 | Source license, copyright holder and contributor terms | Resolved in [ADR 0006](adr/0006-licensing-and-contribution-terms.md): MIT, named copyright holder and CLA/signatory record | Public repository, intake and maintainer identities still require WP-01 completion |
 | D-02 | v1 product boundary | Scope in section 3; desktop sharing included, camera video deferred | G0; changes rebaseline estimates |
 | D-03 | Supported hosts/architectures | Fully qualify Windows x64 native/Tailscale and Linux amd64 Docker; promote others only with native runtime evidence | G0; determines device, CI and signing costs |
 | D-04 | Capacity promise | Qualification targets in section 10, retaining present limits until promotion gates pass | G0 provisional; freeze before load qualification |
@@ -162,7 +163,7 @@ Recommendations below provide a planning baseline, not approvals. Resolve a deci
 | D-06 | Privilege model | One transferable owner; additive roles plus explicit channel access gates; no arbitrary inherited overrides | G0; blocks role schema and UI |
 | D-07 | DM trust/history | No unrelated-admin DM access through ordinary application APIs; operator-equivalent backup/credential takeover powers are owner-only and disclosed; accepted group members see full group history after disclosure | Before WP-09; blocks membership queries and UI promises |
 | D-08 | Account/content deletion | Deactivate by default; explicit content-erasure policy; preserve conversation continuity with tombstoned identity where approved | Before WP-12 schema approval |
-| D-09 | Moderation evidence | Reporter-selected evidence, restricted access, explicit retention; propose 90 days after resolution, configurable downward | Before WP-15; avoid silent private-content retention |
+| D-09 | Moderation evidence | Community implementation in [ADR 0011](adr/0011-account-removal-and-retained-evidence.md): selected text/explanation expires 90 days after report creation, with current-access review and bounded physical cleanup. The original proposal of 90 days after resolution is not implemented; private-report retention and any policy change require an explicit decision | Before private WP-15 reporting; preserve disclosed expiry until a policy change is approved |
 | D-10 | Privileged MFA/recovery | Require owner/admin enrollment after setup; allow all members; offline break-glass recovery with audit | Before WP-05 completion |
 | D-11 | Conversation data model | **Resolved by [ADR 0010](adr/0010-conversation-model-receipts-outbox-and-cursors.md):** one shared descriptor (a channel conversation's id is its channel id), operation identity `(account, key)` with the destination inside the intent digest, server-enforced expiry with deletion-safe receipts, opt-in account-scoped outbox, monotonic read cursors and the staged M-C migration mechanics | Before WP-09 migration; no duplicated DM storage stack |
 | D-12 | Media implementation | First evaluate embedded Pion extension; optional separate self-hosted SFU only if the spike justifies it | End WP-18; may change install model and estimate |

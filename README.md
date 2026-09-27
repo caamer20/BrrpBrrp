@@ -98,7 +98,7 @@ Press **Ctrl/Cmd + K** to jump to a text channel by name, topic or category. Unr
 
 ## Scope and limits
 
-One workspace, text and voice channels, administrator/member permissions, and focused reply discussions. No named or archived threads, direct messages, friends, multi-server guilds or public read receipts yet. Live and reversibly deactivated accounts are limited to 100 (permanently removed history identities do not consume a slot), channels to 100, pins to 100 per channel and voice to 10 simultaneous participants across the server. Uploads have a hard 12 MB cap. Messages are kept indefinitely unless an administrator enables retention or deletes them. The app does not provide end-to-end encryption; the server operator controls the database and media relay.
+One workspace, text and voice channels, capability-based roles, and focused reply discussions. Alpha.6 source includes consented direct messages behind a default-off feature gate; alpha.5 packages do not include them. Groups, private calls, named or archived threads, friends, multi-server guilds and public read receipts are not available yet. Live and reversibly deactivated accounts are limited to 100 (permanently removed history identities do not consume a slot), channels to 100, pins to 100 per channel and voice to 10 simultaneous participants across the server. Uploads have a hard 12 MB cap. Messages are kept indefinitely unless an administrator enables retention or deletes them. The app does not provide end-to-end encryption; the server operator controls the database and media relay.
 
 ## Troubleshooting
 
