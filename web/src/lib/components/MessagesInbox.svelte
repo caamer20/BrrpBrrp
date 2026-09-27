@@ -16,6 +16,10 @@
   let query = $state('');
   let target = $state<User | null>(null);
   let introduction = $state('');
+  // The account the unsent request draft belongs to. Draft ownership is separate
+  // from fetched contact data: an unrelated contact or authority refresh must not
+  // destroy text this account just typed (review 8, R8-03).
+  let draftAccount = '';
   let tab = $state<'conversations' | 'requests' | 'people' | 'blocked'>('conversations');
   let scope = $state<{ account: string; generation: number; version: number } | null>(null);
   let version = 0;
@@ -47,12 +51,33 @@
       )
       .slice(0, 30)
   );
+  // The draft's destination is revalidated from the freshly admitted lists after
+  // every refresh. A target that became forbidden keeps its text — the person can
+  // copy or explicitly discard it — and is never swapped for another destination.
+  // While authority is unverified, fetched data proves nothing: no problem is
+  // claimed from it.
+  const targetProblem = $derived.by(() => {
+    const draft = target;
+    if (!draft || !scope || !admitted(scope)) return '';
+    const name = draft.display_name || draft.username;
+    const account = (workspace.state?.users || []).find((user) => user.id === draft.id);
+    if (!account || account.is_deactivated || account.is_banned || account.is_deleted)
+      return `${name} is no longer available, so this request cannot be sent. Your introduction stays below for you to copy; it will not be sent to anyone else.`;
+    if (
+      blocked.some((user) => user.id === draft.id) ||
+      directs.some(
+        (direct) => direct.peer.id === draft.id && (direct.blocked || direct.blocked_by_me)
+      )
+    )
+      return `Contact with ${name} is blocked, so this request cannot be sent. Your introduction stays below for you to copy; it will not be sent to anyone else.`;
+    return '';
+  });
   onDestroy(() => {
     alive = false;
     version++;
   });
   $effect(() => {
-    workspace.user?.id;
+    const account = workspace.user?.id || '';
     workspace.authorizationGeneration;
     workspace.contactsVersion;
     const ready = workspace.privateConversationsEnabled && !workspace.authorizationUnverified;
@@ -64,8 +89,15 @@
       error = notice = '';
       loading = false;
       busy = false;
-      target = null;
-      introduction = '';
+      // Fetched data is refreshed, but the same account's unsent request text is
+      // not fetched data: it survives. Only an account change, an admitted send or
+      // an explicit discard clears it. The target is then revalidated from the
+      // freshly admitted lists (targetProblem), never replaced silently.
+      if (account !== draftAccount) {
+        target = null;
+        introduction = '';
+        draftAccount = '';
+      }
       if (ready) void load();
     });
   });
@@ -91,8 +123,11 @@
       if (admitted(request)) loading = false;
     }
   }
+  // act reports whether the mutation was admitted and completed for this mounted
+  // account: a no-op on stale state or a superseded result answers false, never
+  // "no error", so callers never treat work nobody confirmed as a success (R8-03).
   async function act(path: string, method: string, body: unknown, success: string) {
-    if (busy || !scope || !admitted(scope)) return;
+    if (busy || !scope || !admitted(scope)) return false;
     const request = identity();
     const mutation = ++mutationVersion;
     const current = () =>
@@ -102,31 +137,46 @@
     notice = '';
     try {
       await api(path, method, body);
-      if (!current()) return;
+      if (!current()) return false;
       // Consent and blocking advance authority. Refresh through the workspace protocol;
       // its generation checks own all histories and pending sends.
       await workspace.refreshState();
-      if (!current()) return;
+      if (!current()) return false;
       await load();
-      if (current()) notice = success;
+      if (!current()) return false;
+      notice = success;
+      return true;
     } catch (failure) {
       if (current()) error = errorMessage(failure);
+      return false;
     } finally {
       if (current()) busy = false;
     }
   }
+  function discardTarget() {
+    target = null;
+    introduction = '';
+    draftAccount = '';
+  }
   async function start(event: SubmitEvent) {
     event.preventDefault();
-    if (!target) return;
-    await act(
-      '/directs',
-      'POST',
-      { user_id: target.id, introduction: introduction.trim() },
-      'Request sent. Messaging begins only after they accept.'
-    );
-    if (!error) {
-      target = null;
-      introduction = '';
+    if (!target || targetProblem) return;
+    // The captured account, target and text are the intent. The draft is cleared
+    // only after the send was admitted as successful for this account; a refused,
+    // stale or merely silent attempt keeps the text (R8-03).
+    const account = workspace.user?.id || '';
+    const destination = target;
+    const text = introduction;
+    if (
+      await act(
+        '/directs',
+        'POST',
+        { user_id: destination.id, introduction: text.trim() },
+        'Request sent. Messaging begins only after they accept.'
+      )
+    ) {
+      if (target === destination && introduction === text && draftAccount === account)
+        discardTarget();
       tab = 'requests';
     }
   }
@@ -272,13 +322,15 @@
       {#if target}<form class="admin-form" onsubmit={start}>
           <h3>Request a conversation with {target.display_name || target.username}</h3>
           <p>Your introduction is shared with this person before they choose whether to accept.</p>
+          {#if targetProblem}<p class="error" role="alert">{targetProblem}</p>{/if}
           <label
             >Introduction (optional)<textarea bind:value={introduction} maxlength="500" rows="3"
             ></textarea></label
           >
           <div class="button-row">
-            <button type="button" class="secondary" onclick={() => (target = null)}>Cancel</button
-            ><button class="primary" disabled={busy}
+            <button type="button" class="secondary" onclick={discardTarget}>Cancel</button><button
+              class="primary"
+              disabled={busy || !!targetProblem}
               >{busy ? 'Sending request…' : 'Send request'}</button
             >
           </div>
@@ -312,8 +364,11 @@
                 tab = 'requests';
                 return;
               }
+              // Choosing a different person starts a new draft; re-choosing the same
+              // person keeps the text already typed for them.
+              if (target?.id !== person.id) introduction = '';
               target = person;
-              introduction = '';
+              draftAccount = workspace.user?.id || '';
             }}
             >{existing?.can_read
               ? 'Open conversation'

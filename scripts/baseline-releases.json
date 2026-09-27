@@ -1,0 +1,31 @@
+{
+  "manifest_format": 1,
+  "purpose": "Pinned identities of the archived prior releases that cross-version upgrade/rollback checks must run against. The archives themselves are distribution artifacts, not source: they are supplied through BRRP_BASELINE_RELEASE_DIR (a local directory) or BRRP_BASELINE_RELEASE_URL (an approved HTTPS base) and verified byte-for-byte against these SHA-256 digests before use. A missing or mismatched archive must fail the check, never silently skip it (review 8, R8-04).",
+  "baselines": {
+    "0.4.0-alpha.5": {
+      "role": "packaged checkpoint",
+      "source_commit": "3ef614d0f9f5ba27a30ab25a753c911defb3685f",
+      "database_schema": 10,
+      "archives": {
+        "brrpbrrp-0.4.0-alpha.5-darwin-amd64.zip": "f186eecda78dcc0d2faeeaefe2a18b9f9bcf62b752753a62c00a60ecffda2db1",
+        "brrpbrrp-0.4.0-alpha.5-darwin-arm64.zip": "be62173e30b122ac9c211f2a3ff7ea5aa93522f1cc4e23e81c78ae0de2d2c1fe",
+        "brrpbrrp-0.4.0-alpha.5-linux-amd64.zip": "96642a3a883035d0c90bfd6a95da9894a684605376de194a98d2c9433ef404a7",
+        "brrpbrrp-0.4.0-alpha.5-linux-arm64.zip": "2161414c04618eb7de195aa44438563c3f483f0fcd8b6439387e020fc4b55944",
+        "brrpbrrp-0.4.0-alpha.5-windows-amd64.zip": "60cf81560b892bb7c73507d813e7f1c2cc79d602bf05e25d5468c96ac1fa387c",
+        "brrpbrrp-0.4.0-alpha.5-windows-arm64.zip": "2c5a8266e08ca380028bf09251d75e9eade33811077851c0751b75ca466f4cc1"
+      }
+    },
+    "0.4.0-alpha.3": {
+      "role": "legacy compatibility baseline",
+      "database_schema": 2,
+      "archives": {
+        "brrpbrrp-0.4.0-alpha.3-darwin-amd64.zip": "85c13227ffb6f39aa518b2e7367c19ba9271c6cf74e7f6ad766aecddd9998495",
+        "brrpbrrp-0.4.0-alpha.3-darwin-arm64.zip": "40449d5e0417605c50d119f71faae700b71a530e396a84bd4edba92083d3af1b",
+        "brrpbrrp-0.4.0-alpha.3-linux-amd64.zip": "d69eeae7c9c9377065f4806542318e1e98da27dfed47f4b6bba40f94f40d0f4c",
+        "brrpbrrp-0.4.0-alpha.3-linux-arm64.zip": "630c17f9fde52852f09fca27728a10ca69e359169774b66581d097765267927f",
+        "brrpbrrp-0.4.0-alpha.3-windows-amd64.zip": "0f650f6e4392bbdd1f758fdf6f862356d41a15a979eb1c95e14ab18d40bf510b",
+        "brrpbrrp-0.4.0-alpha.3-windows-arm64.zip": "fe8325576c5dca31c99e261a4b645ef567bdc485fe80b9a1051ac09d1b3b5ea3"
+      }
+    }
+  }
+}

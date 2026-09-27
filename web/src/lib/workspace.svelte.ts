@@ -68,6 +68,14 @@ class Workspace {
   toast = $state('');
   channelNotificationMutes = $state<Record<string, boolean>>({});
   channelNotificationsReady = $state(false);
+  // Mention policy is account state, not conversation-header state: it loads
+  // independently of the selected conversation, so a session that stays in a
+  // direct conversation still verifies it (review 8, R8-02). Unverified policy
+  // stays fail-closed.
+  channelNotificationError = $state('');
+  private notificationsLoadVersion = 0;
+  private notificationMutations = 0;
+  private notificationRetry = 0;
   theme = $state(storage.getItem('brrp.theme') || 'system');
   density = $state(storage.getItem('brrp.density') || 'comfortable');
   saveDrafts = $state(false);
@@ -520,6 +528,75 @@ class Workspace {
       // state cleared and the error shown by the caller.
       await this.loadMessages();
     }
+    // Mention policy verifies here rather than in a header component, so a session
+    // that spends its life in a direct conversation still learns it (R8-02).
+    if (!this.channelNotificationsReady) void this.loadChannelNotifications();
+  }
+
+  // loadChannelNotifications fetches the account's channel mute map. The answer is
+  // applied only while the account, session and authority that asked are still
+  // current, and a mute write that began during the read owns the result over the
+  // older list. Failures keep the policy unverified (fail-closed) with a bounded
+  // retry so a transient error does not silence allowed mentions for the view's life.
+  async loadChannelNotifications(): Promise<boolean> {
+    if (this.stopped || !this.user || !this.state || this.authorizationUnverified) return false;
+    const request = this.identity();
+    const version = ++this.notificationsLoadVersion;
+    const mutations = this.notificationMutations;
+    try {
+      const preferences = await api<{ channel_id: string; muted: boolean }[]>(
+        '/me/channel-notifications'
+      );
+      if (this.stopped || !this.admitted(request) || version !== this.notificationsLoadVersion)
+        return false;
+      if (mutations !== this.notificationMutations)
+        // A mute write landed while this read was in flight; its answer is newer.
+        return false;
+      this.channelNotificationMutes = Object.fromEntries(
+        preferences.map((entry) => [entry.channel_id, entry.muted])
+      );
+      this.channelNotificationsReady = true;
+      this.channelNotificationError = '';
+      this.notificationRetry = 0;
+      return true;
+    } catch (error) {
+      if (this.stopped || !this.admitted(request) || version !== this.notificationsLoadVersion)
+        return false;
+      this.channelNotificationError = errorMessage(error);
+      if (this.notificationRetry < 3) {
+        const attempt = ++this.notificationRetry;
+        setTimeout(() => {
+          if (!this.stopped) void this.loadChannelNotifications();
+        }, attempt * 2000);
+      }
+      return false;
+    }
+  }
+
+  // setChannelNotificationMuted records one channel's mute. The mutation count moves
+  // before the request, so a preference read already in flight cannot be applied over
+  // this change's own answer when it completes second. An admitted failure is thrown
+  // for the caller to show; a stale one is swallowed because its view is gone.
+  async setChannelNotificationMuted(channel: string, muted: boolean): Promise<boolean> {
+    if (this.stopped || !this.user || this.authorizationUnverified) return false;
+    const request = this.identity();
+    const mutation = ++this.notificationMutations;
+    try {
+      const result = await api<{ channel_id: string; muted: boolean }>(
+        `/channels/${channel}/notifications`,
+        'PUT',
+        { muted }
+      );
+      if (this.stopped || !this.admitted(request) || mutation !== this.notificationMutations)
+        return false;
+      this.channelNotificationMutes[result.channel_id] = result.muted;
+      this.channelNotificationsReady = true;
+      return true;
+    } catch (error) {
+      if (!this.stopped && this.admitted(request) && mutation === this.notificationMutations)
+        throw error;
+      return false;
+    }
   }
 
   // forgetUnauthorizedChannels drops cached conversations for channels the latest
@@ -568,6 +645,11 @@ class Workspace {
     this.authorizationUnverified = true;
     this.channelNotificationMutes = {};
     this.channelNotificationsReady = false;
+    this.channelNotificationError = '';
+    // In-flight preference reads answered under the old authority are dropped; the
+    // retry budget resets so the replacement load is not throttled by old failures.
+    ++this.notificationsLoadVersion;
+    this.notificationRetry = 0;
     this.clearActiveConversation();
     this.refreshWorkspace = true;
     this.scheduleChanges();
@@ -1635,6 +1717,9 @@ class Workspace {
     this.readCursors = {};
     this.channelNotificationMutes = {};
     this.channelNotificationsReady = false;
+    this.channelNotificationError = '';
+    ++this.notificationsLoadVersion;
+    this.notificationRetry = 0;
     this.saveDrafts = false;
     this.views.clear();
     this.snapshots.clear();

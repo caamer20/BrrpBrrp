@@ -71,22 +71,135 @@ jobs:
       - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
       - run: npx playwright install --with-deps chromium
         working-directory: web
-      - run: npm run test:e2e
+      # Both feature gates are required: the default-off suite proves the shipped
+      # default, and the opted-in suite must visibly include the direct-message
+      # journeys. A run that silently skipped them would pass nothing extra.
+      - name: Browser journeys (default feature set)
         working-directory: web
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: report-default
+        run: |
+          npm run test:e2e 2>&1 | tee browser-default.log
+          mv test-results test-results-default 2>/dev/null || true
+      - name: Browser journeys (private conversations enabled)
+        working-directory: web
+        env:
+          BRRP_E2E_PRIVATE_CONVERSATIONS: '1'
+          PLAYWRIGHT_HTML_OUTPUT_DIR: report-private
+        run: |
+          npm run test:e2e 2>&1 | tee browser-private.log
+          test -d test-results && mv test-results test-results-private || true
+          grep -q '\[directs\]' browser-private.log || { echo 'FAIL: the opted-in run never executed the directs project'; exit 1; }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: browser-report
-          path: web/playwright-report/
+          path: |
+            web/report-default/
+            web/report-private/
+            web/browser-default.log
+            web/browser-private.log
+            web/test-results-default/
+            web/test-results-private/
   docker:
     uses: ./.github/workflows/docker.yml
+  # Fresh-recovery and extracted-consumer execution are required on every push — a
+  # static file-list check alone is not recovery or packaging evidence (review 8,
+  # R8-04). The cross-version upgrade/rollback gate runs with the packaging trigger
+  # and REQUIRES the pinned archived releases; with no approved artifact source
+  # configured it fails loudly instead of silently skipping (see
+  # scripts/baseline-releases.json).
+  recovery:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
+      - name: Build the candidate
+        run: mkdir -p dist check-results && go build -trimpath -ldflags="-s -w" -o dist/brrpbrrp-recovery ./cmd/brrpbrrp
+      - name: Fresh recovery rehearsal (community fixture)
+        run: node scripts/upgrade-recovery.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery.json
+      - name: Fresh recovery rehearsal (private-state fixture)
+        run: node scripts/upgrade-recovery-private.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery-private.json
+      - name: Package one native and one source archive
+        run: go run scripts/release.go -targets linux/amd64 -version 0.0.0-ci.${{ github.sha }}
+      - name: Consume the extracted native package
+        run: |
+          mkdir -p /tmp/brrp-consumer && rm -rf /tmp/brrp-consumer/*
+          unzip -q "dist/releases/brrpbrrp-0.0.0-ci.${{ github.sha }}-linux-amd64.zip" -d /tmp/brrp-consumer
+          node scripts/check-package.mjs /tmp/brrp-consumer/brrpbrrp
+      - name: Consume the extracted source package
+        run: |
+          mkdir -p /tmp/brrp-source && rm -rf /tmp/brrp-source/*
+          unzip -q "dist/brrpbrrp-docker-source-0.0.0-ci.${{ github.sha }}.zip" -d /tmp/brrp-source
+          cd /tmp/brrp-source
+          npm ci --prefix web
+          npm run build --prefix web
+          go build -trimpath -o /tmp/brrp-source-built ./cmd/brrpbrrp
+          cd "$GITHUB_WORKSPACE"
+          node scripts/check-package.mjs /tmp/brrp-source-built
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recovery-reports
+          path: check-results/*.json
+  rollback:
+    if: github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
+      - name: Build the candidate
+        run: mkdir -p dist check-results && go build -trimpath -ldflags="-s -w" -o dist/brrpbrrp-recovery ./cmd/brrpbrrp
+      # BRRP_BASELINE_RELEASE_URL is a repository/organization variable pointing at
+      # the approved archive host. Without it the fetch fails and the gate cannot
+      # pass, which is deliberate: an unverifiable baseline is not a rollback test.
+      - name: Stage the pinned archived releases
+        env:
+          BRRP_BASELINE_RELEASE_URL: ${{ vars.BRRP_BASELINE_RELEASE_URL }}
+        run: |
+          node scripts/fetch-baseline-release.mjs --self-test
+          node scripts/fetch-baseline-release.mjs --version 0.4.0-alpha.5 --platform linux/amd64
+          node scripts/fetch-baseline-release.mjs --version 0.4.0-alpha.3 --platform linux/amd64
+      - name: Upgrade/rollback against the packaged checkpoint
+        run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release "$(pwd)/dist/releases/brrpbrrp-0.4.0-alpha.5-linux-amd64.zip" --report check-results/rollback-alpha5.json
+      - name: Upgrade/rollback against the legacy baseline
+        run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release "$(pwd)/dist/releases/brrpbrrp-0.4.0-alpha.3-linux-amd64.zip" --report check-results/rollback-alpha3.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rollback-reports
+          path: check-results/*.json
   # The single promotion gate: native packages are built only when the OS matrix,
-  # browser journeys and the Docker image with its container lifecycle check have all
+  # both browser feature modes, the Docker image and container lifecycle check, the
+  # recovery/consumer executions and the cross-version rollback gate have all
   # passed. Previously the Docker checks lived in a separate workflow and nothing
   # joined them to a promotion decision (completion review F-15).
   packages:
     if: github.event_name == 'workflow_dispatch'
-    needs: [test, browser, docker]
+    needs: [test, browser, docker, recovery, rollback]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

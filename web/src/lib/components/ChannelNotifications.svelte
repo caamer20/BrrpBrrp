@@ -1,107 +1,58 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte';
-  import { api, errorMessage } from '../api';
+  import { onDestroy, onMount } from 'svelte';
+  import { errorMessage } from '../api';
   import { workspace } from '../workspace.svelte';
   import Icon from './Icon.svelte';
 
-  type Preference = { channel_id: string; muted: boolean };
-  let muted = $state<boolean | undefined>();
+  // The account's mention policy is loaded by the workspace store, independently of
+  // the conversation on screen (R8-02): this header only renders the current
+  // channel's entry and edits it. While the policy is unverified the button offers
+  // the account-owned load and mention interruptions stay withheld (fail-closed).
   let busy = $state(false);
   let error = $state('');
-  let version = 0;
   let alive = true;
-  const identity = () => ({
-    account: workspace.user?.id,
-    generation: workspace.authorizationGeneration,
-    channel: workspace.activeId,
-    version
-  });
-  const admitted = (request: ReturnType<typeof identity>) =>
-    alive &&
-    request.account === workspace.user?.id &&
-    request.generation === workspace.authorizationGeneration &&
-    request.channel === workspace.activeId &&
-    request.version === version &&
-    !workspace.authorizationUnverified;
-  $effect(() => {
-    workspace.user?.id;
-    workspace.activeId;
-    workspace.authorizationGeneration;
-    workspace.connection;
-    const ready = !workspace.authorizationUnverified;
-    untrack(() => {
-      version++;
-      muted = undefined;
-      workspace.channelNotificationMutes = {};
-      workspace.channelNotificationsReady = false;
-      error = '';
-      busy = false;
-      if (ready) void load();
-    });
-  });
+  const muted = $derived<boolean | undefined>(
+    workspace.channelNotificationsReady
+      ? (workspace.channelNotificationMutes[workspace.activeId] ?? false)
+      : undefined
+  );
   onMount(() => {
     const refresh = () => {
-      if (!busy) void load();
+      if (!busy) void workspace.loadChannelNotifications();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
   });
   onDestroy(() => {
     alive = false;
-    version++;
   });
-  async function load() {
-    if (!workspace.user || !workspace.activeId || workspace.authorizationUnverified) return;
-    const request = identity();
-    busy = true;
-    error = '';
-    try {
-      const preferences = await api<Preference[]>('/me/channel-notifications');
-      if (admitted(request)) {
-        workspace.channelNotificationMutes = Object.fromEntries(
-          preferences.map((entry) => [entry.channel_id, entry.muted])
-        );
-        workspace.channelNotificationsReady = true;
-        muted = preferences.find((entry) => entry.channel_id === request.channel)?.muted ?? false;
-      }
-    } catch (failure) {
-      if (admitted(request)) {
-        muted = undefined;
-        error = errorMessage(failure);
-      }
-    } finally {
-      if (admitted(request)) busy = false;
-    }
-  }
   async function toggle() {
     if (busy || workspace.authorizationUnverified) return;
-    if (muted === undefined) {
-      await load();
-      return;
-    }
-    const request = identity();
+    const channel = workspace.activeId;
+    if (!channel) return;
     busy = true;
     error = '';
     try {
-      const result = await api<Preference>(`/channels/${request.channel}/notifications`, 'PUT', {
-        muted: !muted
-      });
-      if (!admitted(request)) return;
-      muted = result.muted;
-      workspace.channelNotificationMutes[result.channel_id] = result.muted;
-      workspace.channelNotificationsReady = true;
-      workspace.showToast(
-        muted
-          ? 'Mention notifications muted for this channel on all your devices. Unread counts are unchanged.'
-          : 'Mention notifications restored for this channel on all your devices.'
-      );
-    } catch (failure) {
-      if (admitted(request)) {
-        muted = undefined;
-        error = errorMessage(failure);
+      if (muted === undefined) {
+        if (!(await workspace.loadChannelNotifications()) && alive)
+          error = workspace.channelNotificationError;
+        return;
       }
+      const next = !muted;
+      if (await workspace.setChannelNotificationMuted(channel, next)) {
+        if (!alive) return;
+        workspace.showToast(
+          next
+            ? 'Mention notifications muted for this channel on all your devices. Unread counts are unchanged.'
+            : 'Mention notifications restored for this channel on all your devices.'
+        );
+      }
+      // An unapplied (stale) answer belongs to another account or authority: the
+      // store already refused it, and this view shows nothing for it.
+    } catch (failure) {
+      if (alive) error = errorMessage(failure);
     } finally {
-      if (admitted(request)) busy = false;
+      if (alive) busy = false;
     }
   }
 </script>

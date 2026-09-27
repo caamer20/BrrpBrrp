@@ -69,6 +69,13 @@ async function run() {
     serverOutput = (serverOutput + chunk.toString()).slice(-12000);
   });
   await ready(baseURL);
+  // The mode is printed so a CI log proves which suite configuration ran rather
+  // than just which variable someone hoped the harness honored (review 8, R8-04).
+  console.log(
+    `browser suite feature mode: private conversations ${
+      process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'ENABLED' : 'disabled (default)'
+    }`
+  );
   const test = spawn(
     process.execPath,
     // Extra arguments are forwarded to Playwright, so a single journey can be run with

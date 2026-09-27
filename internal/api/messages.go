@@ -244,6 +244,16 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 		s.failed(w, err)
 		return
 	}
+	// Claiming staged attachments is new upload work, and staging-time authority
+	// does not authorize publication: re-establish the capability inside this
+	// transaction, at claim time (review 8, R8-01). The acknowledged and legacy
+	// replays above are answered from their records and never reach this check,
+	// so a retry still returns its recorded result and a denial here commits no
+	// message, receipt or claim.
+	if len(input.AttachmentIDs) > 0 && !principal.Allowed(authz.MessageUpload) {
+		s.scopeFailed(w, authz.Denial{Reason: "Your role does not include message.upload."})
+		return
+	}
 	// Read the policy inside the same serialized transaction as the send. A
 	// concurrent channel edit or another send cannot bypass the interval. Known
 	// receipts above remain replayable and never consume another interval.

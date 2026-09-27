@@ -1345,6 +1345,84 @@ test('muting while service-worker readiness is pending prevents the delayed noti
   assert.equal(notifications, 1, 'a confirmed unmute permits later notifications');
 });
 
+// R8-02: mention policy is account state the workspace verifies from a confirmed
+// snapshot — not a fetch owned by the channel header, which never mounts while the
+// account stays in a direct conversation.
+test('a confirmed snapshot verifies mention notification policy without a channel header', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  assert.equal(value.channelNotificationsReady, false, 'policy starts unverified');
+  setHandler((path) => {
+    if (path === '/state') return Promise.resolve(state());
+    if (path === '/me/channel-notifications')
+      return Promise.resolve([{ channel_id: 'a', muted: false }]);
+    return Promise.resolve([]);
+  });
+  await value.refreshState();
+  // The policy load follows the admitted snapshot on its own microtask chain.
+  for (let i = 0; i < 100 && !value.channelNotificationsReady; i++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(value.channelNotificationsReady, true, 'snapshot admits the policy load');
+  assert.deepEqual(value.channelNotificationMutes, { a: false });
+  value.receive({ t: 'notification.mention', d: { channel_id: 'a', body: 'mentioned you' } });
+  assert.equal(value.toast, 'mentioned you');
+});
+
+// R8-02: a preference read that started before a mute write must not apply its older
+// answer over the write's own confirmed result.
+test('a delayed preference read cannot overwrite a newer mute write', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.channelNotificationsReady = true;
+  value.channelNotificationMutes = { a: false };
+  const read = deferred();
+  setHandler((path) => (path === '/me/channel-notifications' ? read.promise : Promise.resolve([])));
+  const loading = value.loadChannelNotifications();
+  setHandler((path) =>
+    path === '/channels/a/notifications'
+      ? Promise.resolve({ channel_id: 'a', muted: true })
+      : read.promise
+  );
+  const muted = value.setChannelNotificationMuted('a', true);
+  assert.equal(await muted, true, 'the mute write applied');
+  assert.equal(value.channelNotificationMutes.a, true);
+  read.resolve([]);
+  assert.equal(await loading, false, 'the stale read was dropped');
+  assert.equal(value.channelNotificationMutes.a, true, 'the newer mute survives');
+});
+
+// R8-02: a policy read answered after the account changed is dropped entirely; the
+// next account starts unverified rather than inheriting another account's mutes.
+test('a preference answer for a previous account is never installed', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const read = deferred();
+  setHandler((path) => (path === '/me/channel-notifications' ? read.promise : Promise.resolve()));
+  const loading = value.loadChannelNotifications();
+  value.state = { ...state(), user: { id: 'other' } };
+  read.resolve([{ channel_id: 'a', muted: true }]);
+  assert.equal(await loading, false, "the previous account's answer was dropped");
+  assert.equal(value.channelNotificationsReady, false);
+  assert.deepEqual(value.channelNotificationMutes, {});
+});
+
+// R8-02: a failed load keeps the policy unverified, so allowed mentions stay
+// withheld (fail-closed) instead of falling back to unfiltered delivery.
+test('a failed preference load keeps mention policy fail-closed', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  setHandler((path) =>
+    path === '/me/channel-notifications'
+      ? Promise.reject(apiError('preference service unavailable', 500))
+      : Promise.resolve(undefined)
+  );
+  assert.equal(await value.loadChannelNotifications(), false);
+  assert.equal(value.channelNotificationsReady, false, 'unverified policy stays withheld');
+  assert.match(value.channelNotificationError, /preference service unavailable/);
+  value.receive({ t: 'notification.mention', d: { channel_id: 'a', body: 'mentioned you' } });
+  assert.equal(value.toast, '', 'an unverified failure never permits interruptions');
+});
+
 const directID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 function directWorkspace() {
   const value = recoveryWorkspace();

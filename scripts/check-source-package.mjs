@@ -47,6 +47,17 @@ function diskPath(root, archive) {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const go = process.env.BRRP_GO || 'go';
 
+// packageListEntries parses a packager list: blank entries — including the
+// trailing newline every command prints — are dropped BEFORE normalization, so an
+// empty line cannot normalize into a phantom `.` entry (review 8, R8-08).
+function packageListEntries(stdout) {
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(archivePath);
+}
+
 // readPackageList runs one list flag of the packager, so the check validates the
 // same contents the archive is built from rather than a second copy of the rules.
 function readPackageList(args) {
@@ -55,7 +66,7 @@ function readPackageList(args) {
     console.error(`could not read the package list (${args.join(' ')}): ${result.error?.message || result.stderr || result.stdout}`);
     process.exit(1);
   }
-  const paths = result.stdout.split('\n').map(archivePath).filter(Boolean);
+  const paths = packageListEntries(result.stdout);
   if (paths.length === 0) {
     console.error(`the package list (${args.join(' ')}) is empty`);
     process.exit(1);
@@ -74,6 +85,12 @@ function selfTest() {
   };
   expect('a native separator becomes an archive separator', archivePath('scripts\\release.go'), 'scripts/release.go');
   expect('a noisy entry is trimmed and normalized', archivePath('  docs//adr/0001-a.md  '), 'docs/adr/0001-a.md');
+  // R8-08: filtering runs before normalization; the trailing newline a command
+  // always prints must not become a phantom `.` entry that inflates the count.
+  expect('empty input yields no entries', packageListEntries('').length, 0);
+  expect('a trailing blank line adds no entry', packageListEntries('docs/a.md\n').join('|'), 'docs/a.md');
+  expect('blank-only input yields no entries', packageListEntries('\n \n\t\n').length, 0);
+  expect('a Windows path with a space stays one entry', packageListEntries('C:\\build\\Brrp Brrp\\scripts\\release.go\n').join('|'), 'C:/build/Brrp Brrp/scripts/release.go');
   expect('an absolute drive path is not mistaken for an archive path', archivePath('C:\\build\\BrrpBrrp'), 'C:/build/BrrpBrrp');
   expect('a root with spaces joins with the native separator', diskPath('C:\\Users\\Release Package\\BrrpBrrp', 'scripts/release.go'), ['C:\\Users\\Release Package\\BrrpBrrp', 'scripts', 'release.go'].join(sep));
   expect('a nested archive path keeps its own separator in archive form', posix.dirname('docs/adr/0002-x.md'), 'docs/adr');
