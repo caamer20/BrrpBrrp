@@ -43,5 +43,11 @@ docker-check: docker
 rehearsal:
 	node scripts/upgrade-recovery.mjs
 
+# Rehearses fresh recovery of consented private state — requests, blocks, cursors,
+# preferences, private attachment bytes, receipts and a removed participant — with the
+# private gate explicitly opened on disposable data (review 8, R8-05).
+private-rehearsal:
+	node scripts/upgrade-recovery-private.mjs
+
 rollback-rehearsal:
 	node scripts/upgrade-rollback.mjs

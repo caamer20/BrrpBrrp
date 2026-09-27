@@ -1,0 +1,198 @@
+{
+  "rehearsal": "upgrade-recovery",
+  "passed": true,
+  "binary": "/tmp/brrp-dist-alpha6/brrpbrrp",
+  "work_dir": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx",
+  "target_schema": 12,
+  "pending_migrations": [
+    "1 baseline workspace, chat, files, moderation",
+    "2 replies, pins, invitations, account mfa",
+    "3 ownership, roles, categories and restricted channels",
+    "4 session identity and recent authentication",
+    "5 invite-time role selection",
+    "6 shared conversation mapping and send receipts",
+    "7 removed account identities preserve conversation history",
+    "8 channel slow mode and durable send clocks",
+    "9 community message reports and review evidence",
+    "10 account-scoped channel notification preferences",
+    "11 required conversation scope and nullable channel message projection",
+    "12 direct consent, blocking, preferences and read cursors"
+  ],
+  "durability": {
+    "configured": "FULL",
+    "effective": "FULL"
+  },
+  "archive_bytes": 15772,
+  "verified": "Schema 12 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+  "attachment_sha256": "acbf710bd068f4945a4641fcbf2be3f4eff2e06a3ceac852e126a52705fe33f1",
+  "checks": [
+    {
+      "name": "reports an uninitialised database",
+      "ok": true
+    },
+    {
+      "name": "lists every pending migration",
+      "ok": true,
+      "detail": "12 pending, target schema 12"
+    },
+    {
+      "name": "declares its durability setting",
+      "ok": true,
+      "detail": "FULL"
+    },
+    {
+      "name": "does not create a database",
+      "ok": true,
+      "detail": "directory still empty"
+    },
+    {
+      "name": "first-time setup accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "owner can sign in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "workspace has a text channel",
+      "ok": true,
+      "detail": "#general"
+    },
+    {
+      "name": "message accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "attachment accepted",
+      "ok": "01a0e23f-7c56-7a02-a535-a1b0cc6f5880",
+      "detail": "30 bytes, id 01a0e23f-7c56-7a02-a535-a1b0cc6f5880"
+    },
+    {
+      "name": "message with attachment accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "source server stopped cleanly",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "backup produced an archive",
+      "ok": true,
+      "detail": "15772 bytes"
+    },
+    {
+      "name": "verify-backup accepts the archive",
+      "ok": true,
+      "detail": "Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks."
+    },
+    {
+      "name": "verify-backup refuses a touched archive",
+      "ok": true,
+      "detail": "BrrpBrrp: zip: checksum error"
+    },
+    {
+      "name": "backup did not change the schema",
+      "ok": true,
+      "detail": "schema 12"
+    },
+    {
+      "name": "restore accepted the archive",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "restored copy verifies",
+      "ok": true,
+      "detail": "Schema 12 verified: 1 users, 2 channels, 2 messages, 1 attachments"
+    },
+    {
+      "name": "verified counts match what was written",
+      "ok": true,
+      "detail": "Schema 12 verified: 1 users, 2 channels, 2 messages, 1 attachments"
+    },
+    {
+      "name": "restored copy keeps the account",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "restored copy has the same channels",
+      "ok": true,
+      "detail": "2 channels"
+    },
+    {
+      "name": "restored copy serves the message",
+      "ok": true,
+      "detail": "2 messages"
+    },
+    {
+      "name": "attachment bytes are identical",
+      "ok": true,
+      "detail": "30 bytes, sha256 acbf710bd068"
+    },
+    {
+      "name": "stopped server left no WAL side files",
+      "ok": true,
+      "detail": "checkpointed on shutdown"
+    }
+  ],
+  "transcript": [
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx",
+    "Binary: /tmp/brrp-dist-alpha6/brrpbrrp",
+    "",
+    "1. Preflight an empty data directory",
+    "$ brrpbrrp preflight --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source",
+    "  {\n    \"path\": \"/private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source/brrp.db\",\n    \"exists\": false,\n    \"schema_version\": 0,\n    \"supported_schema_version\": 12,\n    \"upgrade_required\": true,\n    \"future_schema\": false,\n    \"recorded_versions\": null,\n    \"pending_migrations\": [\n      \"1 baseline workspace, chat, files, moderation\",\n      \"2 replies, pins, invitations, account mfa\",\n      \"3 ownership, roles, categories and restricted channels\",\n      \"4 session identity and recent authentication\",\n      \"5 invite-time role selection\",\n      \"6 shared conversation mapping and send receipts\",\n      \"7 removed account identities preserve conversation history\",\n      \"8 channel slow mode and durable send clocks\",\n      \"9 community message reports and review evidence\",\n      \"10 account-scoped channel notification preferences\",\n      \"11 required conversation scope and nullable channel message projection\",\n      \"12 direct consent, blocking, preferences and read cursors\"\n    ],\n    \"journal_mode\": \"\",\n    \"synchronous\": \"\",\n    \"integrity\": \"\",\n    \"database_bytes\": 0,\n    \"counts\": {},\n    \"configured_synchronous\": \"FULL\",\n    \"free_bytes\": 280452517888\n  }",
+    "  ok    reports an uninitialised database",
+    "  ok    lists every pending migration — 12 pending, target schema 12",
+    "  ok    declares its durability setting — FULL",
+    "  ok    does not create a database — directory still empty",
+    "",
+    "2. Install and write real content through the API",
+    "  ok    first-time setup accepted — HTTP 201",
+    "  ok    owner can sign in — HTTP 200",
+    "  ok    workspace has a text channel — #general",
+    "  ok    message accepted — HTTP 201",
+    "  ok    attachment accepted — 30 bytes, id 01a0e23f-7c56-7a02-a535-a1b0cc6f5880",
+    "  ok    message with attachment accepted — HTTP 201",
+    "  ok    source server stopped cleanly — exit 0",
+    "",
+    "3. Back up the stopped installation",
+    "$ brrpbrrp backup --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source --out backups/rehearsal.zip",
+    "  Backup saved: /private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source/backups/rehearsal.zip",
+    "  ok    backup produced an archive — 15772 bytes",
+    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source/backups/rehearsal.zip",
+    "  Archive: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source/backups/rehearsal.zip\n    format 2, created 2026-09-27T09:43:26.620957000Z, written by 0.4.0-alpha.6, schema 12\n    database 475136 bytes, 1 attachments, 30 attachment bytes\n    sha256 ee37a7c590d1a108a7932ba7debf346820b999024261ef3412173b079115ca4e\n  Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "  ok    verify-backup accepts the archive — Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source/backups/tampered.zip",
+    "  BrrpBrrp: zip: checksum error",
+    "  ok    verify-backup refuses a touched archive — BrrpBrrp: zip: checksum error",
+    "$ brrpbrrp preflight --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source",
+    "  {\n    \"path\": \"/private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/source/brrp.db\",\n    \"exists\": true,\n    \"schema_version\": 12,\n    \"supported_schema_version\": 12,\n    \"upgrade_required\": false,\n    \"future_schema\": false,\n    \"recorded_versions\": [\n      1,\n      2,\n      3,\n      4,\n      5,\n      6,\n      7,\n      8,\n      9,\n      10,\n      11,\n      12\n    ],\n    \"pending_migrations\": null,\n    \"journal_mode\": \"wal\",\n    \"synchronous\": \"FULL\",\n    \"integrity\": \"ok\",\n    \"database_bytes\": 479232,\n    \"counts\": {\n      \"attachments\": 1,\n      \"audit_logs\": 0,\n      \"categories\": 0,\n      \"channels\": 2,\n      \"invitations\": 0,\n      \"messages\": 2,\n      \"roles\": 3,\n      \"users\": 1\n    },\n    \"configured_synchronous\": \"FULL\",\n    \"free_bytes\": 280451997696\n  }",
+    "  ok    backup did not change the schema — schema 12",
+    "",
+    "4. Restore into a second, empty destination",
+    "$ brrpbrrp restore --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/restored --file restore.zip",
+    "  Restored. All users must sign in again.",
+    "  ok    restore accepted the archive — exit 0",
+    "$ brrpbrrp verify --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-eF95dx/restored",
+    "  Schema 12 verified: 1 users, 2 channels, 2 messages, 1 attachments. No migration was applied and nothing was repaired.",
+    "  ok    restored copy verifies — Schema 12 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+    "  ok    verified counts match what was written — Schema 12 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+    "",
+    "5. Serve the restored copy and prove the data survived",
+    "  ok    restored copy keeps the account — HTTP 200",
+    "  ok    restored copy has the same channels — 2 channels",
+    "  ok    restored copy serves the message — 2 messages",
+    "  ok    attachment bytes are identical — 30 bytes, sha256 acbf710bd068",
+    "  ok    stopped server left no WAL side files — checkpointed on shutdown",
+    "",
+    "Rehearsal PASS: 23 checks, 0 failed.",
+    "Schema 12 (12 migrations), durability FULL -> FULL."
+  ]
+}

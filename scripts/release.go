@@ -258,14 +258,14 @@ func dockerSourcePaths() []string {
 	paths := []string{
 		"Dockerfile", ".dockerignore", ".env.docker.example", "compose.yaml", "compose.turn.yaml", "compose.backup.yaml",
 		"go.mod", "go.sum", "README.md", "CONTRIBUTING.md", "LICENSE", "CLA.md", "CLA-SIGNATORIES.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "Makefile",
-		".env.example", "scripts/backup.sh", "scripts/restore.sh",
+		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json",
 	}
 	// The workflows are shipped so a consumer can see and reproduce the checks the
 	// source is expected to pass.
 	for _, workflow := range []string{"check.yml", "docker.yml"} {
 		paths = append(paths, filepath.Join(".github", "workflows", workflow))
 	}
-	for _, script := range []string{"release.go", "check-docker.mjs", "check-docker-inputs.mjs", "check-package.mjs", "check-source-package.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-rollback.mjs", "preview-chime.mjs"} {
+	for _, script := range []string{"release.go", "check-docker.mjs", "check-docker-inputs.mjs", "check-package.mjs", "check-source-package.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs"} {
 		paths = append(paths, filepath.Join("scripts", script))
 	}
 	// The per-platform release scripts are a transitive dependency of `make release`:

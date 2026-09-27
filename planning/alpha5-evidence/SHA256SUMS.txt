@@ -1,0 +1,6 @@
+96642a3a883035d0c90bfd6a95da9894a684605376de194a98d2c9433ef404a7  brrpbrrp-0.4.0-alpha.5-linux-amd64.zip
+2161414c04618eb7de195aa44438563c3f483f0fcd8b6439387e020fc4b55944  brrpbrrp-0.4.0-alpha.5-linux-arm64.zip
+60cf81560b892bb7c73507d813e7f1c2cc79d602bf05e25d5468c96ac1fa387c  brrpbrrp-0.4.0-alpha.5-windows-amd64.zip
+2c5a8266e08ca380028bf09251d75e9eade33811077851c0751b75ca466f4cc1  brrpbrrp-0.4.0-alpha.5-windows-arm64.zip
+f186eecda78dcc0d2faeeaefe2a18b9f9bcf62b752753a62c00a60ecffda2db1  brrpbrrp-0.4.0-alpha.5-darwin-amd64.zip
+be62173e30b122ac9c211f2a3ff7ea5aa93522f1cc4e23e81c78ae0de2d2c1fe  brrpbrrp-0.4.0-alpha.5-darwin-arm64.zip
