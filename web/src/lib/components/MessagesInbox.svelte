@@ -21,9 +21,10 @@
   // destroy text this account just typed (review 8, R8-03).
   let draftAccount = '';
   // The tab the dialog opens on is chosen by whoever opened it, so the sidebar's
-  // request count can lead straight to Requests (ADR 0013). Changing the tab here
-  // writes it back, so the entry point stays in step with what the member is
-  // looking at rather than snapping back on the next open.
+  // request count can lead straight to Requests (ADR 0013). The dialog is mounted
+  // fresh each time it opens, so reading the opening choice here is enough;
+  // changing the tab writes it back, so the entry point stays in step with what
+  // the member is looking at rather than resetting on the next open.
   let tab = $state(workspace.messagesTab);
   // The count is read from the account snapshot, so the tab shows the same number
   // the sidebar does and neither can be stale in a way the other is not.

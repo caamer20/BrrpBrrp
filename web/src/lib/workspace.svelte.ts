@@ -51,6 +51,14 @@ class Workspace {
   // direct way into Requests rather than making a member hunt through tabs to act
   // on a count they were just shown.
   messagesTab = $state<'conversations' | 'requests' | 'people' | 'blocked'>('conversations');
+  // openMessagesTab is the single way the sidebar chooses which section the
+  // messages dialog opens on. Doing it in one place means the dialog's own
+  // read-on-open cannot disagree with what the entry just set, which is what
+  // made a stale tab outlive the click that was supposed to change it.
+  openMessagesTab(tab: 'conversations' | 'requests' | 'people' | 'blocked') {
+    this.messagesTab = tab;
+    this.messagesOpen = true;
+  }
   contactsVersion = $state(0);
   messages = $state<Message[]>([]);
   messagesLoading = $state(false);
@@ -324,6 +332,11 @@ class Workspace {
   static readonly managementCapabilities = [
     'member.manage',
     'message.delete_any',
+    // A private-evidence reviewer manages nothing about the community, but the
+    // panel is their only way to reach the queue at all, so this capability has to
+    // open it. It grants the server tools, not the conversations the evidence
+    // came from — those stay unreachable however the account is signed in.
+    'report.review_private',
     'role.manage',
     'category.manage',
     'channel.manage',

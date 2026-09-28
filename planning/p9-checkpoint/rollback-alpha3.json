@@ -1,0 +1,462 @@
+{
+  "rehearsal": "upgrade-rollback",
+  "passed": true,
+  "platform": {
+    "os": "darwin",
+    "arch": "amd64",
+    "executable": "brrpbrrp"
+  },
+  "baseline": {
+    "version": "0.4.0-alpha.3",
+    "source": "/Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/releases/brrpbrrp-0.4.0-alpha.3-darwin-amd64.zip",
+    "source_sha256": "85c13227ffb6f39aa518b2e7367c19ba9271c6cf74e7f6ad766aecddd9998495",
+    "binary_sha256": "918c4c873b4d848aaaeeaf30a187db985935472ab8b27d74c1472ab13e365099",
+    "schema": 2,
+    "backup_format": 1
+  },
+  "candidate": {
+    "version": "0.4.0-alpha.6",
+    "binary_sha256": "37693fe784bbe73a91c9c2a734afdd5fe44538f55996d4f384fd779fccd2ef8d",
+    "schema": 13,
+    "backup_format": 2,
+    "pending_migrations": [
+      "3 ownership, roles, categories and restricted channels",
+      "4 session identity and recent authentication",
+      "5 invite-time role selection",
+      "6 shared conversation mapping and send receipts",
+      "7 removed account identities preserve conversation history",
+      "8 channel slow mode and durable send clocks",
+      "9 community message reports and review evidence",
+      "10 account-scoped channel notification preferences",
+      "11 required conversation scope and nullable channel message projection",
+      "12 direct consent, blocking, preferences and read cursors",
+      "13 private message evidence and durable submission limits"
+    ]
+  },
+  "archives": {
+    "rollback": {
+      "bytes": 9292,
+      "sha256": "1b7f3ceb5e80a9ccec965f49fc661d36cfc9cac1e529ffaf19ff47948aa7d33c",
+      "format": 1,
+      "schema": null,
+      "written_by": "the prior release, from the un-migrated installation"
+    },
+    "candidate": {
+      "bytes": 9484,
+      "sha256": "92ebb65ec27af0bb77a18bb10002cfe4f8f7d8ce43118b30ee57be3795022736",
+      "format": 2,
+      "schema": 2,
+      "prior_reader_compatible": false,
+      "written_by": "the candidate, from the same un-migrated installation"
+    }
+  },
+  "dataset": {
+    "users": 2,
+    "channels": 2,
+    "messages": 3,
+    "replies": 1,
+    "pins": 1,
+    "invitations": 1,
+    "attachments": 1,
+    "second_factor": true,
+    "attachment_sha256": "053331a55b6daead1d6da8a452f6834806ecfd46da422a15b28fd798ad0b7704"
+  },
+  "boundary": {
+    "snapshot": "the prior release's archive is the only supported rollback source",
+    "divergence": [
+      "a message sent after the snapshot",
+      "a ban applied after the snapshot"
+    ],
+    "consequence": "a rollback returns the installation to the snapshot: the recorded changes above are lost, and an in-place downgrade is refused rather than attempted"
+  },
+  "coverage": [
+    {
+      "name": "a reply is part of the dataset",
+      "supported": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "a pinned message is part of the dataset",
+      "supported": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "an invitation is part of the dataset",
+      "supported": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the prior release has a role API",
+      "supported": false,
+      "detail": "HTTP 404 (roles arrive with schema 3)"
+    },
+    {
+      "name": "an interrupted upgrade is repaired and verified",
+      "supported": true,
+      "detail": "marker state injected between the migration and its postconditions"
+    }
+  ],
+  "checks": [
+    {
+      "name": "the prior release accepted first-time setup",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the prior release signs the owner in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the prior release has a text channel",
+      "ok": true,
+      "detail": "#general"
+    },
+    {
+      "name": "the prior release created a member account",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the prior release accepted an uploaded file",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the prior release accepted a message",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the prior release accepted a message with an attachment",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the prior release enrolled a second factor",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the prior release's dataset is what the rehearsal wrote",
+      "ok": true,
+      "detail": "{\"users\":2,\"channels\":2,\"messages\":3,\"replies\":1,\"pins\":1,\"invitations\":1,\"attachments\":1,\"second_factor\":true,\"attachment_sha256\":\"053331a55b6daead1d6da8a452f6834806ecfd46da422a15b28fd798ad0b7704\"}"
+    },
+    {
+      "name": "the attachment the dataset references is readable",
+      "ok": true,
+      "detail": "HTTP 200, 30 bytes"
+    },
+    {
+      "name": "the baseline schema is known before either snapshot",
+      "ok": true,
+      "detail": "schema 2 of 13"
+    },
+    {
+      "name": "the prior release wrote an archive",
+      "ok": true,
+      "detail": "9292 bytes"
+    },
+    {
+      "name": "the candidate reads the old archive",
+      "ok": true,
+      "detail": "format 1, created 2026-09-28T01:51:46.740872000Z"
+    },
+    {
+      "name": "the old archive reports its backup format",
+      "ok": true,
+      "detail": "format 1"
+    },
+    {
+      "name": "the old archive's schema metadata agrees with the baseline",
+      "ok": true,
+      "detail": "format 1 omits schema metadata; preflight measured schema 2"
+    },
+    {
+      "name": "the candidate wrote an archive",
+      "ok": true,
+      "detail": "9484 bytes"
+    },
+    {
+      "name": "the candidate verifies its own archive and reports its format",
+      "ok": true,
+      "detail": "format 2, created 2026-09-28T01:51:46.816196000Z, written by 0.4.0-alpha.6, schema 2"
+    },
+    {
+      "name": "snapshotting an un-migrated installation did not migrate it",
+      "ok": true,
+      "detail": "recorded schema 2"
+    },
+    {
+      "name": "the installation is still at the prior schema",
+      "ok": true,
+      "detail": "schema 2 of 13, 11 pending"
+    },
+    {
+      "name": "the prior release refuses the candidate's newer backup format",
+      "ok": true,
+      "detail": "BrrpBrrp: unsupported backup format"
+    },
+    {
+      "name": "the upgraded installation verifies",
+      "ok": true,
+      "detail": "Schema 13 verified: 2 users, 2 channels, 3 messages, 1 attachments"
+    },
+    {
+      "name": "the upgrade reached the candidate's schema",
+      "ok": true,
+      "detail": "schema 13"
+    },
+    {
+      "name": "the upgrade preserved every account",
+      "ok": true,
+      "detail": "2 users"
+    },
+    {
+      "name": "the upgrade preserved every message, including the reply",
+      "ok": true,
+      "detail": "3 messages"
+    },
+    {
+      "name": "the upgrade preserved the attachment",
+      "ok": true,
+      "detail": "1 attachments"
+    },
+    {
+      "name": "the upgraded installation signs the owner in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the upgraded installation serves the message",
+      "ok": true,
+      "detail": "3 messages"
+    },
+    {
+      "name": "the reply still belongs to its parent",
+      "ok": true,
+      "detail": "reply_count 1"
+    },
+    {
+      "name": "the pin survived",
+      "ok": true,
+      "detail": "pinned true"
+    },
+    {
+      "name": "the pin is listed",
+      "ok": true,
+      "detail": "1 pins"
+    },
+    {
+      "name": "search finds the pre-upgrade message",
+      "ok": true,
+      "detail": "3 hits"
+    },
+    {
+      "name": "attachment bytes are identical after the upgrade",
+      "ok": true,
+      "detail": "HTTP 200, sha256 053331a55b6d"
+    },
+    {
+      "name": "the upgraded installation still answers with a second-factor step",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the enrolled factor still verifies after the upgrade",
+      "ok": true,
+      "detail": "HTTP 200 {\"id\":\"01a0e5b6-029c-7c35-9318-9119dca06e12\",\"username\":\"owner\",\"display_name\":\"owner\",\"is_admin\":true,\"is_owner\":false,"
+    },
+    {
+      "name": "the rehearsal recorded post-snapshot changes",
+      "ok": true,
+      "detail": "a message sent after the snapshot, a ban applied after the snapshot"
+    },
+    {
+      "name": "the prior release refuses to serve the migrated installation",
+      "ok": true,
+      "detail": "BrrpBrrp: database schema 13 is newer than this binary supports"
+    },
+    {
+      "name": "the prior release restored its own archive",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "the rollback folder is at the prior schema",
+      "ok": true,
+      "detail": "schema 2 of 13"
+    },
+    {
+      "name": "the rollback folder signs the owner in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the rollback folder serves the snapshot's messages",
+      "ok": true,
+      "detail": "3 messages"
+    },
+    {
+      "name": "the rollback folder does not contain the later message",
+      "ok": true,
+      "detail": "the rollback boundary is the snapshot, not the current installation"
+    },
+    {
+      "name": "the rollback folder serves the same attachment bytes",
+      "ok": true,
+      "detail": "HTTP 200, sha256 053331a55b6d"
+    },
+    {
+      "name": "the rollback folder keeps the member account",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the rollback folder does not contain the later ban",
+      "ok": true,
+      "detail": "is_banned false"
+    },
+    {
+      "name": "the rollback folder keeps the pin",
+      "ok": true,
+      "detail": "1 pins"
+    },
+    {
+      "name": "the rollback folder keeps the invitation",
+      "ok": true,
+      "detail": "1 invitations"
+    },
+    {
+      "name": "the rollback folder still requires the enrolled factor",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the rollback folder accepts the factor the baseline enrolled",
+      "ok": true,
+      "detail": "the sign-in above used the baseline's own code"
+    },
+    {
+      "name": "the interrupted upgrade state was injected",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "verification refuses an unfinished upgrade instead of reporting it as done",
+      "ok": true,
+      "detail": "BrrpBrrp: the data folder records schema 13 but an upgrade to 13 has not finished: its search-index rebuild and verification are outstanding. Run `brrpbrrp migrate`, or start the server, to complete and verify the upgrade before relying on this data"
+    },
+    {
+      "name": "the injected index damage is real",
+      "ok": true,
+      "detail": "0 matches for the indexed word"
+    },
+    {
+      "name": "the repaired installation searches the pre-upgrade content again",
+      "ok": true,
+      "detail": "sign-in HTTP 200, search HTTP 200, 4"
+    },
+    {
+      "name": "the postconditions rebuilt the search index from the messages that survived",
+      "ok": true,
+      "detail": "4 matches after the repair"
+    },
+    {
+      "name": "starting the server completes and verifies the upgrade",
+      "ok": true,
+      "detail": "Schema 13 verified: 2 users, 2 channels, 4 messages, 1 attachments. No migration was applied and nothing was repaired."
+    },
+    {
+      "name": "the marker is cleared once the postconditions pass",
+      "ok": true,
+      "detail": "rows 0"
+    }
+  ],
+  "transcript": [
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rollback-leHu2E",
+    "Platform: darwin/amd64",
+    "Old executable: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rollback-leHu2E/old-release/brrpbrrp (0.4.0-alpha.3) from /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/releases/brrpbrrp-0.4.0-alpha.3-darwin-amd64.zip",
+    "Candidate:      /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9 (0.4.0-alpha.6)",
+    "",
+    "1. Install with the archived prior release and write a representative dataset",
+    "  ok    the prior release accepted first-time setup — HTTP 201",
+    "  ok    the prior release signs the owner in — HTTP 200",
+    "  ok    the prior release has a text channel — #general",
+    "  ok    the prior release created a member account — HTTP 201",
+    "  ok    the prior release accepted an uploaded file — HTTP 201",
+    "  ok    the prior release accepted a message — HTTP 201",
+    "  ok    the prior release accepted a message with an attachment — HTTP 201",
+    "  ok    a reply is part of the dataset — HTTP 201",
+    "  ok    a pinned message is part of the dataset — HTTP 200",
+    "  ok    an invitation is part of the dataset — HTTP 201",
+    "  skip  the prior release has a role API — HTTP 404 (roles arrive with schema 3)",
+    "  ok    the prior release enrolled a second factor — HTTP 200",
+    "  ok    the prior release's dataset is what the rehearsal wrote — {\"users\":2,\"channels\":2,\"messages\":3,\"replies\":1,\"pins\":1,\"invitations\":1,\"attachments\":1,\"second_factor\":true,\"attachment_sha256\":\"053331a55b6daead1d6da8a452f6834806ecfd46da422a15b28fd798ad0b7704\"}",
+    "  ok    the attachment the dataset references is readable — HTTP 200, 30 bytes",
+    "  dataset: {\"users\":2,\"channels\":2,\"messages\":3,\"replies\":1,\"pins\":1,\"invitations\":1,\"attachments\":1,\"second_factor\":true,\"attachment_sha256\":\"053331a55b6daead1d6da8a452f6834806ecfd46da422a15b28fd798ad0b7704\"}",
+    "",
+    "2. Snapshot the installation with the prior release (the rollback source)",
+    "  ok    the baseline schema is known before either snapshot — schema 2 of 13",
+    "  ok    the prior release wrote an archive — 9292 bytes",
+    "  ok    the candidate reads the old archive — format 1, created 2026-09-28T01:51:46.740872000Z",
+    "  ok    the old archive reports its backup format — format 1",
+    "  ok    the old archive's schema metadata agrees with the baseline — format 1 omits schema metadata; preflight measured schema 2",
+    "",
+    "3. Check the candidate snapshot's schema and prior-reader compatibility",
+    "  ok    the candidate wrote an archive — 9484 bytes",
+    "  ok    the candidate verifies its own archive and reports its format — format 2, created 2026-09-28T01:51:46.816196000Z, written by 0.4.0-alpha.6, schema 2",
+    "  ok    snapshotting an un-migrated installation did not migrate it — recorded schema 2",
+    "  ok    the installation is still at the prior schema — schema 2 of 13, 11 pending",
+    "  ok    the prior release refuses the candidate's newer backup format — BrrpBrrp: unsupported backup format",
+    "",
+    "4. Upgrade with the candidate and prove the dataset survived",
+    "  ok    the upgraded installation verifies — Schema 13 verified: 2 users, 2 channels, 3 messages, 1 attachments",
+    "  ok    the upgrade reached the candidate's schema — schema 13",
+    "  ok    the upgrade preserved every account — 2 users",
+    "  ok    the upgrade preserved every message, including the reply — 3 messages",
+    "  ok    the upgrade preserved the attachment — 1 attachments",
+    "",
+    "  ok    the upgraded installation signs the owner in — HTTP 200",
+    "  ok    the upgraded installation serves the message — 3 messages",
+    "  ok    the reply still belongs to its parent — reply_count 1",
+    "  ok    the pin survived — pinned true",
+    "  ok    the pin is listed — 1 pins",
+    "  ok    search finds the pre-upgrade message — 3 hits",
+    "  ok    attachment bytes are identical after the upgrade — HTTP 200, sha256 053331a55b6d",
+    "  ok    the upgraded installation still answers with a second-factor step — HTTP 200",
+    "  ok    the enrolled factor still verifies after the upgrade — HTTP 200 {\"id\":\"01a0e5b6-029c-7c35-9318-9119dca06e12\",\"username\":\"owner\",\"display_name\":\"owner\",\"is_admin\":true,\"is_owner\":false,",
+    "",
+    "5. Record what changed after the snapshot (the data-loss boundary)",
+    "  ok    the rehearsal recorded post-snapshot changes — a message sent after the snapshot, a ban applied after the snapshot",
+    "  ok    the prior release refuses to serve the migrated installation — BrrpBrrp: database schema 13 is newer than this binary supports",
+    "",
+    "6. Roll back with the prior release and prove the data-loss boundary",
+    "  ok    the prior release restored its own archive — exit 0",
+    "  ok    the rollback folder is at the prior schema — schema 2 of 13",
+    "  ok    the rollback folder signs the owner in — HTTP 200",
+    "  ok    the rollback folder serves the snapshot's messages — 3 messages",
+    "  ok    the rollback folder does not contain the later message — the rollback boundary is the snapshot, not the current installation",
+    "  ok    the rollback folder serves the same attachment bytes — HTTP 200, sha256 053331a55b6d",
+    "  ok    the rollback folder keeps the member account — HTTP 200",
+    "  ok    the rollback folder does not contain the later ban — is_banned false",
+    "  ok    the rollback folder keeps the pin — 1 pins",
+    "  ok    the rollback folder keeps the invitation — 1 invitations",
+    "  ok    the rollback folder still requires the enrolled factor — HTTP 200",
+    "  ok    the rollback folder accepts the factor the baseline enrolled — the sign-in above used the baseline's own code",
+    "",
+    "7. An upgrade interrupted before its postconditions",
+    "  ok    the interrupted upgrade state was injected",
+    "  ok    verification refuses an unfinished upgrade instead of reporting it as done — BrrpBrrp: the data folder records schema 13 but an upgrade to 13 has not finished: its search-index rebuild and verification are outstanding. Run `brrpbrrp migrate`, or start the server, to complete and verify the upgrade before relying on this data",
+    "  ok    the injected index damage is real — 0 matches for the indexed word",
+    "  ok    the repaired installation searches the pre-upgrade content again — sign-in HTTP 200, search HTTP 200, 4",
+    "  ok    the postconditions rebuilt the search index from the messages that survived — 4 matches after the repair",
+    "  ok    starting the server completes and verifies the upgrade — Schema 13 verified: 2 users, 2 channels, 4 messages, 1 attachments. No migration was applied and nothing was repaired.",
+    "  ok    the marker is cleared once the postconditions pass — rows 0",
+    "  ok    an interrupted upgrade is repaired and verified — marker state injected between the migration and its postconditions",
+    "",
+    "Rehearsal PASS: 55 checks, 0 failed.",
+    "Compatibility: 0.4.0-alpha.3 (schema 2, backup format 1) -> 0.4.0-alpha.6 (schema 13, backup format 2).",
+    "Rollback source: darwin/amd64 archive of 0.4.0-alpha.3, sha256 1b7f3ceb5e80a9cc…"
+  ]
+}

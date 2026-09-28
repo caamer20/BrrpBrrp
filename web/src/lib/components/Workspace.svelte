@@ -145,11 +145,9 @@
         onclick={() => {
           // The badge is a way into Requests, so a pending count leads straight
           // there. With nothing outstanding the entry opens the conversation list
-          // as it always did: a member who is simply keeping up with messages
-          // should not be dropped into a requests section they did not ask for
-          // (ADR 0013).
-          workspace.messagesOpen = true;
-          workspace.messagesTab = outstanding > 0 ? 'requests' : 'conversations';
+          // as it always did: a member keeping up with messages should not be
+          // dropped into a requests section they did not ask for (ADR 0013).
+          workspace.openMessagesTab(outstanding > 0 ? 'requests' : 'conversations');
         }}
         ><Icon name="users" size={16} /><span>Messages and requests</span>{#if outstanding > 0}<b
             class="unread-badge"

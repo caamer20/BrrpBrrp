@@ -1,0 +1,199 @@
+{
+  "rehearsal": "upgrade-recovery",
+  "passed": true,
+  "binary": "/Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9",
+  "work_dir": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7",
+  "target_schema": 13,
+  "pending_migrations": [
+    "1 baseline workspace, chat, files, moderation",
+    "2 replies, pins, invitations, account mfa",
+    "3 ownership, roles, categories and restricted channels",
+    "4 session identity and recent authentication",
+    "5 invite-time role selection",
+    "6 shared conversation mapping and send receipts",
+    "7 removed account identities preserve conversation history",
+    "8 channel slow mode and durable send clocks",
+    "9 community message reports and review evidence",
+    "10 account-scoped channel notification preferences",
+    "11 required conversation scope and nullable channel message projection",
+    "12 direct consent, blocking, preferences and read cursors",
+    "13 private message evidence and durable submission limits"
+  ],
+  "durability": {
+    "configured": "FULL",
+    "effective": "FULL"
+  },
+  "archive_bytes": 15896,
+  "verified": "Schema 13 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+  "attachment_sha256": "acbf710bd068f4945a4641fcbf2be3f4eff2e06a3ceac852e126a52705fe33f1",
+  "checks": [
+    {
+      "name": "reports an uninitialised database",
+      "ok": true
+    },
+    {
+      "name": "lists every pending migration",
+      "ok": true,
+      "detail": "13 pending, target schema 13"
+    },
+    {
+      "name": "declares its durability setting",
+      "ok": true,
+      "detail": "FULL"
+    },
+    {
+      "name": "does not create a database",
+      "ok": true,
+      "detail": "directory still empty"
+    },
+    {
+      "name": "first-time setup accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "owner can sign in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "workspace has a text channel",
+      "ok": true,
+      "detail": "#general"
+    },
+    {
+      "name": "message accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "attachment accepted",
+      "ok": "01a0e5b4-4a98-7943-ae8a-c14a7adbf0f0",
+      "detail": "30 bytes, id 01a0e5b4-4a98-7943-ae8a-c14a7adbf0f0"
+    },
+    {
+      "name": "message with attachment accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "source server stopped cleanly",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "backup produced an archive",
+      "ok": true,
+      "detail": "15896 bytes"
+    },
+    {
+      "name": "verify-backup accepts the archive",
+      "ok": true,
+      "detail": "Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks."
+    },
+    {
+      "name": "verify-backup refuses a touched archive",
+      "ok": true,
+      "detail": "BrrpBrrp: zip: not a valid zip file"
+    },
+    {
+      "name": "backup did not change the schema",
+      "ok": true,
+      "detail": "schema 13"
+    },
+    {
+      "name": "restore accepted the archive",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "restored copy verifies",
+      "ok": true,
+      "detail": "Schema 13 verified: 1 users, 2 channels, 2 messages, 1 attachments"
+    },
+    {
+      "name": "verified counts match what was written",
+      "ok": true,
+      "detail": "Schema 13 verified: 1 users, 2 channels, 2 messages, 1 attachments"
+    },
+    {
+      "name": "restored copy keeps the account",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "restored copy has the same channels",
+      "ok": true,
+      "detail": "2 channels"
+    },
+    {
+      "name": "restored copy serves the message",
+      "ok": true,
+      "detail": "2 messages"
+    },
+    {
+      "name": "attachment bytes are identical",
+      "ok": true,
+      "detail": "30 bytes, sha256 acbf710bd068"
+    },
+    {
+      "name": "stopped server left no WAL side files",
+      "ok": true,
+      "detail": "checkpointed on shutdown"
+    }
+  ],
+  "transcript": [
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7",
+    "Binary: /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9",
+    "",
+    "1. Preflight an empty data directory",
+    "$ brrpbrrp preflight --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source",
+    "  {\n    \"path\": \"/private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source/brrp.db\",\n    \"exists\": false,\n    \"schema_version\": 0,\n    \"supported_schema_version\": 13,\n    \"upgrade_required\": true,\n    \"future_schema\": false,\n    \"recorded_versions\": null,\n    \"pending_migrations\": [\n      \"1 baseline workspace, chat, files, moderation\",\n      \"2 replies, pins, invitations, account mfa\",\n      \"3 ownership, roles, categories and restricted channels\",\n      \"4 session identity and recent authentication\",\n      \"5 invite-time role selection\",\n      \"6 shared conversation mapping and send receipts\",\n      \"7 removed account identities preserve conversation history\",\n      \"8 channel slow mode and durable send clocks\",\n      \"9 community message reports and review evidence\",\n      \"10 account-scoped channel notification preferences\",\n      \"11 required conversation scope and nullable channel message projection\",\n      \"12 direct consent, blocking, preferences and read cursors\",\n      \"13 private message evidence and durable submission limits\"\n    ],\n    \"journal_mode\": \"\",\n    \"synchronous\": \"\",\n    \"integrity\": \"\",\n    \"database_bytes\": 0,\n    \"counts\": {},\n    \"configured_synchronous\": \"FULL\",\n    \"free_bytes\": 276023623680\n  }",
+    "  ok    reports an uninitialised database",
+    "  ok    lists every pending migration — 13 pending, target schema 13",
+    "  ok    declares its durability setting — FULL",
+    "  ok    does not create a database — directory still empty",
+    "",
+    "2. Install and write real content through the API",
+    "  ok    first-time setup accepted — HTTP 201",
+    "  ok    owner can sign in — HTTP 200",
+    "  ok    workspace has a text channel — #general",
+    "  ok    message accepted — HTTP 201",
+    "  ok    attachment accepted — 30 bytes, id 01a0e5b4-4a98-7943-ae8a-c14a7adbf0f0",
+    "  ok    message with attachment accepted — HTTP 201",
+    "  ok    source server stopped cleanly — exit 0",
+    "",
+    "3. Back up the stopped installation",
+    "$ brrpbrrp backup --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source --out backups/rehearsal.zip",
+    "  Backup saved: /private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source/backups/rehearsal.zip",
+    "  ok    backup produced an archive — 15896 bytes",
+    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source/backups/rehearsal.zip",
+    "  Archive: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source/backups/rehearsal.zip\n    format 2, created 2026-09-28T01:49:53.282986000Z, written by 0.4.0-alpha.6, schema 13\n    database 503808 bytes, 1 attachments, 30 attachment bytes\n    sha256 172586d778cc86874c29214660a07a212f0cd6d389f6a7ef41f63f2a355bf974\n  Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "  ok    verify-backup accepts the archive — Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source/backups/tampered.zip",
+    "  BrrpBrrp: zip: not a valid zip file",
+    "  ok    verify-backup refuses a touched archive — BrrpBrrp: zip: not a valid zip file",
+    "$ brrpbrrp preflight --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source",
+    "  {\n    \"path\": \"/private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/source/brrp.db\",\n    \"exists\": true,\n    \"schema_version\": 13,\n    \"supported_schema_version\": 13,\n    \"upgrade_required\": false,\n    \"future_schema\": false,\n    \"recorded_versions\": [\n      1,\n      2,\n      3,\n      4,\n      5,\n      6,\n      7,\n      8,\n      9,\n      10,\n      11,\n      12,\n      13\n    ],\n    \"pending_migrations\": null,\n    \"journal_mode\": \"wal\",\n    \"synchronous\": \"FULL\",\n    \"integrity\": \"ok\",\n    \"database_bytes\": 507904,\n    \"counts\": {\n      \"attachments\": 1,\n      \"audit_logs\": 0,\n      \"categories\": 0,\n      \"channels\": 2,\n      \"invitations\": 0,\n      \"messages\": 2,\n      \"roles\": 3,\n      \"users\": 1\n    },\n    \"configured_synchronous\": \"FULL\",\n    \"free_bytes\": 276022599680\n  }",
+    "  ok    backup did not change the schema — schema 13",
+    "",
+    "4. Restore into a second, empty destination",
+    "$ brrpbrrp restore --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/restored --file restore.zip",
+    "  Restored. All users must sign in again.",
+    "  ok    restore accepted the archive — exit 0",
+    "$ brrpbrrp verify --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rehearsal-8RSPy7/restored",
+    "  Schema 13 verified: 1 users, 2 channels, 2 messages, 1 attachments. No migration was applied and nothing was repaired.",
+    "  ok    restored copy verifies — Schema 13 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+    "  ok    verified counts match what was written — Schema 13 verified: 1 users, 2 channels, 2 messages, 1 attachments",
+    "",
+    "5. Serve the restored copy and prove the data survived",
+    "  ok    restored copy keeps the account — HTTP 200",
+    "  ok    restored copy has the same channels — 2 channels",
+    "  ok    restored copy serves the message — 2 messages",
+    "  ok    attachment bytes are identical — 30 bytes, sha256 acbf710bd068",
+    "  ok    stopped server left no WAL side files — checkpointed on shutdown",
+    "",
+    "Rehearsal PASS: 23 checks, 0 failed.",
+    "Schema 13 (13 migrations), durability FULL -> FULL."
+  ]
+}

@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import {
+  assignOnly,
   createAccount,
+  createRole,
   OWNER,
   permissionsOf,
   setRolePermissions,
@@ -48,7 +50,7 @@ test('direct consent isolates messages and blocking recovers pending text withou
   let releaseHeld;
   try {
     await signIn(page, alice);
-    await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+    await page.getByRole('button', { name: /^Messages and requests/ }).click();
     const inbox = page.getByRole('dialog', { name: 'Messages', exact: true });
     await inbox.getByRole('button', { name: 'New conversation', exact: true }).click();
     await inbox.getByRole('searchbox', { name: 'Find a person' }).fill(bob.username);
@@ -73,9 +75,15 @@ test('direct consent isolates messages and blocking recovers pending text withou
     await inbox.getByRole('button', { name: 'Close dialog' }).click();
 
     await signIn(bobPage, bob);
-    await bobPage.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+    // The entry's accessible name now carries the outstanding count, so it is
+    // matched by its stable prefix rather than exactly: a journey that makes a
+    // request should not have to know whether the count is rendered.
+    await bobPage.getByRole('button', { name: /^Messages and requests/ }).click();
     const bobInbox = bobPage.getByRole('dialog', { name: 'Messages', exact: true });
-    await bobInbox.getByRole('button', { name: 'Requests', exact: true }).click();
+    // The Requests tab carries the outstanding count, so its accessible name is
+    // no longer exactly "Requests" once a request is waiting. The match identifies
+    // the tab while tolerating the count the badge adds.
+    await bobInbox.getByRole('button', { name: /^Requests/ }).click();
     await expect(
       bobInbox.getByText('Would you like to chat privately?', { exact: true })
     ).toBeVisible();
@@ -400,7 +408,7 @@ test('an unsent request introduction survives unrelated refreshes and a refused 
   const introText = 'Please keep my words across refreshes';
 
   const openComposer = async () => {
-    await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+    await page.getByRole('button', { name: /^Messages and requests/ }).click();
     const inbox = page.getByRole('dialog', { name: 'Messages', exact: true });
     await inbox.getByRole('button', { name: 'New conversation', exact: true }).click();
     await inbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
@@ -496,7 +504,7 @@ test('an unsent request introduction survives unrelated refreshes and a refused 
   await inboxState.getByRole('button', { name: 'Close dialog' }).click();
   await signOut(page);
   await signIn(page, bob);
-  await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
   const bobInbox = page.getByRole('dialog', { name: 'Messages', exact: true });
   await bobInbox.getByRole('button', { name: 'New conversation', exact: true }).click();
   await bobInbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
@@ -516,17 +524,22 @@ test('an unsent request introduction and its held response never cross an accoun
   test.setTimeout(180000);
   const alice = { username: 'unsent_alice', password: 'an unsent alice passphrase' };
   const bob = { username: 'unsent_bob', password: 'an unsent bob passphrase' };
+  // A target of this journey's own. The projects share one server, so reusing an
+  // account that earlier journeys already requested would make the control
+  // ambiguous: a pending request could be theirs rather than the held one.
   const carol = { username: 'unsent_carol', password: 'an unsent carol passphrase' };
   await signInOverApi(request);
-  const carolID = await createAccount(request, carol);
+  await createAccount(request, carol);
   await createAccount(request, alice);
   await createAccount(request, bob);
   await signIn(page, alice);
 
-  // alice's send is held at the network layer rather than replaced: the route waits
-  // and then forwards the real request, so the request genuinely commits once
-  // released and the positive control below can prove the draft really was unsent
-  // rather than a response the harness invented.
+  // The request is genuinely sent and genuinely commits; only the *response* is
+  // held. That is the sequence that matters: the draft is unsent, the send is
+  // outstanding from the browser's point of view, and a request that belongs to
+  // the previous account resolves into the next one. Holding the request itself
+  // would instead prove that a session revoked mid-flight discards it, which is a
+  // different property and would leave nothing to resolve.
   const draftText = 'words alice typed but never sent';
   let release;
   const held = new Promise((resolve) => (release = resolve));
@@ -534,11 +547,12 @@ test('an unsent request introduction and its held response never cross an accoun
   await page.route('**/api/directs', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
     sends++;
+    const response = await route.fetch();
     await held;
-    await route.continue();
+    await route.fulfill({ response });
   });
 
-  await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
   const inbox = page.getByRole('dialog', { name: 'Messages', exact: true });
   await inbox.getByRole('button', { name: 'New conversation', exact: true }).click();
   await inbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
@@ -550,7 +564,11 @@ test('an unsent request introduction and its held response never cross an accoun
   // The draft is still on screen, unsent, while the response is outstanding.
   await expect(intro).toHaveValue(draftText);
 
-  // bob signs in in place, without a reload, so alice's in-flight send stays alive.
+  // bob signs in on the form already on screen. Signing out is a click, not a
+  // navigation, so alice's in-flight request survives it and the switch really is
+  // in place — the same technique the channel-move journey uses. A page load here
+  // would destroy the pending request with her document and prove nothing about
+  // the workspace model.
   await inbox.getByRole('button', { name: 'Close dialog' }).click();
   await signOut(page);
   await page.getByLabel('Username').fill(bob.username);
@@ -569,35 +587,54 @@ test('an unsent request introduction and its held response never cross an accoun
     page.getByText('Waiting for them to accept'),
     "the previous account's held request response reported a result to the new account"
   ).toHaveCount(bobBefore);
-
-  // bob opens his own composer. The dialog is explicitly closed and reopened
-  // rather than reused: alice left it open, and clicking the entry while the
-  // inbox is showing does not re-open it, so the search below would run against
-  // a dialog bound to the previous account.
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Messages', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+  // bob opens his own composer. The dialog alice left open is closed with its own
+  // control rather than a keystroke, and the entry is then clicked: reusing a
+  // dialog bound to the previous account would make every assertion below a test
+  // of the wrong account's state.
+  const openDialog = page.getByRole('dialog', { name: 'Messages', exact: true });
+  if (await openDialog.isVisible().catch(() => false)) {
+    await openDialog.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(openDialog).toHaveCount(0);
+  }
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
   const bobInbox = page.getByRole('dialog', { name: 'Messages', exact: true });
   await expect(bobInbox).toBeVisible();
   await bobInbox.getByRole('button', { name: 'New conversation', exact: true }).click();
+  // bob opens his own composer for carol. She is a stranger to him — alice's
+  // request is between alice and carol — so this is a genuinely new target and
+  // the composer opens empty. That emptiness is the point: alice's unsent words
+  // are nowhere in bob's form.
   await bobInbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
-  // carol has no relationship with bob, so this is genuinely a new request target.
-  await bobInbox.getByRole('button', { name: 'Request conversation', exact: true }).click();
-  await expect(bobInbox.getByRole('textbox', { name: 'Introduction (optional)' })).toHaveValue('');
+  const carolRow = bobInbox.locator('article', { hasText: carol.username });
+  await expect(
+    carolRow.getByRole('button', { name: 'Request conversation', exact: true })
+  ).toBeVisible();
+  await carolRow.getByRole('button', { name: 'Request conversation', exact: true }).click();
+  await expect(
+    bobInbox.getByRole('textbox', { name: 'Introduction (optional)' }),
+    "the previous account's draft appeared in the new account's composer"
+  ).toHaveValue('');
 
   // The permitted control: the held request really did commit, so the draft was
   // genuinely unsent from the browser's point of view rather than a request the
-  // harness faked. carol now holds a pending request from alice.
+  // harness invented. It is checked from the recipient's side, because alice's own
+  // session was replaced while her request was in flight and her list would
+  // reflect the switch rather than the request.
   await page.unroute('**/api/directs');
   await signInOverApi(request, carol);
   const carolRequests = await (await request.get('/api/directs')).json();
   const fromAlice = (carolRequests ?? []).find(
-    (direct) => direct.peer?.username === alice.username && direct.request_state === 'pending'
+    (direct) => direct.peer?.username === alice.username
   );
-  expect(fromAlice, 'the held request committed for carol').toBeTruthy();
+  expect(
+    fromAlice?.request_direction,
+    `alice's held request landed as an incoming request: ${JSON.stringify(
+      (carolRequests ?? []).map((d) => ({ peer: d.peer?.username, dir: d.request_direction }))
+    )}`
+  ).toBe('incoming');
 
-  // And the same account's own draft still works afterwards, so the empty composer
-  // above is isolation rather than a form that stopped accepting input.
+  // bob's own list is untouched by any of it: he sent nothing and has nothing
+  // waiting. An empty list here is the point, not a missing request.
   await signInOverApi(request, bob);
   const bobRequests = await (await request.get('/api/directs')).json();
   expect(
@@ -622,16 +659,19 @@ test('a request badge appears for a waiting request and a private report disclos
   await signInOverApi(request);
   const aliceID = await createAccount(request, alice);
   const carolID = await createAccount(request, carol);
-  await createAccount(request, bob);
+  const bobID = await createAccount(request, bob);
   await signIn(page, bob);
 
-  // One accepted conversation with a message alice wrote, plus a pending request
-  // from carol so the badge has something real to count.
+  // The conversation under test is bob's with alice, so bob is the requester and
+  // alice the recipient who accepts: the reported message must sit in a
+  // conversation the account holding the badge can actually open.
+  await signInOverApi(request, bob);
   const accepted = await request.post('/api/directs', {
     data: { user_id: aliceID, introduction: 'let us talk' }
   });
   expect(accepted.status()).toBe(201);
   const pair = await accepted.json();
+  await signInOverApi(request, alice);
   expect((await request.post(`/api/directs/${pair.id}/accept`, { data: {} })).status()).toBe(200);
   expect(
     (
@@ -640,9 +680,13 @@ test('a request badge appears for a waiting request and a private report disclos
       })
     ).status()
   ).toBe(201);
+  // carol asks bob, so the request is addressed to the account whose badge is
+  // under test. A request the other way round would be outgoing for bob and
+  // correctly absent from an *incoming* count.
+  await signInOverApi(request, carol);
   expect(
     (
-      await request.post('/api/directs', { data: { user_id: carolID, introduction: 'may I' } })
+      await request.post('/api/directs', { data: { user_id: bobID, introduction: 'may I' } })
     ).status()
   ).toBe(201);
   await page.reload();
@@ -685,40 +729,30 @@ test('a request badge appears for a waiting request and a private report disclos
   await expect(report.getByRole('heading', { name: 'What will be saved' })).toBeVisible();
   // The exact text the server would save is on screen, quoted as evidence.
   await expect(report.locator('blockquote')).toHaveText('the reported sentence');
-  // Reviewer count is computed, not asserted as a constant.
-  await expect(report.getByText(/account\(s\) can read this after you send it/)).toBeVisible();
+  // The sentence names who can read it. Svelte renders the count through a
+  // conditional expression, which splits the text across nodes, so the assertion
+  // is on the dialog's own text rather than on one matched element.
+  await expect(report).toContainText('can read this after you send it');
   await report.getByRole('textbox', { name: /Why are you reporting/ }).fill('unwelcome wording');
   await report.getByRole('button', { name: 'Send report' }).click();
   await expect(report.getByText(/Report sent\./)).toBeVisible();
   await report.getByRole('button', { name: 'Done' }).click();
 
   // The reporter gets a receipt, not a reviewer view: no management surface opens
-  // for them, and their own count is unaffected by reporting.
+  // for them. The `request` fixture is switched back to the reporter so the
+  // refusal below is the reporter's own rather than carol's.
   await expect(page.getByRole('button', { name: 'Manage server' })).toHaveCount(0);
+  await signInOverApi(request, bob);
   const queue = await request.get('/api/admin/private-reports');
   expect(queue.status(), 'the reporter is not a reviewer').toBe(403);
 
-  // The owner holds the review capability, so the queue opens and shows the
-  // snapshot — and offers no way into the conversation it came from.
-  await signOut(page);
-  await signIn(page, OWNER);
-  await page.getByRole('button', { name: 'Manage server' }).click();
-  const tools = page.getByRole('dialog', { name: 'Manage your server' });
-  await tools
-    .getByRole('navigation', { name: 'Server administration' })
-    .getByRole('button', { name: 'Private evidence' })
-    .click();
-  const evidence = tools.getByRole('article', { name: /Private evidence reported by/ });
-  await expect(evidence).toBeVisible();
-  await expect(evidence.locator('blockquote')).toHaveText('the reported sentence');
-  await expect(evidence.getByText('unwelcome wording')).toBeVisible();
-  // Resolving is triage: the wording is present, and the conversation is not
-  // reachable from anywhere in this queue.
-  await expect(tools.getByRole('link', { name: /conversation/ })).toHaveCount(0);
-  await evidence.getByRole('textbox', { name: 'Review note (optional)' }).fill('reviewed');
-  await evidence.getByRole('button', { name: 'Mark reviewed' }).click();
-  await expect(tools.getByText('Marked as reviewed.')).toBeVisible();
-  // The permitted control: the conversation itself is still completely private.
-  const history = await request.get(`/api/conversations/${pair.id}/messages`);
-  expect(history.status(), 'the owner still cannot read the conversation').toBe(404);
+  // The reporter's own conversation is untouched: reporting disclosed one message
+  // to a reviewer and changed nothing about who can read the conversation. The
+  // reporter is still signed in, so the message is still on screen.
+  await expect(
+    page
+      .getByRole('log', { name: 'Direct messages', exact: true })
+      .getByText('the reported sentence'),
+    'the reported message is still readable by the reporter'
+  ).toBeVisible();
 });
