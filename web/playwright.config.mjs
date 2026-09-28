@@ -41,6 +41,23 @@ export default defineConfig({
       : []),
     { name: 'voice', testMatch: 'voice.spec.mjs', dependencies: ['release'] },
     { name: 'account-switch', testMatch: 'account-switch.spec.mjs', dependencies: ['release'] },
-    { name: 'ownership', testMatch: 'ownership.spec.mjs', dependencies: ['release'] }
+    {
+      name: 'ownership',
+      testMatch: 'ownership.spec.mjs',
+      dependencies: ['account-switch']
+    },
+    // This journey performs an ownership ceremony, which the ownership journey above
+    // asserts has not happened, and it cannot be undone: the ceremony creates an
+    // owner and there is no route back to none. It therefore runs last, after every
+    // project that asserts an installation with no owner.
+    ...(process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1'
+      ? [
+          {
+            name: 'evidence-review',
+            testMatch: 'evidence-review.spec.mjs',
+            dependencies: ['ownership']
+          }
+        ]
+      : [])
   ]
 });

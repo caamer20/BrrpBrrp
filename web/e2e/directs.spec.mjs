@@ -835,3 +835,99 @@ test('a message edited while reporting is re-read and confirmed, not sent silent
   await report.getByRole('button', { name: 'Send report' }).click();
   await expect(report.getByText(/Report sent\./)).toBeVisible();
 });
+
+// P10-04, rendered. A recipient who does not want the contact can see exactly what
+// would be disclosed, confirm, and have the evidence, the rejection and the block
+// land together — without accepting contact, opening a conversation, or granting
+// any membership. Ordinary Block stays a separate control in the same card.
+test('a recipient can report a request and block without accepting it', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  // Unique per run: the projects share one server, and a name reused from an
+  // earlier journey would collide on the second pass rather than fail honestly.
+  // Usernames are limited to 32 characters, so the run tag is deliberately short.
+  const tag = Math.random().toString(36).slice(2, 8);
+  const recipient = { username: `p10_rec_${tag}`, password: 'a p10r recipient passphrase' };
+  const sender = { username: `p10_snd_${tag}`, password: 'a p10r sender passphrase' };
+  const outsider = { username: `p10_out_${tag}`, password: 'a p10r outsider passphrase' };
+  // The API fixture's session is whatever an earlier journey left it as, and the
+  // reviewer journey's ownership ceremony ends the previous owner's sessions. So
+  // the owner signs in again here, and each account is created from that session.
+  await signInOverApi(request, OWNER);
+  const recipientID = await createAccount(request, recipient);
+  const senderID = await createAccount(request, sender);
+  const outsiderID = await createAccount(request, outsider);
+  await signInOverApi(request, sender);
+  expect(
+    (
+      await request.post('/api/directs', {
+        data: { user_id: recipientID, introduction: 'let me in please' }
+      })
+    ).status()
+  ).toBe(201);
+  const conversation = (await (await request.get('/api/directs')).json())[0].id;
+
+  await signIn(page, recipient);
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
+  const inbox = page.getByRole('dialog', { name: 'Messages', exact: true });
+  await inbox.getByRole('button', { name: /^Requests/ }).click();
+  // Ordinary Block is still there, beside the report action.
+  await expect(inbox.getByRole('button', { name: 'Block person', exact: true })).toBeVisible();
+  await inbox.getByRole('button', { name: 'Report and block', exact: true }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Report this request', exact: true });
+  await expect(dialog).toBeVisible();
+  // The disclosure names what is saved, who can read it, and that blocking is part
+  // of the same action — before anything is sent.
+  await expect(dialog.getByRole('heading', { name: 'What will be saved' })).toBeVisible();
+  await expect(dialog.locator('blockquote')).toHaveText('let me in please');
+  // The combined effect is stated explicitly, so a reader cannot mistake this for
+  // a report-only action.
+  await expect(
+    dialog.getByText(/Sending this also|blocked/),
+    'the dialog does not say the block is part of the same action'
+  ).not.toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Report and block' })).toBeDisabled();
+  await dialog.getByRole('textbox', { name: /Why are you reporting/ }).fill('unwanted contact');
+  await expect(dialog.getByRole('button', { name: 'Report and block' })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Report and block' }).click();
+  // Report-and-block changes the account's own authority, so the invalidation can
+  // arrive before the response. That is expected, not failure: the dialog says the
+  // outcome is unconfirmed and offers to check *this* operation rather than
+  // telling the person nothing was sent (ADR 0014).
+  // Whether or not the invalidation beat the response, the check is offered and
+  // the confirmed answer is what finally appears. The check must resolve to the
+  // same receipt rather than re-reporting: the block revoked the authority the
+  // operation needed, and reconciling has to survive that.
+  // The check is offered whenever the outcome is not shown, which is the expected
+  // path here: the block revokes access to the very request being reported, so its
+  // authority invalidation usually beats the response.
+  await dialog.getByRole('button', { name: 'Check what happened' }).click();
+  await expect(dialog.getByRole('button', { name: 'Done' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  // Nothing was accepted: the pair is not a conversation and the sender is blocked.
+  await signInOverApi(request, recipient);
+  const after = (await (await request.get('/api/directs')).json()).find(
+    (d) => d.id === conversation
+  );
+  expect(after?.can_read, 'reporting accepted the conversation').toBeFalsy();
+  const history = await request.get(`/api/conversations/${conversation}/messages`);
+  expect(history.status(), 'reporting created a conversation history').toBe(404);
+  // The evidence exists and only the reporter's own operation resolves.
+  const receipt = await request.get(
+    `/api/me/report-receipt?operation_key=${encodeURIComponent('')}`.replace(
+      'operation_key=',
+      'operation_key=missing'
+    )
+  );
+  expect(receipt.status(), 'an unknown receipt key discloses something').toBe(404);
+  // The sender is blocked, and an outsider still cannot see the request.
+  await signInOverApi(request, outsider);
+  expect(
+    (await request.get(`/api/directs/${conversation}/report-preview`)).status(),
+    'an outsider could preview the request'
+  ).toBe(404);
+});

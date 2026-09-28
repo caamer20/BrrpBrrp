@@ -12,12 +12,17 @@
   // record of what someone chose to disclose, not a moderation console over
   // private conversations. A reviewer with this capability who is not a participant
   // has no way to become one from this screen.
+  // Both kinds of private evidence appear here: a reported message and a reported
+  // request introduction. They share a capability, a policy, an expiry and a
+  // cleanup, so a reviewer should not have to learn two interfaces — but the source
+  // is labelled, because the two are different facts about different people, and
+  // neither carries a conversation the reviewer could open.
   interface Evidence {
     id: string;
-    message_id: string;
-    conversation_id: string;
-    reporter_id: string;
+    source_kind: 'message' | 'request';
     author_id: string;
+    requester_id: string;
+    reporter_id: string;
     reason: string;
     snapshot_text: string;
     status: string;
@@ -37,24 +42,40 @@
   let status = $state<'open' | 'resolved'>('open');
   let reports = $state<Evidence[]>([]);
   let cursor = $state('');
+  // Each source paginates on its own ids, so each carries its own cursor.
+  let messageCursor = $state('');
+  let requestCursor = $state('');
   let loading = $state(true);
   let error = $state('');
   let notice = $state('');
   let notes = $state<Record<string, string>>({});
+  // busy names the record whose review is in flight, and it is released by the
+  // operation that claimed it — not by whatever the list happens to be showing.
   let busy = $state('');
-  let version = 0;
+  // listVersion sequences *reads only*. A mutation must not advance it: it did not
+  // issue a read, and if it did, any read issued meanwhile would fail admission
+  // against a version it had moved, and a held review's own cleanup would fail
+  // against a version the refresh had moved — leaving the panel permanently busy
+  // and every later action silently refused (completion review 11, R11-01).
+  let listVersion = 0;
   let loadedFor = $state('');
 
-  // The grant is re-checked on every read. Losing it must empty this view rather
-  // than leave evidence on screen that the account may no longer read, which is
-  // the same rule the community queue follows.
-  const admitted = (request: { account?: string; generation: number; version: number }) =>
+  // Identity without list sequencing. A read is admitted only if it is still the
+  // newest read; a mutation is admitted while the account, its generation and its
+  // capability still hold, because it will re-read rather than patch a view in
+  // place — so a concurrent refresh can never be overwritten by a stale result.
+  const current = () => ({
+    account: workspace.user?.id,
+    generation: workspace.authorizationGeneration
+  });
+  const admittedAccount = (request: { account?: string; generation: number }) =>
     alive &&
     request.account === workspace.user?.id &&
     request.generation === workspace.authorizationGeneration &&
-    request.version === version &&
     workspace.can('report.review_private') &&
     !workspace.authorizationUnverified;
+  const admittedRead = (request: { account?: string; generation: number; version: number }) =>
+    admittedAccount(request) && request.version === listVersion;
 
   // The identity is captured per request, not once when the panel mounted. A
   // capture at construction meant every read issued after an unrelated authority
@@ -63,27 +84,35 @@
   // generation moved, and Refresh could not repair it (completion review 10,
   // R10-04).
   async function load(older = false) {
-    const request = {
-      account: workspace.user?.id,
-      generation: workspace.authorizationGeneration,
-      version: ++version
-    };
+    const request = { ...current(), version: ++listVersion };
     loading = !older;
     error = '';
     if (!older) reports = [];
     try {
-      const result = await api<{ reports: Evidence[]; next_cursor: string }>(
-        `/admin/private-reports?status=${status}${older && cursor ? `&before=${cursor}` : ''}`
+      // Both queues are read and merged so the reviewer sees one list. Each source
+      // paginates on its own ids, so each keeps its own cursor.
+      const [messages, requests] = await Promise.all([
+        api<{ reports: Evidence[]; next_cursor: string }>(
+          `/admin/private-reports?status=${status}${older && messageCursor ? `&before=${messageCursor}` : ''}`
+        ),
+        api<{ reports: Evidence[]; next_cursor: string }>(
+          `/admin/request-reports?status=${status}${older && requestCursor ? `&before=${requestCursor}` : ''}`
+        )
+      ]);
+      if (!admittedRead(request)) return;
+      const combined = [...messages.reports, ...requests.reports].sort((a, b) =>
+        b.id.localeCompare(a.id)
       );
-      if (!admitted(request)) return;
-      reports = older ? [...reports, ...result.reports] : result.reports;
-      cursor = result.next_cursor;
+      reports = older ? [...reports, ...combined] : combined;
+      messageCursor = messages.next_cursor;
+      requestCursor = requests.next_cursor;
+      cursor = messageCursor || requestCursor;
       loadedFor = `${request.account}:${request.generation}:${status}`;
-      for (const report of result.reports) notes[report.id] ??= report.review_note;
+      for (const report of combined) notes[report.id] ??= report.review_note;
     } catch (failure) {
-      if (admitted(request)) error = errorMessage(failure);
+      if (admittedRead(request)) error = errorMessage(failure);
     } finally {
-      if (admitted(request)) loading = false;
+      if (admittedRead(request)) loading = false;
     }
   }
   // The gate is checked here, not only in the route. An API refusal alone is not
@@ -108,33 +137,38 @@
 
   async function review(report: Evidence, next: 'open' | 'resolved') {
     if (busy) return;
-    // The mutation is admitted the same way the read is, against the identity
-    // captured when it started: a response arriving after the account or its
-    // authority changed belongs to a view that no longer exists, and applying it
-    // would edit a queue the account may no longer be allowed to see.
-    const request = {
-      account: workspace.user?.id,
-      generation: workspace.authorizationGeneration,
-      version: ++version
-    };
-    busy = report.id;
+    const request = current();
+    // The two kinds are separate stores with separate endpoints, so the review goes
+    // to the one this record actually lives in. Guessing by id would send a
+    // request review into the message queue.
+    const path =
+      report.source_kind === 'request'
+        ? `/admin/request-reports/${report.id}`
+        : `/admin/private-reports/${report.id}`;
+    const claimed = report.id;
+    busy = claimed;
     error = '';
     notice = '';
     try {
-      await api<Evidence>(`/admin/private-reports/${report.id}`, 'PATCH', {
+      await api<Evidence>(path, 'PATCH', {
         status: next,
         note: (notes[report.id] ?? '').trim()
       });
-      if (!admitted(request)) return;
+      if (!admittedAccount(request)) return;
       // A resolve moves the record out of this view; a reopen brings it back. The
-      // queue is re-read rather than patched in place, so a filter that no longer
-      // admits the record cannot leave it stranded.
-      reports = reports.filter((entry) => entry.id !== report.id);
+      // queue is re-read rather than patched in place, so a refresh that landed
+      // while this was in flight is not overwritten by a stale removal, and a
+      // filter that no longer admits the record cannot leave it stranded.
       notice = next === 'resolved' ? 'Marked as reviewed.' : 'Reopened for review.';
+      void load();
     } catch (failure) {
-      if (admitted(request)) error = errorMessage(failure);
+      if (admittedAccount(request)) error = errorMessage(failure);
     } finally {
-      if (admitted(request)) busy = '';
+      // Released by the operation that claimed it, and only then. Tying this to the
+      // list's admission — as it used to be — is what let a concurrent refresh
+      // strand the flag and refuse every later review (completion review 11,
+      // R11-01).
+      if (busy === claimed) busy = '';
     }
   }
 
@@ -173,14 +207,33 @@
   {#each reports as report (report.id)}
     <article
       class="report-card"
-      aria-label={`Private evidence reported by ${who(report.reporter_id)}`}
+      aria-label={`${report.source_kind === 'request' ? 'Request introduction' : 'Message'} reported by ${who(report.reporter_id)}`}
     >
-      <h4>From {who(report.author_id)} · reported by {who(report.reporter_id)}</h4>
+      <h4>
+        {#if report.source_kind === 'request'}
+          Request introduction from {who(report.requester_id)} · reported by {who(
+            report.reporter_id
+          )}
+        {:else}
+          Message from {who(report.author_id)} · reported by {who(report.reporter_id)}
+        {/if}
+      </h4>
       <p class="muted">
+        {#if report.source_kind === 'request'}
+          The sender asked to start a direct conversation. The request was declined and the sender
+          blocked at the time this was reported.
+        {/if}
         Reported {day(report.created_at)}. Evidence is available until {day(report.expires_at)}.
       </p>
-      <h5>Reported message text</h5>
-      <blockquote>{report.snapshot_text || 'This message had no text.'}</blockquote>
+      <h5>
+        {report.source_kind === 'request' ? 'Requested introduction' : 'Reported message text'}
+      </h5>
+      <blockquote>
+        {report.snapshot_text ||
+          (report.source_kind === 'request'
+            ? 'This request had no introduction.'
+            : 'This message had no text.')}
+      </blockquote>
       <h5>The reporter's explanation</h5>
       <p class="report-text">{report.reason}</p>
       <label

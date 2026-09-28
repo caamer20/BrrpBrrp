@@ -4,8 +4,8 @@
   import { workspace } from '../workspace.svelte';
   import type { DirectConversation, User } from '../types';
   import Avatar from './Avatar.svelte';
+  import ReportRequest from './ReportRequest.svelte';
   import Modal from './Modal.svelte';
-
   let directs = $state<DirectConversation[]>([]);
   let blocked = $state<User[]>([]);
   let allowRequests = $state(true);
@@ -34,6 +34,13 @@
     workspace.messagesTab = next;
   }
   let scope = $state<{ account: string; generation: number; version: number } | null>(null);
+  // Which incoming request is open in the report dialog, if any, and the name it
+  // had when it was opened. The name is captured rather than looked up later: the
+  // operation blocks the sender and invalidates this list, so by the time the
+  // dialog needs it the card is gone and the dialog would lose the person it is
+  // about.
+  let reporting = $state('');
+  let reportingName = $state('');
   let version = 0;
   let mutationVersion = 0;
   let alive = true;
@@ -331,6 +338,8 @@
                     {},
                     'Person blocked. Existing history stays readable; messages and new requests are stopped.'
                   )}>Block person</button
+              ><button class="secondary" disabled={busy} onclick={() => (reporting = direct.id)}
+                >Report and block</button
               >
             </div>{/if}
           {#if direct.request_state === 'pending' && direct.request_direction === 'outgoing'}<button
@@ -427,6 +436,23 @@
     {/if}
   {/if}
 </Modal>
+
+<!-- One dialog at a time. The report flow owns its own disclosure, and the request
+     it belongs to is named so the introduction and reviewer count come from that
+     request rather than from whatever the list happened to render last. -->
+{#if reporting}
+  <ReportRequest
+    conversationId={reporting}
+    requesterName={reportingName || 'this person'}
+    close={() => {
+      reporting = '';
+      reportingName = '';
+      // The list is re-read on close: the operation either changed the request
+      // state or the account, and a stale card would misreport both.
+      void load();
+    }}
+  />
+{/if}
 
 <style>
   .request-card {

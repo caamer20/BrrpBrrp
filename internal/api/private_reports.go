@@ -550,7 +550,20 @@ func (s *Server) listPrivateEvidence(w http.ResponseWriter, r *http.Request, use
 		reports = reports[:50]
 		cursor = reports[49].ID
 	}
-	respond(w, http.StatusOK, map[string]any{"reports": reports, "next_cursor": cursor})
+	// The source kind travels with the record so a merged queue can label it
+	// without inferring anything from ids (ADR 0014). The conversation is still
+	// omitted: it is provenance, not somewhere a reviewer may go.
+	view := make([]map[string]any, 0, len(reports))
+	for _, report := range reports {
+		view = append(view, map[string]any{
+			"id": report.ID, "source_kind": "message", "message_id": report.MessageID,
+			"author_id": report.AuthorID, "reporter_id": report.ReporterID, "reason": report.Reason,
+			"snapshot_text": report.SnapshotText, "status": report.Status,
+			"review_note": report.ReviewNote, "reviewed_by": report.ReviewedBy,
+			"created_at": report.CreatedAt, "expires_at": report.ExpiresAt,
+		})
+	}
+	respond(w, http.StatusOK, map[string]any{"reports": view, "next_cursor": cursor})
 }
 
 // reviewPrivateEvidence records triage. It does not delete a message, ban an
