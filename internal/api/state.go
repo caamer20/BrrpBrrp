@@ -87,6 +87,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 		return
 	}
 	directs := []directConversation{}
+	// outstanding_incoming_requests is the badge: how many pending requests are
+	// addressed to this account and still actionable. It is derived from durable
+	// state, so a cold start, a restart and a device that missed every event all
+	// agree, and it reads no request introduction, so a closed workspace never has
+	// to pull pending requests into a panel that is not open (ADR 0013).
+	incomingRequests := 0
 	if s.config.PrivateConversations {
 		all, err := s.directConversations(r.Context(), user)
 		if err != nil {
@@ -98,10 +104,16 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 				directs = append(directs, c)
 			}
 		}
+		incomingRequests, err = s.outstandingIncomingRequests(r.Context(), s.store, user)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
 	respond(w, 200, map[string]any{
 		"conversations": directs, "features": map[string]bool{"private_conversations": s.config.PrivateConversations},
-		"user": user, "channels": channels, "users": users, "settings": s.Settings(), "unread": unread,
+		"requests": map[string]int{"outstanding_incoming": incomingRequests},
+		"user":     user, "channels": channels, "users": users, "settings": s.Settings(), "unread": unread,
 		"reaction_palette": reactionPalette, "presence": s.visiblePresence(), "push_public_key": s.vapidPublic,
 		"voice_states": s.visibleVoiceStates(r.Context(), principal), "categories": categories,
 		"authorization": map[string]any{

@@ -43,6 +43,16 @@ const (
 	SettingsManage Capability = "settings.manage"
 	AuditRead      Capability = "audit.read"
 
+	// ReportReviewPrivate authorizes reading and reviewing the private message
+	// evidence an account has voluntarily submitted about one accepted direct
+	// message. It is separate from MessageDeleteAny on purpose: a community
+	// moderator's grant is scoped to channels they can currently read, which is
+	// never true of a direct conversation. Holding this capability grants the
+	// submitted snapshot and nothing else — no membership, no history, no search,
+	// no files — so it is delegated explicitly rather than inherited by every
+	// reviewer. Owners hold it through the ordinary owner rule (ADR 0013).
+	ReportReviewPrivate Capability = "report.review_private"
+
 	// The operator tier is not delegable through ordinary custom roles. These
 	// powers can defeat a private-conversation boundary (whole-server export,
 	// password takeover), so they require owner authority and a recent
@@ -58,6 +68,7 @@ var Catalog = []Capability{
 	ChannelRead, MessageSend, MessageReact, MessageUpload, MessagePin, MessageDeleteAny, MentionEveryone,
 	VoiceConnect, VoiceSpeak, VoiceShareScreen, VoiceModerate,
 	MemberManage, ChannelManage, CategoryManage, RoleManage, InviteManage, SettingsManage, AuditRead,
+	ReportReviewPrivate,
 	OperatorBackup, OperatorCredentialRecovery, OperatorOwnershipTransfer,
 }
 

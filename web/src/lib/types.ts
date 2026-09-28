@@ -218,6 +218,11 @@ export interface WorkspaceState {
   authorization: Authorization;
   features?: { private_conversations: boolean };
   conversations?: DirectConversation[];
+  // outstanding_incoming is the count of pending requests addressed to this
+  // account that are still actionable. It is a badge, not an activity feed: no
+  // request introduction is carried here, so a closed workspace never pulls
+  // pending requests into a panel that is not open (ADR 0013).
+  requests?: { outstanding_incoming: number };
 }
 
 export interface RealtimeEvent {

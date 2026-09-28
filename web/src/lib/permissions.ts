@@ -65,6 +65,12 @@ export const capabilityGroups: CapabilityGroup[] = [
         name: 'audit.read',
         label: 'Read the audit log',
         detail: 'See the recorded administrative actions.'
+      },
+      {
+        name: 'report.review_private',
+        label: 'Review private message reports',
+        detail:
+          'Read the single messages people have chosen to report from their own direct conversations, and record what you concluded. It does not open those conversations, their history or their files.'
       }
     ]
   },

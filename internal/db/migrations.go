@@ -40,6 +40,7 @@ var Migrations = []Migration{
 	{Version: 10, Name: "account-scoped channel notification preferences", SQL: migration10},
 	{Version: 11, Name: "required conversation scope and nullable channel message projection", SQL: migration11, RebuildsReferences: true},
 	{Version: 12, Name: "direct consent, blocking, preferences and read cursors", SQL: migration12},
+	{Version: 13, Name: "private message evidence and durable submission limits", SQL: migration13},
 }
 
 // SchemaVersion is the newest schema this binary writes and understands.

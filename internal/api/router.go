@@ -294,6 +294,14 @@ func (s *Server) routes() []route {
 		{http.MethodPost, "/api/messages/{id}/report", routePolicy{Note: "members report one currently readable community message; no conversation-wide export"}, s.reportMessage},
 		{http.MethodGet, "/api/admin/reports", routePolicy{Capability: authz.MessageDeleteAny}, s.listReports},
 		{http.MethodPatch, "/api/admin/reports/{id}", routePolicy{Capability: authz.MessageDeleteAny}, s.reviewReport},
+		// Private message evidence (ADR 0013). Reporting requires current accepted
+		// read access, not write access, so a participant who blocked the other
+		// person can still report retained history; reviewing requires the separate
+		// report.review_private grant and confers no access to the conversation.
+		{http.MethodGet, "/api/messages/{id}/private-report-preview", routePolicy{Note: "returns the exact server-side snapshot a private report would save, for the caller's own readable accepted direct message"}, s.previewPrivateEvidence},
+		{http.MethodPost, "/api/messages/{id}/private-report", routePolicy{Note: "stores one confirmed private evidence snapshot; the submitted text is the server's, never the client's"}, s.submitPrivateEvidence},
+		{http.MethodGet, "/api/admin/private-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "reads only voluntarily submitted evidence snapshots; grants no private membership, history, search or files"}, s.listPrivateEvidence},
+		{http.MethodPatch, "/api/admin/private-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "records nonpunitive triage of one evidence record"}, s.reviewPrivateEvidence},
 		{http.MethodGet, "/api/me/channel-notifications", routePolicy{Note: "own notification preferences filtered by current channel access"}, s.listChannelNotifications},
 		{http.MethodPut, "/api/channels/{id}/notifications", routePolicy{Note: "active members change only their own notification choice for a readable channel"}, s.setChannelNotifications},
 		{http.MethodPost, "/api/admin/users/{id}/reset-password", routePolicy{Capability: authz.OperatorCredentialRecovery, FreshAuth: true, Note: "chosen-password takeover is operator authority, not ordinary moderation, and needs a recent strong sign-in"}, s.resetPassword},

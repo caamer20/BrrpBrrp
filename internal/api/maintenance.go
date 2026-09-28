@@ -100,6 +100,13 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM message_reports WHERE rowid IN (SELECT rowid FROM message_reports WHERE expires_at<=? ORDER BY expires_at LIMIT 500)`, db.Timestamp(now)); err != nil {
 		return err
 	}
+	// Private evidence expires on the same rule but is reclaimed separately, so
+	// turning the private feature off never accelerates its deletion: the records
+	// stay until this sweep reaches their own expiry, which is what "disabling a
+	// feature is not erasure" has to mean in practice. Bounded batch, same as above.
+	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM private_message_reports WHERE rowid IN (SELECT rowid FROM private_message_reports WHERE expires_at<=? ORDER BY expires_at LIMIT 500)`, db.Timestamp(now)); err != nil {
+		return err
+	}
 	files, err := os.ReadDir(s.config.UploadDir)
 	if err != nil {
 		return err

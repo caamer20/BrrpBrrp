@@ -158,6 +158,32 @@ func (s *Server) directConversations(ctx context.Context, user db.User) ([]direc
 	return result, nil
 }
 
+// outstandingIncomingRequests counts the requests this account can still act on.
+//
+// It is derived from durable current state rather than accumulated, so it is
+// correct on a cold start, after a restart, and for a device that missed every
+// event while it was closed. Only requests addressed to this account, still
+// pending, from an available identity that has not opted out and is not blocked
+// in either direction are counted: a request the recipient could not act on
+// anyway must not sit in a badge forever.
+//
+// It is a count, not an activity history. It deliberately does not read request
+// introductions, so a closed workspace can draw a badge without the account's
+// pending requests being pulled into a panel that is not open (ADR 0013).
+func (s *Server) outstandingIncomingRequests(ctx context.Context, q db.Queryer, user db.User) (int, error) {
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT count(*) FROM direct_requests r
+		JOIN conversations c ON c.id=r.conversation_id AND c.kind='direct' AND c.state='pending'
+		JOIN direct_pairs p ON p.conversation_id=r.conversation_id
+		JOIN users u ON u.id=r.requester_id
+		WHERE r.recipient_id=? AND r.state='pending' AND r.requester_id IN(p.user_low,p.user_high)
+		AND u.is_deleted=0 AND u.is_banned=0 AND u.is_deactivated=0
+		AND COALESCE((SELECT cp.allow_requests FROM contact_preferences cp WHERE cp.user_id=r.requester_id),1)=1
+		AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=r.requester_id AND b.blocked_id=?) OR (b.blocker_id=? AND b.blocked_id=r.requester_id))`,
+		user.ID, user.ID, user.ID).Scan(&count)
+	return count, err
+}
+
 func (s *Server) listDirectConversations(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !s.requirePrivateConversations(w) {
 		return
