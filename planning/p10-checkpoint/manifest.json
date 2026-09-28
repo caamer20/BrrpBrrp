@@ -1,0 +1,43 @@
+{
+  "candidate": "0.4.0-alpha.7",
+  "source_commit": "976366148348cb7ea754bb5304c126503ae68639",
+  "schema": 14,
+  "backup_format": 2,
+  "toolchain": "go1.27.1",
+  "frontend_build": "b17ccfd6cd9325e2",
+  "vcs_stamp_in_extracted_binary": {
+    "revision": "976366148348cb7ea754bb5304c126503ae68639",
+    "time": "2026-09-28T23:44:26Z",
+    "modified": false
+  },
+  "archives": {
+    "native_darwin_amd64": {
+      "path": "dist/releases/brrpbrrp-0.4.0-alpha.7-darwin-amd64.zip",
+      "sha256": "0d4e87f81a3a13c77c94d0dc8c088d6bcf63b02c083e3c21804a7e5a800521bf",
+      "extracted_binary_sha256": "4dc6e2494f847124f4945ee624e9ae5815fb5a0c8d311aad32364e7c48d12d1d"
+    },
+    "source": {
+      "path": "dist/brrpbrrp-docker-source-0.4.0-alpha.7.zip",
+      "sha256": "8a18084a613fc3c30e82d36f15206adb50ed2fe946de62b275a7f91273ded0df"
+    }
+  },
+  "note": "The native archive was built from a clean tree at the commit above, so the binary in the extracted archive carries vcs.modified=false. The source archive is not a git checkout, so its build carries no VCS stamp; that is a property of a tarball, not a dirty build.",
+  "rehearsals": {
+    "community_recovery": {
+      "checks": 23,
+      "passed": true,
+      "report": "recovery.json"
+    },
+    "private_recovery": {
+      "checks": 102,
+      "passed": true,
+      "report": "recovery-private.json"
+    },
+    "rollback": {
+      "checks": 57,
+      "passed": true,
+      "report": "rollback.json",
+      "compatibility": "0.4.0-alpha.6 (schema 12, backup format 2) -> 0.4.0-alpha.7 (schema 14, backup format 2)"
+    }
+  }
+}

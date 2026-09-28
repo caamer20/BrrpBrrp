@@ -1,0 +1,662 @@
+{
+  "rehearsal": "upgrade-recovery-private",
+  "passed": true,
+  "binary": "/private/tmp/p10-extract/darwin-amd64/brrpbrrp",
+  "binary_sha256": "4dc6e2494f847124f4945ee624e9ae5815fb5a0c8d311aad32364e7c48d12d1d",
+  "feature_mode": "private conversations enabled on disposable servers",
+  "work_dir": "/private/tmp/p10-ev/rp",
+  "archive": {
+    "path": "/private/tmp/p10-ev/rp/source/backups/private.zip",
+    "sha256": "19ebb6bd3246ed1682a5dee229e5bf74c4e48a02b150aefc1ece01c37b25243f",
+    "bytes": 23591
+  },
+  "post_snapshot_decisions": {
+    "blockAppliesOnSource": true,
+    "deltaDeactivated": true,
+    "reconciledBeforeCutover": [
+      "block",
+      "deactivation"
+    ]
+  },
+  "reconciliation": "both post-snapshot decisions (the block and the deactivation) were absent from the restored copy and re-applied explicitly on the isolated server before cutover, as the runbook requires",
+  "checks": [
+    {
+      "name": "first-time setup accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member alpha created",
+      "ok": "01a0ea6e-00b7-7318-b438-cd653991781d",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member beta created",
+      "ok": "01a0ea6e-0279-7766-b50e-a96030a4c311",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member carol created",
+      "ok": "01a0ea6e-0431-7484-90ab-b7e5887485fd",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member delta created",
+      "ok": "01a0ea6e-05eb-7680-ac49-2e5b212fbb5c",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member echo created",
+      "ok": "01a0ea6e-07d0-7e1d-9d36-35bc070f19ff",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member frank created",
+      "ok": "01a0ea6e-0991-7887-b7a8-37a28872c9a0",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "member grace created",
+      "ok": "01a0ea6e-0b4a-7eb5-9241-9c3d2c65cd26",
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "alpha's request to beta created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "beta accepted the request",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "destination-bound private upload accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "private message with attachment accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "a second message leaves beta one unread",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "pre-snapshot lost-ack replay returns the recorded message",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "beta's read cursor recorded",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "carol's pending request created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "grace's pending request created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "delta can preview the pending introduction for reporting",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "delta reported the introduction and blocked the sender",
+      "ok": true,
+      "detail": "HTTP 201 {\"created_at\":\"2026-09-28T23:51:15.818743000Z\",\"duplicate\":false,\"expires_at\":\"2026-12-27T23:51:15.818743000Z\",\"id\":\"01a0ea6e-0c6a-7c7f-9fd4-141be7620f12\",\"outcome\":\"reported_and_blocked\"}"
+    },
+    {
+      "name": "a reported request leaves the sender no conversation to write into",
+      "ok": true,
+      "detail": "HTTP 404"
+    },
+    {
+      "name": "the block stops a new request from the reported sender",
+      "ok": true,
+      "detail": "HTTP 404 {\"error\":\"Not found.\"}"
+    },
+    {
+      "name": "report-and-block never accepted contact",
+      "ok": true,
+      "detail": "state=rejected blocked=true"
+    },
+    {
+      "name": "the snapshot source really holds the request evidence",
+      "ok": true,
+      "detail": "1 rows"
+    },
+    {
+      "name": "the snapshot source holds the exact introduction delta confirmed",
+      "ok": true,
+      "detail": "53 characters, preview has 53"
+    },
+    {
+      "name": "echo's request created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "carol rejected echo",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "delta's request to beta created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "beta accepted delta",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "delta blocked beta before the snapshot",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "alpha hid the conversation",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "echo opted out of new requests",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "frank's request to beta created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "beta accepted frank",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "frank's message accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "owner factor setup issued",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "owner factor enrolled",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "owner reauthenticated for the privileged removal",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "owner removed frank before the snapshot, history retained",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "beta reads the removed peer's history on the source",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "beta registered a device before the snapshot",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the snapshot source really holds a push registration",
+      "ok": true,
+      "detail": "1 rows"
+    },
+    {
+      "name": "alpha can preview a private message for reporting",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "alpha submitted private evidence before the snapshot",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the submit receipt names only the reporter's own report",
+      "ok": true,
+      "detail": "receipt keys: created_at,duplicate,expires_at,id,status"
+    },
+    {
+      "name": "the snapshot source really holds the private evidence",
+      "ok": true,
+      "detail": "1 rows"
+    },
+    {
+      "name": "the snapshot source holds the exact evidence the reporter confirmed",
+      "ok": true,
+      "detail": "23 characters"
+    },
+    {
+      "name": "a non-participating account cannot read the private evidence queue",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "source server stopped cleanly",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "backup produced an archive",
+      "ok": true,
+      "detail": "23591 bytes"
+    },
+    {
+      "name": "verify-backup accepts the archive",
+      "ok": true,
+      "detail": "Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks."
+    },
+    {
+      "name": "beta blocked alpha only after the snapshot",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the fresh block refuses alpha's write on the source",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "owner deactivated delta only after the snapshot",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "delta cannot sign in on the source while deactivated",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "restore accepted the archive",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "restored copy verifies",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restored state carries no sessions",
+      "ok": true,
+      "detail": "0 rows"
+    },
+    {
+      "name": "restored state carries no push registrations",
+      "ok": true,
+      "detail": "0 rows, seeded with 1 before the snapshot"
+    },
+    {
+      "name": "alpha's pre-restore session is invalid on the restored copy",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "the owner's pre-restore session is invalid on the restored copy",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "the removed account cannot sign in on the restored copy",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "beta reads the restored private history",
+      "ok": true,
+      "detail": "HTTP 200, 2 messages"
+    },
+    {
+      "name": "the exact private attachment bytes survived",
+      "ok": true,
+      "detail": "39 bytes"
+    },
+    {
+      "name": "the owner cannot read the private conversation or its file",
+      "ok": true,
+      "detail": "HTTP 404/404"
+    },
+    {
+      "name": "an outsider cannot read the private conversation or its file",
+      "ok": true,
+      "detail": "HTTP 404/404"
+    },
+    {
+      "name": "search inside the conversation finds the private wording",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "community search never returns private content",
+      "ok": true,
+      "detail": "0 hits"
+    },
+    {
+      "name": "the owner's search never returns private content",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "beta's read cursor survived the restore",
+      "ok": true,
+      "detail": "cursor at the read message"
+    },
+    {
+      "name": "alpha's hidden preference survived",
+      "ok": true,
+      "detail": "hidden=true"
+    },
+    {
+      "name": "unhiding stays an explicit choice",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the owner still cannot read the queue without the explicit grant",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "the private evidence record survived the restore",
+      "ok": true,
+      "detail": "present"
+    },
+    {
+      "name": "the restored evidence keeps its exact expiry, text and reason",
+      "ok": true,
+      "detail": "expires matches, text matches, reason matches"
+    },
+    {
+      "name": "a retry after the restore deduplicates onto the original evidence",
+      "ok": true,
+      "detail": "HTTP 200 id=01a0ea6e-4554-7249-ab49-5f74e14220e1"
+    },
+    {
+      "name": "the request evidence survived the restore",
+      "ok": true,
+      "detail": "present"
+    },
+    {
+      "name": "the restored request evidence keeps its exact expiry, text and reason",
+      "ok": true,
+      "detail": "expires matches, text matches"
+    },
+    {
+      "name": "the command receipt survived the restore",
+      "ok": true,
+      "detail": "source_kind=request"
+    },
+    {
+      "name": "the restore did not resurrect the reported request",
+      "ok": true,
+      "detail": "HTTP 404"
+    },
+    {
+      "name": "the block survives the restore",
+      "ok": true,
+      "detail": "HTTP 404 {\"error\":\"Not found.\"}"
+    },
+    {
+      "name": "the restore did not re-open contact that reporting never accepted",
+      "ok": true,
+      "detail": "state=rejected blocked=true"
+    },
+    {
+      "name": "a retry after the restore returns the original receipt",
+      "ok": true,
+      "detail": "HTTP 200 id=01a0ea6e-0c6a-7c7f-9fd4-141be7620f12"
+    },
+    {
+      "name": "a spent operation key cannot be reused for different work",
+      "ok": true,
+      "detail": "HTTP 409"
+    },
+    {
+      "name": "delta still sees carol's pending incoming request",
+      "ok": true,
+      "detail": "state=pending/incoming"
+    },
+    {
+      "name": "the restored snapshot reconstructs delta's outstanding request count",
+      "ok": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "an account with no pending request reports a zero count",
+      "ok": true,
+      "detail": "count=0"
+    },
+    {
+      "name": "echo's rejected request stays rejected",
+      "ok": true,
+      "detail": "state=rejected"
+    },
+    {
+      "name": "the rejection cooldown survives the restore",
+      "ok": true,
+      "detail": "HTTP 429"
+    },
+    {
+      "name": "echo's contact opt-out survives the restore",
+      "ok": true,
+      "detail": "HTTP 404"
+    },
+    {
+      "name": "the blocked pair's history stays readable",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the pre-snapshot block still refuses writes after restore",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "the removed peer's permitted history survived",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the removed peer presents as the Deleted member identity",
+      "ok": true,
+      "detail": "peer deleted=true"
+    },
+    {
+      "name": "delta's post-snapshot deactivation is absent from the snapshot",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "beta's post-snapshot block is absent until reconciliation",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the receipt survived and answers the replay without a duplicate",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "reconciliation re-applies the post-snapshot block",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "reconciliation re-applies the post-snapshot deactivation",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the reconciled deactivation denies sign-in before cutover",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "the deactivated account's earlier session no longer authorizes",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "the reconciled block refuses new writes again",
+      "ok": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "readability under the reconciled block is retained",
+      "ok": true,
+      "detail": "HTTP 200"
+    }
+  ],
+  "transcript": [
+    "Rehearsal workspace: /private/tmp/p10-ev/rp",
+    "Binary: /private/tmp/p10-extract/darwin-amd64/brrpbrrp (sha256 4dc6e2494f847124f4945ee624e9ae5815fb5a0c8d311aad32364e7c48d12d1d)",
+    "Feature mode: BRRP_ENABLE_PRIVATE_CONVERSATIONS=true on both disposable servers",
+    "",
+    "1. Install and seed consented private state",
+    "  ok    first-time setup accepted — HTTP 201",
+    "  ok    member alpha created — HTTP 201",
+    "  ok    member beta created — HTTP 201",
+    "  ok    member carol created — HTTP 201",
+    "  ok    member delta created — HTTP 201",
+    "  ok    member echo created — HTTP 201",
+    "  ok    member frank created — HTTP 201",
+    "  ok    member grace created — HTTP 201",
+    "  ok    alpha's request to beta created — HTTP 201",
+    "  ok    beta accepted the request — HTTP 200",
+    "  ok    destination-bound private upload accepted — HTTP 201",
+    "  ok    private message with attachment accepted — HTTP 201",
+    "  ok    a second message leaves beta one unread — HTTP 201",
+    "  ok    pre-snapshot lost-ack replay returns the recorded message — HTTP 200",
+    "  ok    beta's read cursor recorded — HTTP 200",
+    "  ok    carol's pending request created — HTTP 201",
+    "  ok    grace's pending request created — HTTP 201",
+    "  ok    delta can preview the pending introduction for reporting — HTTP 200",
+    "  ok    delta reported the introduction and blocked the sender — HTTP 201 {\"created_at\":\"2026-09-28T23:51:15.818743000Z\",\"duplicate\":false,\"expires_at\":\"2026-12-27T23:51:15.818743000Z\",\"id\":\"01a0ea6e-0c6a-7c7f-9fd4-141be7620f12\",\"outcome\":\"reported_and_blocked\"}",
+    "  ok    a reported request leaves the sender no conversation to write into — HTTP 404",
+    "  ok    the block stops a new request from the reported sender — HTTP 404 {\"error\":\"Not found.\"}",
+    "  ok    report-and-block never accepted contact — state=rejected blocked=true",
+    "  ok    the snapshot source really holds the request evidence — 1 rows",
+    "  ok    the snapshot source holds the exact introduction delta confirmed — 53 characters, preview has 53",
+    "  ok    echo's request created — HTTP 201",
+    "  ok    carol rejected echo — HTTP 200",
+    "  ok    delta's request to beta created — HTTP 201",
+    "  ok    beta accepted delta — HTTP 200",
+    "  ok    delta blocked beta before the snapshot — HTTP 200",
+    "  ok    alpha hid the conversation — HTTP 200",
+    "  ok    echo opted out of new requests — HTTP 200",
+    "  ok    frank's request to beta created — HTTP 201",
+    "  ok    beta accepted frank — HTTP 200",
+    "  ok    frank's message accepted — HTTP 201",
+    "  ok    owner factor setup issued — HTTP 200",
+    "  ok    owner factor enrolled — HTTP 200",
+    "  ok    owner reauthenticated for the privileged removal — HTTP 200",
+    "  ok    owner removed frank before the snapshot, history retained — HTTP 200",
+    "  ok    beta reads the removed peer's history on the source — HTTP 200",
+    "  ok    beta registered a device before the snapshot — HTTP 201",
+    "  ok    the snapshot source really holds a push registration — 1 rows",
+    "  ok    alpha can preview a private message for reporting — HTTP 200",
+    "  ok    alpha submitted private evidence before the snapshot — HTTP 201",
+    "  ok    the submit receipt names only the reporter's own report — receipt keys: created_at,duplicate,expires_at,id,status",
+    "  ok    the snapshot source really holds the private evidence — 1 rows",
+    "  ok    the snapshot source holds the exact evidence the reporter confirmed — 23 characters",
+    "  ok    a non-participating account cannot read the private evidence queue — HTTP 403",
+    "  ok    source server stopped cleanly — exit 0",
+    "",
+    "2. Snapshot the state without the later decisions",
+    "$ brrpbrrp backup --data-dir /private/tmp/p10-ev/rp/source --out backups/private.zip",
+    "  Backup saved: /private/tmp/p10-ev/rp/source/backups/private.zip",
+    "  ok    backup produced an archive — 23591 bytes",
+    "$ brrpbrrp verify-backup --file /private/tmp/p10-ev/rp/source/backups/private.zip",
+    "  Archive: /private/tmp/p10-ev/rp/source/backups/private.zip\n    format 2, created 2026-09-28T23:51:30.421101000Z, written by 0.4.0-alpha.7, schema 14\n    database 552960 bytes, 1 attachments, 39 attachment bytes\n    sha256 19ebb6bd3246ed1682a5dee229e5bf74c4e48a02b150aefc1ece01c37b25243f\n  Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "  ok    verify-backup accepts the archive — Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "",
+    "3. Prove decisions taken after the snapshot point",
+    "  ok    beta blocked alpha only after the snapshot — HTTP 200",
+    "  ok    the fresh block refuses alpha's write on the source — HTTP 403",
+    "  ok    owner deactivated delta only after the snapshot — HTTP 200",
+    "  ok    delta cannot sign in on the source while deactivated — HTTP 401",
+    "",
+    "4. Restore the snapshot into an empty destination",
+    "$ brrpbrrp restore --data-dir /private/tmp/p10-ev/rp/restored --file restore.zip",
+    "  Restored. All users must sign in again.",
+    "  ok    restore accepted the archive — exit 0",
+    "$ brrpbrrp verify --data-dir /private/tmp/p10-ev/rp/restored",
+    "  Schema 14 verified: 8 users, 2 channels, 3 messages, 1 attachments. No migration was applied and nothing was repaired.",
+    "  ok    restored copy verifies",
+    "  ok    restored state carries no sessions — 0 rows",
+    "  ok    restored state carries no push registrations — 0 rows, seeded with 1 before the snapshot",
+    "",
+    "5. Serve the restored copy in isolation and prove behavior through fresh sessions",
+    "  ok    alpha's pre-restore session is invalid on the restored copy — HTTP 401",
+    "  ok    the owner's pre-restore session is invalid on the restored copy — HTTP 401",
+    "  ok    the removed account cannot sign in on the restored copy — HTTP 401",
+    "  ok    beta reads the restored private history — HTTP 200, 2 messages",
+    "  ok    the exact private attachment bytes survived — 39 bytes",
+    "  ok    the owner cannot read the private conversation or its file — HTTP 404/404",
+    "  ok    an outsider cannot read the private conversation or its file — HTTP 404/404",
+    "  ok    search inside the conversation finds the private wording — HTTP 200",
+    "  ok    community search never returns private content — 0 hits",
+    "  ok    the owner's search never returns private content — HTTP 200",
+    "  ok    beta's read cursor survived the restore — cursor at the read message",
+    "  ok    alpha's hidden preference survived — hidden=true",
+    "  ok    unhiding stays an explicit choice — HTTP 200",
+    "  ok    the owner still cannot read the queue without the explicit grant — HTTP 403",
+    "  ok    the private evidence record survived the restore — present",
+    "  ok    the restored evidence keeps its exact expiry, text and reason — expires matches, text matches, reason matches",
+    "  ok    a retry after the restore deduplicates onto the original evidence — HTTP 200 id=01a0ea6e-4554-7249-ab49-5f74e14220e1",
+    "  ok    the request evidence survived the restore — present",
+    "  ok    the restored request evidence keeps its exact expiry, text and reason — expires matches, text matches",
+    "  ok    the command receipt survived the restore — source_kind=request",
+    "  ok    the restore did not resurrect the reported request — HTTP 404",
+    "  ok    the block survives the restore — HTTP 404 {\"error\":\"Not found.\"}",
+    "  ok    the restore did not re-open contact that reporting never accepted — state=rejected blocked=true",
+    "  ok    a retry after the restore returns the original receipt — HTTP 200 id=01a0ea6e-0c6a-7c7f-9fd4-141be7620f12",
+    "  ok    a spent operation key cannot be reused for different work — HTTP 409",
+    "  ok    delta still sees carol's pending incoming request — state=pending/incoming",
+    "  ok    the restored snapshot reconstructs delta's outstanding request count — count=1",
+    "  ok    an account with no pending request reports a zero count — count=0",
+    "  ok    echo's rejected request stays rejected — state=rejected",
+    "  ok    the rejection cooldown survives the restore — HTTP 429",
+    "  ok    echo's contact opt-out survives the restore — HTTP 404",
+    "  ok    the blocked pair's history stays readable — HTTP 200",
+    "  ok    the pre-snapshot block still refuses writes after restore — HTTP 403",
+    "  ok    the removed peer's permitted history survived — HTTP 200",
+    "  ok    the removed peer presents as the Deleted member identity — peer deleted=true",
+    "  ok    delta's post-snapshot deactivation is absent from the snapshot — HTTP 200",
+    "  ok    beta's post-snapshot block is absent until reconciliation — HTTP 201",
+    "  ok    the receipt survived and answers the replay without a duplicate — HTTP 200",
+    "  ok    reconciliation re-applies the post-snapshot block — HTTP 200",
+    "  ok    reconciliation re-applies the post-snapshot deactivation — HTTP 200",
+    "  ok    the reconciled deactivation denies sign-in before cutover — HTTP 401",
+    "  ok    the deactivated account's earlier session no longer authorizes — HTTP 401",
+    "  ok    the reconciled block refuses new writes again — HTTP 403",
+    "  ok    readability under the reconciled block is retained — HTTP 200",
+    "",
+    "Rehearsal PASS: 102 checks, 0 failed.",
+    "Scope: local restore into an isolated destination with fresh sessions; not off-host recovery."
+  ]
+}
