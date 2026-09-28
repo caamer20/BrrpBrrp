@@ -1,11 +1,11 @@
 # v1 implementation progress and evidence ledger
 
-**Last updated:** 27 September 2026 (P8 stabilization checkpoint; review 8 begun 26 September)
+**Last updated:** 28 September 2026 (P10 tranche; review 11)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.6** (schema **12**, backup format **2**)
+**Candidate:** **0.4.0-alpha.7** (schema **12**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
-**Current evidence:** [alpha.6 release record](releases/0.4.0-alpha.6.md), plus the P8 checkpoint ledger in the repository under `planning/p8-checkpoint/`
-**Prior packaged checkpoint:** [alpha.5](releases/0.4.0-alpha.5.md)
+**Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
+**Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
 **Historical finding record:** [completion-remediation-2026-09-24.md](completion-remediation-2026-09-24.md)
 **Assessment:** substantial local implementation progress; no G0–G8 release gate has passed. Earlier dated reviews describe their inspected snapshot. They do not override this candidate's implementation or supply missing host/independent acceptance.
 
@@ -23,7 +23,13 @@ the evidence level of each claim and the acceptance test that pins it, is in
 
 ## Current private-message tranche
 
-Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canonical direct requests, consent, durable contact limits, blocking, shared message/file/reply/search/read behavior and an opt-in inbox. This is partial progress in WP-09–11, not completed private messaging or v1 acceptance: private reports/push policy, groups, calls and independent review remain. Private conversations default off.
+Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canonical direct requests, consent, durable contact limits, blocking, shared message/file/reply/search/read behavior and an opt-in inbox. ADR 0013 and 0014 add selected private-message evidence reporting and recipient-only request evidence, with `report.review_private` as a distinct delegated capability. This is partial progress in WP-09–11, not completed private messaging or v1 acceptance: push/activity, groups, calls, screen sharing and independent review remain. Private conversations default off.
+
+### Review 11 and the P10 tranche
+
+The reviewer journey runs in its own Playwright project after the ownership journey, because `report.review_private` is not on the pre-ceremony administrator bridge and so must be delegated from an owner. It signs in as the steward the ownership journey leaves in place, and re-establishes that session before delegating: arranging the fixture conversations signs the shared API session in as a participant, which silently ran the role creation as that participant. Generated account names are held within the 32-character username bound, and the private-evidence queue labels each record with its source kind while still omitting the originating conversation.
+
+Verified on the committed source: `go vet` clean, `go test -race -count=1` green across every package, `svelte-check` zero errors and warnings, Prettier clean, frontend build clean, and both browser modes green (13 default-off, 21 with private conversations enabled).
 
 ### Review 8 findings and the completed P8 stabilization tranche
 
@@ -429,4 +435,4 @@ and every host, platform, media and capacity qualification.
 6. Review the authority/session/delivery and private-data boundaries independently. In parallel, obtain both Windows/Tailscale and Linux Docker hosts; rehearse install/update/reboot/lockout/rollback and independent restore with exact candidate artifacts, including private state. Measure RPO/RTO, capacity and soak. This workspace has no Docker engine or connected Windows host.
 7. Establish the canonical public repository, maintainer/security contacts, hosted CI, immutable artifact identity, signing and release process. Complete the prescribed independent reviews, 14-day beta and seven-day final-candidate observation before proposing v1.0.0 publication.
 
-No unpublished prerelease is a substitute for those acceptance results. The current source is a locally tested alpha.6 candidate whose review-8 findings are repaired at the P8 checkpoint; alpha.5 remains the prior packaged checkpoint, and no release gate has passed.
+No unpublished prerelease is a substitute for those acceptance results. The current source is a locally tested alpha.7 candidate whose review-11 findings are repaired; alpha.6 remains the prior packaged checkpoint, and no release gate has passed.
