@@ -302,6 +302,14 @@ func (s *Server) routes() []route {
 		{http.MethodPost, "/api/messages/{id}/private-report", routePolicy{Note: "stores one confirmed private evidence snapshot; the submitted text is the server's, never the client's"}, s.submitPrivateEvidence},
 		{http.MethodGet, "/api/admin/private-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "reads only voluntarily submitted evidence snapshots; grants no private membership, history, search or files"}, s.listPrivateEvidence},
 		{http.MethodPatch, "/api/admin/private-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "records nonpunitive triage of one evidence record"}, s.reviewPrivateEvidence},
+		// Recipient-only reporting of a pending request, and the durable command
+		// receipt that makes it retryable (ADR 0014). Neither route consults
+		// accepted-history access: a pending recipient has none, which is the point.
+		{http.MethodGet, "/api/directs/{id}/report-preview", routePolicy{Note: "the exact introduction a report would save, for the recipient of the current attempt only"}, s.previewRequestEvidence},
+		{http.MethodPost, "/api/directs/{id}/report-and-block", routePolicy{Note: "stores introduction evidence, rejects the request, clears it and blocks the sender in one transaction; never accepts contact"}, s.reportRequestAndBlock},
+		{http.MethodGet, "/api/me/report-receipt", routePolicy{Note: "the caller's own minimal outcome for their own operation key; never reviewer or evidence data"}, s.ownReportReceipt},
+		{http.MethodGet, "/api/admin/request-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "submitted request-introduction evidence only; the conversation is omitted and cannot be opened"}, s.listRequestEvidence},
+		{http.MethodPatch, "/api/admin/request-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "nonpunitive triage of one request evidence record"}, s.reviewRequestEvidence},
 		{http.MethodGet, "/api/admin/private-reports/audit", routePolicy{Capability: authz.ReportReviewPrivate, Note: "audit of private evidence review, readable only under the evidence policy and never by a community audit reader"}, s.privateEvidenceAuditLogs},
 		{http.MethodGet, "/api/me/channel-notifications", routePolicy{Note: "own notification preferences filtered by current channel access"}, s.listChannelNotifications},
 		{http.MethodPut, "/api/channels/{id}/notifications", routePolicy{Note: "active members change only their own notification choice for a readable channel"}, s.setChannelNotifications},

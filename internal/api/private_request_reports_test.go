@@ -1,0 +1,564 @@
+package api
+
+import (
+	"database/sql"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"brrpbrrp/internal/authz"
+	"brrpbrrp/internal/db"
+)
+
+// Pending-request evidence and the report-and-block operation (ADR 0014).
+//
+// The cases here are the ones where being wrong would matter to a person: someone
+// blocked with nothing recorded, evidence captured from the wrong request, a retry
+// that blocks again after a deliberate unblock, or a report that reaches somebody
+// who was not the recipient.
+
+// requestFixture creates a *pending* request. The pipeline's own pair is already
+// accepted, so it cannot be reused: asking that peer again returns the existing
+// accepted conversation, and a pending attempt is the state under test.
+func requestFixture(t *testing.T) (*Server, http.Handler, *http.Cookie, *http.Cookie, string, string, *http.Cookie) {
+	t.Helper()
+	s, h, admin, _, _, _, _, _ := privatePipeline(t)
+	// report.review_private is delegated downward, so a test that grants it needs an
+	// account that already holds it. Before the ownership ceremony nothing does, and
+	// the ceremony is the real operator path.
+	enrollMFA(t, h, admin, "correct horse battery")
+	if w := request(t, h, "POST", "/api/owner", map[string]string{"username": "admin", "confirm": "admin"}, admin); w.Code != 200 {
+		t.Fatalf("designate the owner: %d %s", w.Code, w.Body.String())
+	}
+	recipientID, recipient := memberAccount(t, s, "request_recipient")
+	senderID, sender := memberAccount(t, s, "request_sender")
+	asked := request(t, h, "POST", "/api/directs", map[string]string{
+		"user_id": recipientID, "introduction": "please let me in",
+	}, sender)
+	if asked.Code != 201 {
+		t.Fatalf("request: %d %s", asked.Code, asked.Body.String())
+	}
+	return s, h, recipient, sender, readJSON[directConversation](t, asked).ID, senderID, admin
+}
+
+func attemptOf(t *testing.T, s *Server, conversation string) string {
+	t.Helper()
+	var attempt string
+	if err := s.store.QueryRow(`SELECT attempt_id FROM direct_requests WHERE conversation_id=?`, conversation).Scan(&attempt); err != nil {
+		t.Fatal(err)
+	}
+	if attempt == "" {
+		t.Fatal("the pending request has no attempt identity")
+	}
+	return attempt
+}
+
+func previewRequest(t *testing.T, h http.Handler, cookie *http.Cookie, conversation string) *requestReportPreview {
+	t.Helper()
+	w := request(t, h, "GET", "/api/directs/"+conversation+"/report-preview", nil, cookie)
+	if w.Code != 200 {
+		t.Fatalf("preview: %d %s", w.Code, w.Body.String())
+	}
+	preview := readJSON[requestReportPreview](t, w)
+	return &preview
+}
+
+// Only the recipient of the exact current attempt may preview or confirm. The
+// sender, an unrelated member and a non-participating owner are all refused the
+// same way, so guessing a conversation id learns nothing.
+func TestRequestEvidenceIsRecipientOnly(t *testing.T) {
+	s, h, recipient, sender, conversation, _, owner := requestFixture(t)
+	_, outsider := memberAccount(t, s, "request_outsider")
+
+	preview := previewRequest(t, h, recipient, conversation)
+	if preview.Introduction != "please let me in" || !preview.HasIntroduction {
+		t.Fatalf("the recipient saw %q", preview.Introduction)
+	}
+	for name, cookie := range map[string]*http.Cookie{
+		"the sender": sender, "an outsider": outsider, "the owner": owner,
+	} {
+		if w := request(t, h, "GET", "/api/directs/"+conversation+"/report-preview", nil, cookie); w.Code != http.StatusNotFound {
+			t.Fatalf("%s could preview a pending request: %d", name, w.Code)
+		}
+		if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+			"reason": "not welcome", "version": preview.Version, "operation_key": "steal-" + name,
+		}, cookie); w.Code != http.StatusNotFound {
+			t.Fatalf("%s could report a pending request: %d", name, w.Code)
+		}
+	}
+	// A reviewer is not a recipient either: the capability admits evidence, not
+	// its creation.
+	_, reviewer := evidenceRole(t, s, h, owner, "request reviewer", string(authz.ReportReviewPrivate))
+	if w := request(t, h, "GET", "/api/directs/"+conversation+"/report-preview", nil, reviewer); w.Code != http.StatusNotFound {
+		t.Fatalf("a reviewer could preview a pending request: %d", w.Code)
+	}
+	// And a conversation that does not exist is indistinguishable from one that is
+	// not theirs.
+	if w := request(t, h, "GET", "/api/directs/does-not-exist/report-preview", nil, outsider); w.Code != http.StatusNotFound {
+		t.Fatalf("a missing conversation answered differently: %d", w.Code)
+	}
+}
+
+// The whole operation is one transaction: evidence, rejection, introduction clearing
+// and the block all take effect, and none of it accepts contact.
+func TestReportRequestAndBlockIsAtomicAndNeverAccepts(t *testing.T) {
+	s, h, recipient, sender, conversation, senderID, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+
+	w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome request", "version": preview.Version, "operation_key": "op-1",
+	}, recipient)
+	if w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	receipt := readJSON[map[string]any](t, w)
+	if receipt["outcome"] != "reported_and_blocked" {
+		t.Fatalf("outcome = %v", receipt["outcome"])
+	}
+
+	var introduction, state, attempt string
+	if err := s.store.QueryRow(`SELECT introduction,state,attempt_id FROM direct_requests WHERE conversation_id=?`, conversation).Scan(&introduction, &state, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if introduction != "" || state != "rejected" {
+		t.Fatalf("the request was not rejected and cleared: state=%q introduction=%q", state, introduction)
+	}
+	var blocked int
+	if err := s.store.QueryRow(`SELECT count(*) FROM user_blocks WHERE blocker_id=? AND blocked_id=?`, evidenceUserID(t, h, recipient), senderID).Scan(&blocked); err != nil {
+		t.Fatal(err)
+	}
+	if blocked != 1 {
+		t.Fatal("the sender was not blocked")
+	}
+	// No acceptance, no message, no membership: the point of the action.
+	var members, messages int
+	_ = s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, conversation).Scan(&members)
+	_ = s.store.QueryRow(`SELECT count(*) FROM messages WHERE conversation_id=?`, conversation).Scan(&messages)
+	if members != 0 || messages != 0 {
+		t.Fatalf("reporting granted membership or history: %d accepted members, %d messages", members, messages)
+	}
+	// The stored evidence is the exact introduction the recipient was shown.
+	var stored string
+	if err := s.store.QueryRow(`SELECT snapshot_text FROM private_request_reports WHERE attempt_id=?`, attempt).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != "please let me in" {
+		t.Fatalf("stored evidence = %q", stored)
+	}
+	// A later acceptance must fail: the request is gone and the pair is blocked.
+	accept := request(t, h, "POST", "/api/directs/"+conversation+"/accept", map[string]any{}, sender)
+	if accept.Code == http.StatusOK {
+		t.Fatal("the request was accepted after report-and-block")
+	}
+}
+
+// A retry under the same operation key returns the original outcome: no second
+// evidence record, no second quota charge, no repeated block.
+func TestRetryingReportAndBlockReturnsTheOriginalReceipt(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	first := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-retry",
+	}, recipient)
+	if first.Code != 201 {
+		t.Fatalf("first: %d %s", first.Code, first.Body.String())
+	}
+	evidenceID := readJSON[map[string]any](t, first)["id"].(string)
+
+	second := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-retry",
+	}, recipient)
+	if second.Code != 200 {
+		t.Fatalf("the retry did not return the committed receipt: %d %s", second.Code, second.Body.String())
+	}
+	retry := readJSON[map[string]any](t, second)
+	if retry["id"] != evidenceID || retry["duplicate"] != true {
+		t.Fatalf("the retry produced a different outcome: %v", retry)
+	}
+	var evidence, receipts int
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+	if evidence != 1 || receipts != 1 {
+		t.Fatalf("the retry created new records: %d evidence rows, %d receipts", evidence, receipts)
+	}
+	// The stored explanation is still the original: a retry cannot rewrite it.
+	var reason string
+	_ = s.store.QueryRow(`SELECT reason FROM private_request_reports WHERE id=?`, evidenceID).Scan(&reason)
+	if reason != "unwelcome" {
+		t.Fatalf("the stored explanation became %q", reason)
+	}
+}
+
+// A replay must not re-block after a deliberate unblock, and it must not claim the
+// person is currently blocked.
+func TestReplayingReportAndBlockDoesNotReblockAfterDeliberateUnblock(t *testing.T) {
+	s, h, recipient, _, conversation, senderID, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-unblock",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	// A later deliberate unblock takes effect.
+	if w := request(t, h, "DELETE", "/api/me/blocks/"+senderID, map[string]any{}, recipient); w.Code != 200 {
+		t.Fatalf("unblock: %d %s", w.Code, w.Body.String())
+	}
+	replay := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-unblock",
+	}, recipient)
+	if replay.Code != 200 {
+		t.Fatalf("the replay failed: %d %s", replay.Code, replay.Body.String())
+	}
+	body := readJSON[map[string]any](t, replay)
+	// The receipt is a historical statement. It must not assert a current block,
+	// and the block must genuinely still be lifted.
+	if _, present := body["blocked"]; present {
+		t.Fatalf("the receipt asserts a current block: %v", body)
+	}
+	var blocked int
+	_ = s.store.QueryRow(`SELECT count(*) FROM user_blocks WHERE blocker_id=? AND blocked_id=?`,
+		evidenceUserID(t, h, recipient), senderID).Scan(&blocked)
+	if blocked != 0 {
+		t.Fatal("the replay re-blocked after a deliberate unblock")
+	}
+}
+
+// The same key with different content is a conflict, and another account can neither
+// read nor replay the receipt.
+func TestOperationKeyConflictsAndIsAccountOwned(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "first explanation", "version": preview.Version, "operation_key": "op-conflict",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("first: %d %s", w.Code, w.Body.String())
+	}
+	conflict := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "a different explanation", "version": preview.Version, "operation_key": "op-conflict",
+	}, recipient)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("the same key with a different intent was accepted: %d %s", conflict.Code, conflict.Body.String())
+	}
+	// Another account's key is not readable, and is indistinguishable from one that
+	// never existed.
+	_, stranger := memberAccount(t, s, "receipt_stranger")
+	if w := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-conflict", nil, stranger); w.Code != http.StatusNotFound {
+		t.Fatalf("another account read the receipt: %d", w.Code)
+	}
+	if w := request(t, h, "GET", "/api/me/report-receipt?operation_key=never-used", nil, recipient); w.Code != http.StatusNotFound {
+		t.Fatalf("an unknown key answered differently: %d", w.Code)
+	}
+	// The owner's own receipt resolves without any reviewer capability.
+	own := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-conflict", nil, recipient)
+	if own.Code != 200 {
+		t.Fatalf("the reporter could not reconcile their own operation: %d %s", own.Code, own.Body.String())
+	}
+	outcome := readJSON[map[string]any](t, own)
+	if outcome["outcome"] != "reported_and_blocked" {
+		t.Fatalf("own receipt = %v", outcome)
+	}
+	// It carries no review data.
+	for _, leaked := range []string{"snapshot_text", "review_note", "reviewed_by", "author_id"} {
+		if _, present := outcome[leaked]; present {
+			t.Fatalf("the own-receipt response disclosed %q: %v", leaked, outcome)
+		}
+	}
+}
+
+// A renewed request is a different attempt: an old operation cannot be replayed
+// against it, and a fresh report captures the new introduction.
+func TestARenewedRequestIsADifferentAttempt(t *testing.T) {
+	s, h, recipient, sender, conversation, senderID, _ := requestFixture(t)
+	firstPreview := previewRequest(t, h, recipient, conversation)
+	firstAttempt := attemptOf(t, s, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": firstPreview.Version, "operation_key": "op-renew-1",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("first report: %d %s", w.Code, w.Body.String())
+	}
+	// The sender is blocked, so a renewal needs the block lifted first.
+	_ = request(t, h, "DELETE", "/api/me/blocks/"+senderID, map[string]any{}, recipient)
+	// The rejection cooldown is bypassed deliberately here so the renewal can be
+	// created; the attempt identity is what this test is about.
+	if _, err := s.store.Exec(`UPDATE direct_requests SET retry_after='' WHERE conversation_id=?`, conversation); err != nil {
+		t.Fatal(err)
+	}
+	renewed := request(t, h, "POST", "/api/directs", map[string]string{"user_id": evidenceUserID(t, h, recipient), "introduction": "a different approach"}, sender)
+	// 201 for a new pair, 200 when an existing pair reopens: both are success.
+	if renewed.Code != 201 && renewed.Code != 200 {
+		t.Fatalf("the renewal was refused: %d %s", renewed.Code, renewed.Body.String())
+	}
+	secondAttempt := attemptOf(t, s, conversation)
+	if secondAttempt == firstAttempt {
+		t.Fatal("the renewed request reused the first attempt identity")
+	}
+	// The old preview is refused against the new attempt.
+	stale := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": firstPreview.Version, "operation_key": "op-renew-2",
+	}, recipient)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("an old preview was accepted against a renewed request: %d %s", stale.Code, stale.Body.String())
+	}
+	// A fresh preview captures the new introduction as new evidence.
+	fresh := previewRequest(t, h, recipient, conversation)
+	if fresh.Introduction != "a different approach" {
+		t.Fatalf("the new preview shows %q", fresh.Introduction)
+	}
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "still unwelcome", "version": fresh.Version, "operation_key": "op-renew-2",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("the fresh report failed: %d %s", w.Code, w.Body.String())
+	}
+	var stored int
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&stored)
+	if stored != 2 {
+		t.Fatalf("expected two distinct attempts of evidence, got %d", stored)
+	}
+	// The first attempt's evidence is untouched by the second report.
+	var firstText string
+	_ = s.store.QueryRow(`SELECT snapshot_text FROM private_request_reports WHERE attempt_id=?`, firstAttempt).Scan(&firstText)
+	if firstText != "please let me in" {
+		t.Fatalf("the first attempt's evidence became %q", firstText)
+	}
+}
+
+// An empty introduction is legitimate and is disclosed as such, never fabricated.
+func TestRequestEvidenceHandlesAnEmptyIntroduction(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	if _, err := s.store.Exec(`UPDATE direct_requests SET introduction='' WHERE conversation_id=?`, conversation); err != nil {
+		t.Fatal(err)
+	}
+	preview := previewRequest(t, h, recipient, conversation)
+	if preview.HasIntroduction {
+		t.Fatal("an empty introduction was reported as present")
+	}
+	if preview.Version == "" {
+		t.Fatal("an empty introduction produced no version")
+	}
+	// It is still reportable, and what is stored is empty rather than invented.
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "no introduction was given", "version": preview.Version, "operation_key": "op-empty",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("an empty-introduction request was not reportable: %d %s", w.Code, w.Body.String())
+	}
+	var stored string
+	if err := s.store.QueryRow(`SELECT snapshot_text FROM private_request_reports`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != "" {
+		t.Fatalf("an introduction was invented for a request that had none: %q", stored)
+	}
+}
+
+// A failed evidence insert leaves nothing behind: no receipt, no block, no
+// rejection, and the request is still reportable.
+func TestAFailedReportAndBlockRollsBackEverything(t *testing.T) {
+	s, h, recipient, _, conversation, senderID, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	// Force the evidence write to fail after the block and receipt would have been
+	// considered: a trigger that aborts the insert.
+	if _, err := s.store.Exec(`CREATE TRIGGER fail_request_evidence BEFORE INSERT ON private_request_reports
+		BEGIN SELECT RAISE(ABORT,'injected evidence failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-fail",
+	}, recipient)
+	if w.Code == 201 {
+		t.Fatal("the operation reported success despite an injected failure")
+	}
+	var blocks, receipts, evidence int
+	_ = s.store.QueryRow(`SELECT count(*) FROM user_blocks WHERE blocker_id=? AND blocked_id=?`, evidenceUserID(t, h, recipient), senderID).Scan(&blocks)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+	if blocks != 0 || receipts != 0 || evidence != 0 {
+		t.Fatalf("partial effects survived: %d blocks, %d receipts, %d evidence", blocks, receipts, evidence)
+	}
+	var state, introduction string
+	_ = s.store.QueryRow(`SELECT state,introduction FROM direct_requests WHERE conversation_id=?`, conversation).Scan(&state, &introduction)
+	if state != "pending" || introduction == "" {
+		t.Fatalf("the request was disturbed by a failed operation: state=%q introduction=%q", state, introduction)
+	}
+	// The permitted control: with the failure removed the same action works.
+	if _, err := s.store.Exec(`DROP TRIGGER fail_request_evidence`); err != nil {
+		t.Fatal(err)
+	}
+	if ok := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-fail",
+	}, recipient); ok.Code != 201 {
+		t.Fatalf("the action did not work once the injected failure was removed: %d %s", ok.Code, ok.Body.String())
+	}
+}
+
+// The reviewer sees only submitted evidence: the source kind is labelled, the
+// conversation is absent, and the original request cannot be read through it.
+func TestRequestEvidenceReviewIsEvidenceOnly(t *testing.T) {
+	s, h, recipient, _, conversation, _, admin := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome request", "version": preview.Version, "operation_key": "op-review",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	_, reviewer := evidenceRole(t, s, h, admin, "request evidence reviewer", string(authz.ReportReviewPrivate))
+	queue := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/request-reports", nil, reviewer))
+	reports := queue["reports"].([]any)
+	if len(reports) != 1 {
+		t.Fatalf("queue length = %d", len(reports))
+	}
+	evidence := reports[0].(map[string]any)
+	if evidence["source_kind"] != "request" {
+		t.Fatalf("the source kind was not labelled: %v", evidence["source_kind"])
+	}
+	if evidence["snapshot_text"] != "please let me in" {
+		t.Fatalf("the reviewer did not receive the submitted introduction: %v", evidence["snapshot_text"])
+	}
+	// The conversation is provenance, not something a reviewer is handed.
+	for _, leaked := range []string{"conversation_id", "message_id"} {
+		if _, present := evidence[leaked]; present {
+			t.Fatalf("the reviewer was given %q: %v", leaked, evidence)
+		}
+	}
+	// A community-only moderator cannot see the queue at all.
+	_, moderator := evidenceRole(t, s, h, admin, "community only", string(authz.MessageDeleteAny))
+	if w := request(t, h, "GET", "/api/admin/request-reports", nil, moderator); w.Code != http.StatusForbidden {
+		t.Fatalf("a community moderator reached the request evidence queue: %d", w.Code)
+	}
+	// Nor can the reviewer read the original request or any conversation.
+	for _, probe := range []string{"/api/directs/" + conversation} {
+		if w := request(t, h, "GET", probe, nil, reviewer); w.Code != http.StatusNotFound {
+			t.Fatalf("the reviewer reached the original request via %s: %d", probe, w.Code)
+		}
+	}
+	// Resolving is nonpunitive and leaves the expiry alone.
+	reportID := evidence["id"].(string)
+	expires := evidence["expires_at"].(string)
+	resolved := readJSON[map[string]any](t, request(t, h, "PATCH", "/api/admin/request-reports/"+reportID, map[string]string{
+		"status": "resolved", "note": "reviewed",
+	}, reviewer))
+	if resolved["status"] != "resolved" || resolved["expires_at"] != expires {
+		t.Fatalf("resolving changed status or expiry: %v", resolved)
+	}
+	// The sender is still only blocked by the reporter's own action, not by review.
+	var blocks int
+	_ = s.store.QueryRow(`SELECT count(*) FROM user_blocks`).Scan(&blocks)
+	if blocks > 1 {
+		t.Fatalf("review created additional blocks: %d", blocks)
+	}
+}
+
+// An ordinary block must remain available when reporting is refused, and the
+// shared rate limit applies across evidence kinds.
+func TestOrdinaryBlockSurvivesAReportingRefusal(t *testing.T) {
+	s, h, recipient, _, conversation, senderID, _ := requestFixture(t)
+	// Fill the shared allowance so reporting is refused.
+	if _, err := s.store.Exec(`INSERT INTO private_report_rate_limits(user_id,window_started_at,submissions) VALUES(?,?,?)
+		ON CONFLICT(user_id) DO UPDATE SET submissions=excluded.submissions`,
+		evidenceUserID(t, h, recipient), db.Now(), privateReportHourlyLimit); err != nil {
+		t.Fatal(err)
+	}
+	preview := previewRequest(t, h, recipient, conversation)
+	refused := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-rate",
+	}, recipient)
+	if refused.Code != http.StatusTooManyRequests {
+		t.Fatalf("the reporting bound was not applied: %d %s", refused.Code, refused.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(refused.Body.String()), "block") {
+		t.Fatalf("the refusal does not mention that blocking is still possible: %s", refused.Body.String())
+	}
+	// The permitted control: ordinary block still works and still closes the request.
+	if w := request(t, h, "PUT", "/api/me/blocks/"+senderID, map[string]any{}, recipient); w.Code != 200 {
+		t.Fatalf("ordinary block was refused: %d %s", w.Code, w.Body.String())
+	}
+	var state, introduction string
+	_ = s.store.QueryRow(`SELECT state,introduction FROM direct_requests WHERE conversation_id=?`, conversation).Scan(&state, &introduction)
+	if state != "rejected" || introduction != "" {
+		t.Fatalf("ordinary block did not close the request: state=%q", state)
+	}
+	// No evidence and no receipt were created by the refused action.
+	var evidence, receipts int
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+	if evidence != 0 || receipts != 0 {
+		t.Fatalf("a refused action left records: %d evidence, %d receipts", evidence, receipts)
+	}
+}
+
+// The default-off gate refuses everything, and the attempt identity survives.
+func TestRequestEvidenceRespectsThePrivateFeatureGate(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	s.config.PrivateConversations = false
+	if w := request(t, h, "GET", "/api/directs/"+conversation+"/report-preview", nil, recipient); w.Code != http.StatusConflict {
+		t.Fatalf("preview survived the feature being disabled: %d", w.Code)
+	}
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-gate",
+	}, recipient); w.Code != http.StatusConflict {
+		t.Fatalf("report survived the feature being disabled: %d", w.Code)
+	}
+	if w := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-gate", nil, recipient); w.Code != http.StatusConflict {
+		t.Fatalf("receipt lookup survived the feature being disabled: %d", w.Code)
+	}
+	// Nothing was written while the feature was off.
+	var evidence, receipts int
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+	if evidence != 0 || receipts != 0 {
+		t.Fatalf("a disabled feature wrote records: %d evidence, %d receipts", evidence, receipts)
+	}
+	s.config.PrivateConversations = true
+	if w := request(t, h, "GET", "/api/directs/"+conversation+"/report-preview", nil, recipient); w.Code != 200 {
+		t.Fatalf("the preview did not return after re-enabling: %d", w.Code)
+	}
+}
+
+// Expired evidence is unavailable and its receipt stops working, so an old action
+// cannot be replayed as new work.
+func TestExpiredRequestEvidenceAndReceiptAreNotReplayed(t *testing.T) {
+	s, h, recipient, _, conversation, _, owner := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-expire",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	past := db.Timestamp(time.Now().Add(-time.Hour))
+	future := db.Timestamp(time.Now().Add(24 * time.Hour))
+	if _, err := s.store.Exec(`UPDATE private_request_reports SET expires_at=?`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.Exec(`UPDATE private_report_receipts SET expires_at=?`, past); err != nil {
+		t.Fatal(err)
+	}
+	// The receipt is gone, so the retry is refused rather than re-executed.
+	if w := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-expire", nil, recipient); w.Code != http.StatusNotFound {
+		t.Fatalf("an expired receipt still resolved: %d", w.Code)
+	}
+	retry := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-expire",
+	}, recipient)
+	if retry.Code != http.StatusNotFound {
+		t.Fatalf("an expired operation was replayed as new work: %d %s", retry.Code, retry.Body.String())
+	}
+	// With the expiry still in the past, the record is unreadable: the reviewer
+	// cannot distinguish expired evidence from evidence that never existed.
+	_, reviewer := evidenceRole(t, s, h, owner, "expired queue reviewer", string(authz.ReportReviewPrivate))
+	queue := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/request-reports", nil, reviewer))
+	if len(queue["reports"].([]any)) != 0 {
+		t.Fatal("expired evidence appeared in the queue")
+	}
+	// The permitted control: a live record is visible, so the empty queue above was
+	// the expiry and not an empty store.
+	if _, err := s.store.Exec(`UPDATE private_request_reports SET expires_at=?`, future); err != nil {
+		t.Fatal(err)
+	}
+	queue = readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/request-reports", nil, reviewer))
+	if len(queue["reports"].([]any)) != 1 {
+		t.Fatal("live evidence did not appear in the queue")
+	}
+}
+
+var _ = sql.ErrNoRows

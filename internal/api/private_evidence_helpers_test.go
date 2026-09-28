@@ -67,16 +67,18 @@ func restoreEvidenceRole(t *testing.T, h http.Handler, admin *http.Cookie, role 
 	setRolePermissions(t, h, admin, role, capabilities)
 }
 
-// peerOf returns the other participant in the account's readable conversation, so
-// a test can act on the peer without hard-coding an identifier.
+// peerOf returns the other participant in the account's conversation. A pending
+// request is not readable, so the readable filter that suited the message fixtures
+// would fail here; the first conversation will do.
 func peerOf(t *testing.T, h http.Handler, cookie *http.Cookie) string {
 	t.Helper()
-	for _, direct := range readJSON[[]directConversation](t, request(t, h, "GET", "/api/directs", nil, cookie)) {
-		if direct.CanRead {
+	directs := readJSON[[]directConversation](t, request(t, h, "GET", "/api/directs", nil, cookie))
+	for _, direct := range directs {
+		if direct.CanRead || direct.RequestState == "pending" {
 			return direct.Peer.ID
 		}
 	}
-	t.Fatal("the account has no readable direct conversation")
+	t.Fatal("the account has no direct conversation")
 	return ""
 }
 
@@ -93,3 +95,15 @@ func readableConversation(t *testing.T, h http.Handler, cookie *http.Cookie) str
 }
 
 var _ = sql.ErrNoRows
+
+// conversationFor finds the conversation between two accounts, for a case that needs
+// it by identity rather than from a response.
+func conversationFor(t *testing.T, s *Server, a, b string) string {
+	t.Helper()
+	low, high := orderedDirectPair(a, b)
+	var id string
+	if err := s.store.QueryRow(`SELECT conversation_id FROM direct_pairs WHERE user_low=? AND user_high=?`, low, high).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
