@@ -135,11 +135,29 @@
       ><Icon name="search" size={16} /><span>Jump to a channel</span><kbd>{searchShortcut}</kbd
       ></button
     >
-    {#if workspace.privateConversationsEnabled}<button
+    {#if workspace.privateConversationsEnabled}
+      {@const outstanding = workspace.outstandingIncomingRequests}
+      <button
         class="sidebar-search"
-        onclick={() => (workspace.messagesOpen = true)}
-        ><Icon name="users" size={16} /><span>Messages and requests</span></button
-      >{/if}
+        aria-label={outstanding > 0
+          ? `Messages and requests, ${outstanding} waiting for you`
+          : 'Messages and requests'}
+        onclick={() => {
+          // The badge counts pending requests this account can act on; opening
+          // the dialog must not consume them, so only the panel is opened here and
+          // the count is left to the server's next snapshot (ADR 0013).
+          workspace.messagesOpen = true;
+          workspace.messagesTab = 'requests';
+        }}
+        ><Icon name="users" size={16} /><span>Messages and requests</span>{#if outstanding > 0}<b
+            class="unread-badge"
+            aria-hidden="true">{outstanding}</b
+          >{/if}</button
+      >
+      {#if outstanding > 0}<span class="visually-hidden" role="status"
+          >{outstanding} message {outstanding === 1 ? 'request is' : 'requests are'} waiting for you.</span
+        >{/if}
+    {/if}
     <nav class="channel-navigation">
       {#if workspace.privateConversationsEnabled}<div class="channel-group">
           <h2>DIRECT MESSAGES</h2>

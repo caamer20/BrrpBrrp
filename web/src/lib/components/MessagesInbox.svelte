@@ -20,7 +20,18 @@
   // from fetched contact data: an unrelated contact or authority refresh must not
   // destroy text this account just typed (review 8, R8-03).
   let draftAccount = '';
-  let tab = $state<'conversations' | 'requests' | 'people' | 'blocked'>('conversations');
+  // The tab the dialog opens on is chosen by whoever opened it, so the sidebar's
+  // request count can lead straight to Requests (ADR 0013). Changing the tab here
+  // writes it back, so the entry point stays in step with what the member is
+  // looking at rather than snapping back on the next open.
+  let tab = $state(workspace.messagesTab);
+  // The count is read from the account snapshot, so the tab shows the same number
+  // the sidebar does and neither can be stale in a way the other is not.
+  const outstanding = $derived(workspace.outstandingIncomingRequests);
+  function selectTab(next: typeof tab) {
+    tab = next;
+    workspace.messagesTab = next;
+  }
   let scope = $state<{ account: string; generation: number; version: number } | null>(null);
   let version = 0;
   let mutationVersion = 0;
@@ -177,7 +188,7 @@
     ) {
       if (target === destination && introduction === text && draftAccount === account)
         discardTarget();
-      tab = 'requests';
+      selectTab('requests');
     }
   }
   async function open(direct: DirectConversation) {
@@ -202,11 +213,13 @@
     app. The server operator manages storage; messages are not end-to-end encrypted.
   </p>
   <nav class="admin-tabs" aria-label="Messages sections">
-    {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests' }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
+    {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests', count: outstanding }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
       <button
         aria-current={tab === item.id ? 'page' : undefined}
         class:active={tab === item.id}
-        onclick={() => (tab = item.id as typeof tab)}>{item.label}</button
+        onclick={() => selectTab(item.id as typeof tab)}
+        >{item.label}{#if item.count}<b class="unread-badge" aria-hidden="true">{item.count}</b
+          >{/if}</button
       >
     {/each}
   </nav>
@@ -361,7 +374,7 @@
                 return;
               }
               if (existing?.request_state === 'pending') {
-                tab = 'requests';
+                selectTab('requests');
                 return;
               }
               // Choosing a different person starts a new draft; re-choosing the same

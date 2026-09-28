@@ -10,6 +10,7 @@
   import Modal from './Modal.svelte';
   import ImagePreview from './ImagePreview.svelte';
   import ReportMessage from './ReportMessage.svelte';
+  import ReportPrivateMessage from './ReportPrivateMessage.svelte';
 
   let {
     message,
@@ -37,6 +38,10 @@
   let reveal = $state(false);
   let saving = $state(false);
   let moreOpen = $state(false);
+  // A direct conversation has its own disclosure flow and its own dialog rather
+  // than a shared one with different rules: the evidence is a disclosed snapshot
+  // the reporter confirms, not a moderation note (ADR 0013).
+  let privateReportOpen = $state(false);
   let reportOpen = $state(false);
   let editInput = $state<HTMLTextAreaElement>();
   let editButton = $state<HTMLButtonElement>();
@@ -293,6 +298,12 @@
           title="Report message"
           onclick={() => (reportOpen = true)}><Icon name="shield" size={17} /></button
         >{/if}
+      {#if direct}<button
+          class="icon-button"
+          aria-label="Report private message"
+          title="Report private message"
+          onclick={() => (privateReportOpen = true)}><Icon name="shield" size={17} /></button
+        >{/if}
       <button
         class="icon-button"
         aria-label="Reply to message"
@@ -355,6 +366,12 @@
             reportOpen = true;
           }}><Icon name="shield" />Report message</button
         >{/if}
+      {#if direct}<button
+          onclick={() => {
+            moreOpen = false;
+            privateReportOpen = true;
+          }}><Icon name="shield" />Report private message</button
+        >{/if}
       <button onclick={replyToMessage}><Icon name="reply" />Reply</button>
       {#if showThread}<button onclick={openThread}><Icon name="hash" />Open reply thread</button
         >{/if}
@@ -384,3 +401,7 @@
   </Modal>{/if}
 
 {#if reportOpen}<ReportMessage {message} close={() => (reportOpen = false)} />{/if}
+{#if privateReportOpen}<ReportPrivateMessage
+    {message}
+    close={() => (privateReportOpen = false)}
+  />{/if}

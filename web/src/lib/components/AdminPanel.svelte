@@ -4,6 +4,7 @@
   import AdminChannels from './admin/Channels.svelte';
   import AdminRoles from './admin/Roles.svelte';
   import Reports from './admin/Reports.svelte';
+  import PrivateEvidence from './admin/PrivateEvidence.svelte';
   import AdminSettings from './admin/Settings.svelte';
   import Maintenance from './admin/Maintenance.svelte';
   import AdminInvitations from './admin/Invitations.svelte';
@@ -20,6 +21,11 @@
     { name: 'Channels', capabilities: ['channel.manage', 'category.manage'] },
     { name: 'Roles', capabilities: ['role.manage'] },
     { name: 'Reports', capabilities: ['message.delete_any'] },
+    // Private evidence is a separate queue behind its own capability, not another
+    // section of Reports: a reviewer of one is not automatically a community
+    // moderator, and an account with only message.delete_any must not learn that a
+    // private queue exists (ADR 0013).
+    { name: 'Private evidence', capabilities: ['report.review_private'] },
     { name: 'Settings', capabilities: ['settings.manage'] },
     { name: 'Maintenance', capabilities: ['operator.backup', 'settings.manage', 'audit.read'] }
   ];
@@ -48,6 +54,6 @@
     <p class="muted" role="status">Your account does not hold any server management capability.</p>
   {:else if tab === 'People'}<AdminUsers />{:else if tab === 'Invitations'}<AdminInvitations
     />{:else if tab === 'Channels'}<AdminChannels />{:else if tab === 'Roles'}<AdminRoles
-    />{:else if tab === 'Reports'}<Reports />{:else if tab === 'Settings'}<AdminSettings
-    />{:else}<Maintenance />{/if}
+    />{:else if tab === 'Private evidence'}<PrivateEvidence />{:else if tab === 'Reports'}<Reports
+    />{:else if tab === 'Settings'}<AdminSettings />{:else}<Maintenance />{/if}
 </Modal>
