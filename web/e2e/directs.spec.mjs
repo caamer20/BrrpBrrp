@@ -721,10 +721,10 @@ test('a request badge appears for a waiting request and a private report disclos
 
   const report = page.getByRole('dialog', { name: 'Report a private message', exact: true });
   await expect(report).toBeVisible();
-  // The disclosure states the boundary rather than implying it.
-  await expect(
-    report.getByText(/not the rest of the conversation, not replies, not\s+files/)
-  ).toBeVisible();
+  // The disclosure states the boundary rather than implying it, and it names the
+  // reporter's own identity, which is saved alongside the message (ADR 0013).
+  await expect(report).toContainText('not the rest of the conversation, not replies, not files');
+  await expect(report).toContainText('your own account name');
   await expect(report.getByText(/Reviewing it does not delete the message/)).toBeVisible();
   await expect(report.getByRole('heading', { name: 'What will be saved' })).toBeVisible();
   // The exact text the server would save is on screen, quoted as evidence.
@@ -755,4 +755,83 @@ test('a request badge appears for a waiting request and a private report disclos
       .getByText('the reported sentence'),
     'the reported message is still readable by the reporter'
   ).toBeVisible();
+});
+
+// R10-03, rendered. The changed-preview flow is the one a reporter reaches by
+// editing a message while the dialog is open, and the previous code could not
+// finish it: the refusal's refreshed preview never arrived, and the only way out was
+// to close and lose the explanation. This proves the refreshed text is shown, that
+// the explanation survives, that nothing is sent until the reporter says they have
+// read it, and that a second edit is caught again rather than accepted.
+test('a message edited while reporting is re-read and confirmed, not sent silently', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  const alice = { username: 'edit_alice', password: 'an edit alice passphrase' };
+  const bob = { username: 'edit_bob', password: 'an edit bob passphrase' };
+  await signInOverApi(request);
+  const aliceID = await createAccount(request, alice);
+  const bobID = await createAccount(request, bob);
+  await signInOverApi(request, bob);
+  const asked = await request.post('/api/directs', {
+    data: { user_id: aliceID, introduction: 'let us talk' }
+  });
+  expect(asked.status()).toBe(201);
+  const pair = await asked.json();
+  await signInOverApi(request, alice);
+  expect((await request.post(`/api/directs/${pair.id}/accept`, { data: {} })).status()).toBe(200);
+  expect(
+    (
+      await request.post(`/api/conversations/${pair.id}/messages`, {
+        data: { content: 'the original wording', idempotency_key: 'edit-race-1' }
+      })
+    ).status()
+  ).toBe(201);
+
+  await signInOverApi(request, bob);
+  await signIn(page, bob);
+  await page
+    .locator('nav.channel-navigation button.channel-link')
+    .filter({ hasText: alice.username })
+    .click();
+  const log = page.getByRole('log', { name: 'Direct messages', exact: true });
+  await expect(
+    log.locator('.message-content').filter({ hasText: 'the original wording' })
+  ).toBeVisible();
+
+  await log.getByRole('button', { name: 'Report private message', exact: true }).first().click();
+  const report = page.getByRole('dialog', { name: 'Report a private message', exact: true });
+  await expect(report.locator('blockquote')).toHaveText('the original wording');
+  await report
+    .getByRole('textbox', { name: /Why are you reporting/ })
+    .fill('it changed while I looked');
+
+  // The author edits the message while the dialog is open.
+  await signInOverApi(request, alice);
+  const edited = await request.patch(
+    `/api/messages/${(await (await request.get(`/api/conversations/${pair.id}/messages`)).json())[0].id}`,
+    { data: { content: 'the replacement wording' } }
+  );
+  expect(edited.status()).toBe(200);
+
+  await report.getByRole('button', { name: 'Send report' }).click();
+  // The refreshed text is shown rather than the one that was confirmed, the
+  // explanation is kept, and sending is blocked until the reporter acknowledges.
+  await expect(report.locator('blockquote')).toHaveText('the replacement wording');
+  await expect(report.getByText(/This message changed after you first read it/)).toBeVisible();
+  await expect(
+    report.getByRole('textbox', { name: /Why are you reporting/ }),
+    'the explanation was lost by the conflict'
+  ).toHaveValue('it changed while I looked');
+  await expect(
+    report.getByRole('button', { name: 'Send report' }),
+    'the report stayed sendable without a new confirmation'
+  ).toBeDisabled();
+
+  // Acknowledging re-enables sending, and the report lands with the new text.
+  await report.getByRole('button', { name: 'I have read the new text' }).click();
+  await expect(report.getByRole('button', { name: 'Send report' })).toBeEnabled();
+  await report.getByRole('button', { name: 'Send report' }).click();
+  await expect(report.getByText(/Report sent\./)).toBeVisible();
 });
