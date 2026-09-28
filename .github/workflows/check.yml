@@ -47,11 +47,6 @@ jobs:
       # Makefile runs and every Docker build input, and must exclude the operator's own
       # host notes.
       - run: node scripts/check-source-package.mjs
-      # The browser steps must report the test process's own status, not tee's.
-      # The audit executes each of those step bodies against a failing stub, so
-      # it can fail on the defect it exists for rather than only reading YAML.
-      - run: node scripts/check-browser-steps.mjs --self-test
-      - run: node scripts/check-browser-steps.mjs
   browser:
     needs: test
     runs-on: ubuntu-latest
@@ -74,6 +69,14 @@ jobs:
         working-directory: web
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
+      # The browser-step audit executes shell command lines and writes a POSIX
+      # stub to a PATH, so it runs here in the Linux job that owns the browser
+      # steps rather than in the cross-platform matrix. Running it on Windows
+      # would either need real portability work or would degrade to a skip that
+      # looks like a pass (completion review 10, R10-05). The Windows build and
+      # test matrix above is unchanged.
+      - run: node scripts/check-browser-steps.mjs --self-test
+      - run: node scripts/check-browser-steps.mjs
       # Both feature gates are required: the default-off suite proves the shipped
       # default, and the opted-in suite must visibly include the direct-message
       # journeys. A run that silently skipped them would pass nothing extra.

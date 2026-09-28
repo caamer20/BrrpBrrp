@@ -302,6 +302,7 @@ func (s *Server) routes() []route {
 		{http.MethodPost, "/api/messages/{id}/private-report", routePolicy{Note: "stores one confirmed private evidence snapshot; the submitted text is the server's, never the client's"}, s.submitPrivateEvidence},
 		{http.MethodGet, "/api/admin/private-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "reads only voluntarily submitted evidence snapshots; grants no private membership, history, search or files"}, s.listPrivateEvidence},
 		{http.MethodPatch, "/api/admin/private-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "records nonpunitive triage of one evidence record"}, s.reviewPrivateEvidence},
+		{http.MethodGet, "/api/admin/private-reports/audit", routePolicy{Capability: authz.ReportReviewPrivate, Note: "audit of private evidence review, readable only under the evidence policy and never by a community audit reader"}, s.privateEvidenceAuditLogs},
 		{http.MethodGet, "/api/me/channel-notifications", routePolicy{Note: "own notification preferences filtered by current channel access"}, s.listChannelNotifications},
 		{http.MethodPut, "/api/channels/{id}/notifications", routePolicy{Note: "active members change only their own notification choice for a readable channel"}, s.setChannelNotifications},
 		{http.MethodPost, "/api/admin/users/{id}/reset-password", routePolicy{Capability: authz.OperatorCredentialRecovery, FreshAuth: true, Note: "chosen-password takeover is operator authority, not ordinary moderation, and needs a recent strong sign-in"}, s.resetPassword},

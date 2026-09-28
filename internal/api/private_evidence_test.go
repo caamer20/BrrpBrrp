@@ -35,6 +35,20 @@ func privateEvidenceFixture(t *testing.T) (*Server, http.Handler, *http.Cookie, 
 	return s, h, admin, a, b, readJSON[map[string]any](t, w)["id"].(string)
 }
 
+// privateEvidenceFixtureWithConversation is privateEvidenceFixture plus the
+// conversation id, for cases that post a second message into the same pair.
+func privateEvidenceFixtureWithConversation(t *testing.T) (*Server, http.Handler, *http.Cookie, *http.Cookie, *http.Cookie, string) {
+	t.Helper()
+	s, h, admin, _, a, _, b, conversation := privatePipeline(t)
+	// The owner is designated so a test may delegate the review capability: an
+	// account may only grant what it holds, and nothing holds it before the
+	// ceremony. This is the path an operator would take, not a test shortcut.
+	enrollMFA(t, h, admin, "correct horse battery")
+	if w := request(t, h, "POST", "/api/owner", map[string]string{"username": "admin", "confirm": "admin"}, admin); w.Code != 200 {
+		t.Fatalf("designate the owner: %d %s", w.Code, w.Body.String())
+	}
+	return s, h, admin, a, b, conversation
+}
 func privatePreview(t *testing.T, h http.Handler, cookie *http.Cookie, messageID string) *privateEvidencePreview {
 	t.Helper()
 	w := request(t, h, "GET", "/api/messages/"+messageID+"/private-report-preview", nil, cookie)
@@ -410,4 +424,102 @@ func TestPrivateEvidenceEnforcesADurableHourlySubmissionBound(t *testing.T) {
 		t.Fatalf("an account with room in its window was refused: %s", control.Body.String())
 	}
 	_ = messageID
+}
+
+// R10-01: a valid message is reportable whatever script it is written in. The
+// preview version used to be the whole content, so a 4,000-character CJK or emoji
+// message produced a version over the submission bound and was refused with a
+// message claiming the preview was merely stale (completion review 10). The
+// version is now a fixed-size digest, which is asserted here by the byte length
+// being the same for every script.
+func TestEveryScriptIsReportableAtTheSupportedLength(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"ascii", strings.Repeat("a", 4000)},
+		{"cjk", strings.Repeat("需", 4000)},
+		{"emoji", strings.Repeat("🔒", 4000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, h, admin, a, _, conversation := privateEvidenceFixtureWithConversation(t)
+			sent := request(t, h, "POST", "/api/conversations/"+conversation+"/messages", messageInput{
+				Content: tc.body, IdempotencyKey: "unicode-report-" + tc.name,
+			}, a)
+			if sent.Code != 201 {
+				t.Fatalf("send: %d %s", sent.Code, sent.Body.String())
+			}
+			id := readJSON[map[string]any](t, sent)["id"].(string)
+			preview := privatePreview(t, h, a, id)
+			// The version identifies the text without carrying it, so its size is
+			// the same whatever the message is written in.
+			if len(preview.Version) != privateEvidenceVersionLength {
+				t.Fatalf("version is %d bytes, want %d: %s", len(preview.Version), privateEvidenceVersionLength, preview.Version)
+			}
+			if w := submitPrivate(t, h, a, id, preview.Version, "unwelcome"); w.Code != 201 {
+				t.Errorf("a %s message was not reportable: %d %s", tc.name, w.Code, w.Body.String())
+			}
+			// The permitted control that the same text still has to be the saved
+			// evidence, so a bounded version did not quietly weaken the disclosure.
+			_, reviewer := evidenceRole(t, s, h, admin, "unicode reviewer", string(authz.ReportReviewPrivate))
+			queue := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/private-reports", nil, reviewer))
+			records := queue["reports"].([]any)
+			if len(records) != 1 {
+				t.Fatalf("queue length = %d", len(records))
+			}
+			stored := records[0].(map[string]any)["snapshot_text"].(string)
+			if len([]rune(stored)) != 4000 {
+				t.Errorf("stored %d characters, want the 4,000 the message carried", len([]rune(stored)))
+			}
+		})
+	}
+}
+
+// R10-02: a review of private evidence is an administrative act and must stay
+// accountable, but naming the reviewer, the report and the time discloses that a
+// specific person reported a specific private message. It is therefore readable
+// only under the evidence policy, and absent from the community audit feed that an
+// audit-only reader can read (completion review 10).
+func TestPrivateReviewAuditIsRestrictedToTheEvidencePolicy(t *testing.T) {
+	s, h, admin, a, _, messageID := privateEvidenceFixture(t)
+	_, auditor := evidenceRole(t, s, h, admin, "audit only reader", string(authz.AuditRead))
+	_, reviewer := evidenceRole(t, s, h, admin, "private reviewer audited", string(authz.ReportReviewPrivate))
+
+	preview := privatePreview(t, h, a, messageID)
+	if w := submitPrivate(t, h, a, messageID, preview.Version, "unwelcome"); w.Code != 201 {
+		t.Fatalf("submit: %d %s", w.Code, w.Body.String())
+	}
+	reportID := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/private-reports", nil, reviewer))["reports"].([]any)[0].(map[string]any)["id"].(string)
+	if w := request(t, h, "PATCH", "/api/admin/private-reports/"+reportID, map[string]string{
+		"status": "resolved", "note": "triaged",
+	}, reviewer); w.Code != 200 {
+		t.Fatalf("review: %d %s", w.Code, w.Body.String())
+	}
+
+	// The community audit reader is refused the queue, and the community audit
+	// describes no private review.
+	if w := request(t, h, "GET", "/api/admin/private-reports", nil, auditor); w.Code != http.StatusForbidden {
+		t.Fatalf("the audit-only reader reached the private queue: %d", w.Code)
+	}
+	for _, entry := range readJSON[[]map[string]string](t, request(t, h, "GET", "/api/admin/audit-logs", nil, auditor)) {
+		if strings.HasPrefix(entry["action"], "private_report") || entry["target_id"] == reportID {
+			t.Errorf("private review metadata reached an audit-only reader: %+v", entry)
+		}
+	}
+	// The review is still accountable: it is recorded and readable under the
+	// evidence policy rather than simply dropped.
+	restricted := readJSON[[]map[string]string](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer))
+	if len(restricted) == 0 {
+		t.Fatal("the private review was not recorded at all")
+	}
+	found := false
+	for _, entry := range restricted {
+		if entry["target_id"] == reportID && entry["action"] == "private_report.resolved" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the private review is not readable under the evidence policy: %+v", restricted)
+	}
+	// And the community audit reader cannot reach that feed either.
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
+		t.Fatalf("the audit-only reader reached the private audit feed: %d", w.Code)
+	}
 }

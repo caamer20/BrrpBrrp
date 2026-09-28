@@ -2,8 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -182,6 +186,38 @@ func messageConversation(ctx context.Context, q db.Queryer, messageID string) (s
 	return conversationID, err
 }
 
+// privateEvidenceVersion is the fixed-size token that ties a confirmation to the
+// exact text the reporter was shown. It is a digest of the message content and its
+// edit state, so it is the same length for every message, is not the message, and
+// changes whenever either input does.
+func privateEvidenceVersion(content, editedAt string) string {
+	digest := sha256.New()
+	// Length-prefixed so no pair of distinct inputs can share one digest input.
+	for _, part := range []string{content, editedAt} {
+		fmt.Fprintf(digest, "%d:", len(part))
+		io.WriteString(digest, part)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+const (
+	// privateEvidenceVersionLength is the hex length of a SHA-256 digest, fixed so
+	// the version carries no part of the message and cannot grow with it.
+	privateEvidenceVersionLength = 64
+)
+
+func isHex(value string) bool {
+	if len(value) == 0 {
+		return false
+	}
+	for _, r := range value {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) privateEvidenceForMessage(ctx context.Context, tx *sql.Tx, principal authz.Principal, messageID, conversationID string) (*privateEvidencePreview, error) {
 	var content, authorID, editedAt string
 	var attachments int
@@ -211,9 +247,15 @@ func (s *Server) privateEvidenceForMessage(ctx context.Context, tx *sql.Tx, prin
 		AuthorName:     authorName,
 		SnapshotText:   string(text),
 		HasAttachment:  attachments > 0,
-		// The version is the message's own edit state, not a clock: it changes if
-		// and only if the text a preview described is no longer the text there.
-		Version:       content + "\x00" + editedAt,
+		// The version identifies the exact text the reporter confirmed, and it is
+		// bounded so it cannot be turned into a transport for the message itself.
+		// The whole content cannot be used: a valid 4,000-character CJK or emoji
+		// message is 8,000+ bytes, and a version that grew with the message made
+		// such messages unreportable while telling the reporter their preview was
+		// merely stale (completion review 10, R10-01). A digest over the content
+		// and its edit state is fixed-size and still changes if and only if the
+		// text a preview described is no longer the text there.
+		Version:       privateEvidenceVersion(content, editedAt),
 		ExpiresAt:     db.Timestamp(time.Now().Add(privateReportEvidenceLifetime)),
 		ReviewerCount: reviewers,
 	}, nil
@@ -264,7 +306,12 @@ func (s *Server) submitPrivateEvidence(w http.ResponseWriter, r *http.Request, u
 		problem(w, http.StatusBadRequest, "Explain your report in 1–2,000 characters.")
 		return
 	}
-	if len(input.Version) > 8000 {
+	// The version is a fixed-size digest, so this bounds its *shape* rather than
+	// guessing a length that happens to fit the largest supported message.
+	// Accepting an arbitrary short string would let a caller claim to have
+	// confirmed a preview they never fetched; the equality check below is the real
+	// gate, and this only rejects what could never have come from a preview.
+	if len(input.Version) != privateEvidenceVersionLength || !isHex(input.Version) {
 		problem(w, http.StatusBadRequest, "That preview is no longer current. Look at the message again.")
 		return
 	}

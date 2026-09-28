@@ -722,19 +722,29 @@ func (s *Server) auditTx(ctx context.Context, tx *sql.Tx, actor, action, target 
 	return err
 }
 
+// privateEvidenceAuditActions are the audit records that describe private evidence
+// review. They are excluded from the community audit feed and readable only by an
+// account holding report.review_private, because naming the reviewer, the report
+// and the time would otherwise disclose that a specific person reported a specific
+// private message to a reader who cannot see the message (ADR 0013).
+const privateEvidenceAuditPrefix = "private_report."
+
 func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request, user db.User) {
 	before := r.URL.Query().Get("before")
 	if before == "" {
 		before = "z"
 	}
-	// An event whose actor_id is NULL was performed on the host command line while
+	// The filter is applied before the limit, so a private review cannot occupy a
+	// page slot in the community feed or shift what the cursor points at. An
+	// event whose actor_id is NULL was performed on the host command line while
 	// the server was stopped, not by an account; every other missing actor is an
 	// account that has since been erased. The two must not look alike.
 	rows, err := s.store.Query(`SELECT a.id,
         CASE WHEN a.actor_id IS NULL AND a.action='owner.recovered_offline' THEN 'host operator (offline)'
              ELSE COALESCE(u.username,'former member') END,
         a.action,a.target_id,a.created_at
-        FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id WHERE a.id<? ORDER BY a.id DESC LIMIT 50`, before)
+        FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+        WHERE a.id<? AND a.action NOT LIKE 'private_report.%' ORDER BY a.id DESC LIMIT 50`, before)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -750,6 +760,63 @@ func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request, user db.User)
 		entries = append(entries, map[string]string{"id": id, "actor": actor, "action": action, "target_id": target, "created_at": created})
 	}
 	if err := rows.Err(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	respond(w, 200, entries)
+}
+
+// privateEvidenceAuditLogs returns the audit records for private evidence review
+// to an account that holds report.review_private and nothing else. The records are
+// not hidden from the audit altogether — a review is still an administrative act
+// and must be accountable — but they are readable only under the policy that
+// governs the evidence, so a community audit reader never learns that a named
+// person reported a specific private message.
+func (s *Server) privateEvidenceAuditLogs(w http.ResponseWriter, r *http.Request, user db.User) {
+	if !s.requirePrivateConversations(w) {
+		return
+	}
+	before := r.URL.Query().Get("before")
+	if before == "" {
+		before = "z"
+	}
+	if len(before) > 100 {
+		problem(w, http.StatusBadRequest, "Invalid audit cursor.")
+		return
+	}
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer tx.Rollback()
+	if _, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.ReportReviewPrivate); err != nil {
+		s.authorityFailed(w, err)
+		return
+	}
+	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,
+        COALESCE(u.username,'former member'),a.action,a.target_id,a.created_at
+        FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+        WHERE a.id<? AND a.action LIKE 'private_report.%' ORDER BY a.id DESC LIMIT 50`, before)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer rows.Close()
+	entries := make([]map[string]string, 0)
+	for rows.Next() {
+		var id, actor, action, target, created string
+		if err := rows.Scan(&id, &actor, &action, &target, &created); err != nil {
+			s.failed(w, err)
+			return
+		}
+		entries = append(entries, map[string]string{"id": id, "actor": actor, "action": action, "target_id": target, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		s.failed(w, err)
 		return
 	}

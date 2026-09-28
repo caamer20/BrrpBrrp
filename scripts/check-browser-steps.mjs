@@ -265,6 +265,21 @@ const override = process.argv.indexOf('--workflow');
 const workflowPath =
   override === -1 ? join(repository, '.github', 'workflows', 'check.yml') : process.argv[override + 1];
 
+// This audit executes POSIX shell command lines and writes a POSIX stub into
+// PATH, so it is only meaningful where those exist; it runs in the Linux job that
+// owns the browser steps. Refusing to pretend elsewhere is deliberate: a platform
+// that cannot run the control must fail rather than skip and look green
+// (completion review 10, R10-05).
+if (process.platform === 'win32') {
+  console.error(
+    'browser-step audit: this check executes POSIX shell command lines and cannot run on Windows.'
+  );
+  console.error(
+    'It belongs in the Linux browser job, where a Windows run cannot prove the pipeline failure property.'
+  );
+  process.exit(1);
+}
+
 const real = auditWorkflow(workflowPath, 'the browser steps');
 const problems = real.problems;
 proveFailurePropagates(real.diagnosed, 'the browser steps', problems);
