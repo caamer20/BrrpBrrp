@@ -339,10 +339,27 @@ instead of receiving a 404.
 | Tooling audits | browser-step, Docker inputs, source package, licenses and baseline-fetch all pass |
 | Candidate binary | `dist/brrpbrrp-p9`, sha256 `051b7f3d39e416c776f8b294104299fc8b4982e38606687f794706ba5cb23ae5`; frontend build identity `20d76bada950286f` |
 
+### Re-run on `f329993` (independent confirmation)
+
+Every result above was re-executed against the tip of this branch after the record was
+written, so the numbers are not carried over from the run that produced the repairs.
+
+| Check | Result |
+| --- | --- |
+| Frontend unit/state tests | **114/114 pass** |
+| Frontend types/a11y · format | **0 errors, 0 warnings** · clean |
+| Full race suite | **all 10 packages ok**; `internal/api` 1032.994s, `internal/db` 104.649s, `internal/backup` 23.733s, `internal/rtc` 21.766s, `internal/authz` 12.120s, `internal/app` 8.909s, `internal/installer` 9.057s, `internal/scraper` 5.912s, `internal/ws` 6.369s, `web` 5.472s; wall ≈17.2 min |
+| Browser, default-off · opted in | **13/13** (2.6 min) · **19/19** (2.8 min) |
+| Recovery community · private | **23/23** · **85/85**, including "the restored evidence keeps its exact expiry, text and reason — expires matches, text matches, reason matches" |
+| Rollback alpha.5 · alpha.3 | **57/57** (schema 10→13) · **55/55** (schema 2→13) |
+| Tooling audits | browser-step, Docker inputs, source package, licenses, baseline fetch; `git diff --check` clean |
+| Commit · binary · frontend build | `f329993` · `051b7f3d39e416c776f8b294104299fc8b4982e38606687f794706ba5cb23ae5` · `20d76bada950286f` |
+
 `internal/rtc` failed once during this work with "peer failed to connect" and passed on
-both re-runs of the package and the following full sweep. The package is unchanged since
-alpha.5, so this is recorded as a flaky SFU connection timing under full-suite load
-rather than claimed as green on first attempt.
+every run since: the package on its own twice, two subsequent full sweeps and the
+re-run above. The package is unchanged since alpha.5, so it is recorded as a flaky
+SFU connection timing under full-suite load rather than claimed as green on first
+attempt.
 
 ### Still not established
 
