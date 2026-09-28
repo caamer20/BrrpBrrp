@@ -2,6 +2,11 @@
   import { onDestroy, untrack } from 'svelte';
   import { APIError, api, errorMessage } from '../api';
   import { workspace } from '../workspace.svelte';
+  import {
+    admitted as isAdmitted,
+    mayReportFailure,
+    maySubmit as canSubmit
+  } from '../request-report';
   import Modal from './Modal.svelte';
 
   // Reporting an unwanted request, and the block that goes with it (ADR 0014).
@@ -57,11 +62,19 @@
   const operationKey = crypto.randomUUID();
   let submitted = $state(false);
 
-  const admitted = () =>
-    alive &&
-    account === workspace.user?.id &&
-    generation === workspace.authorizationGeneration &&
-    !workspace.authorizationUnverified;
+  // The admission rules live in request-report.ts so they can be tested directly:
+  // they are a sequence of await boundaries, and the case that matters is what
+  // happens when the account changes while a request is in flight.
+  // Named for what it reads rather than `state`, which is Svelte's own rune.
+  const admission = () => ({
+    alive,
+    account,
+    currentAccountId: workspace.user?.id,
+    generation,
+    authorizationGeneration: workspace.authorizationGeneration,
+    authorizationUnverified: workspace.authorizationUnverified
+  });
+  const admitted = () => isAdmitted(admission());
 
   async function load() {
     loading = true;
@@ -80,7 +93,12 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (busy || !admitted() || !preview || !reason.trim()) return;
+    if (!canSubmit({ ...admission(), busy, preview, reason, submitted })) return;
+    // canSubmit proved the preview is present, but the guard cannot narrow it
+    // across the call, so the value the request carries is captured explicitly
+    // rather than read again from state that could have changed.
+    const confirmed = preview;
+    if (!confirmed) return;
     busy = true;
     error = '';
     uncertain = false;
@@ -89,7 +107,7 @@
       await api<{ outcome: string; duplicate: boolean }>(
         `/directs/${conversationId}/report-and-block`,
         'POST',
-        { reason: reason.trim(), version: preview.version, operation_key: operationKey }
+        { reason: reason.trim(), version: confirmed.version, operation_key: operationKey }
       );
       if (!admitted()) {
         // The operation's own authority invalidation can arrive before its
@@ -145,7 +163,7 @@
       sent = true;
       uncertain = false;
     } catch (failure) {
-      if (account === workspace.user?.id) error = errorMessage(failure);
+      if (mayReportFailure(admission())) error = errorMessage(failure);
     } finally {
       if (alive) busy = false;
     }
