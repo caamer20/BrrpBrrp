@@ -202,7 +202,7 @@ function multipart(filename, content) {
 }
 
 const OWNER_PASSWORD = "correct horse battery staple";
-const members = ["alpha", "beta", "carol", "delta", "echo", "frank"];
+const members = ["alpha", "beta", "carol", "delta", "echo", "frank", "grace"];
 const memberPassword = (name) => `${name} practice passphrase`;
 
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -303,6 +303,8 @@ async function main() {
   let pairAB;
   let pairCD;
   let pairDB;
+  let pairGD;
+  let requestGDEvidenceID;
   let pairFB;
   const attachmentText = `private attachment payload ${Date.now().toString(16)}\n`;
   const attachmentDigest = createHash("sha256").update(attachmentText).digest("hex");
@@ -377,6 +379,57 @@ async function main() {
   });
   check("carol's pending request created", requestCD.status === 201, `HTTP ${requestCD.status}`);
   pairCD = requestCD.body.id;
+
+  // grace asks delta, and delta then reports and blocks that introduction. This is
+  // the request-evidence operation rather than the message one, and it has to exist
+  // before the snapshot so the restore can prove the evidence, the block and the
+  // command receipt all survive together.
+  const requestGD = await api(source.base, "POST", "/api/directs", {
+    cookie: cookies.grace,
+    body: { user_id: ids.delta, introduction: "grace asks delta with an introduction worth reporting" },
+  });
+  check("grace's pending request created", requestGD.status === 201, `HTTP ${requestGD.status}`);
+  pairGD = requestGD.body.id;
+  const requestGDPreview = await api(source.base, "GET", `/api/directs/${pairGD}/report-preview`, { cookie: cookies.delta });
+  check("delta can preview the pending introduction for reporting", requestGDPreview.status === 200, `HTTP ${requestGDPreview.status}`);
+  const requestGDReport = await api(source.base, "POST", `/api/directs/${pairGD}/report-and-block`, {
+    cookie: cookies.delta,
+    body: { reason: "rehearsal introduction concern, not a real one", operation_key: "p10-rehearsal-report-and-block", version: requestGDPreview.body?.version },
+  });
+  check("delta reported the introduction and blocked the sender", requestGDReport.status === 201, `HTTP ${requestGDReport.status} ${JSON.stringify(requestGDReport.body ?? {})}`);
+  requestGDEvidenceID = requestGDReport.body?.id;
+  // The block is the half that matters for a restore: grace must be unable to write
+  // on the source, not merely absent from a list.
+  // Reporting a pending introduction removes the request, so there is no
+  // conversation left to write into. That is the contract, and the block is what
+  // stops a new one being created: neither a 404 nor a new request would be
+  // acceptable if the block had not been committed with the report.
+  const graceWrite = await api(source.base, "POST", `/api/conversations/${pairGD}/messages`, {
+    cookie: cookies.grace,
+    body: { content: "after the block", idempotency_key: "p10-rehearsal-grace-write-1" },
+  });
+  check("a reported request leaves the sender no conversation to write into", graceWrite.status === 404, `HTTP ${graceWrite.status}`);
+  const graceRetryRequest = await api(source.base, "POST", "/api/directs", {
+    cookie: cookies.grace,
+    body: { user_id: ids.delta, introduction: "grace tries again after the block" },
+  });
+  check("the block stops a new request from the reported sender",
+    graceRetryRequest.status >= 400, `HTTP ${graceRetryRequest.status} ${JSON.stringify(graceRetryRequest.body ?? {})}`);
+  // And the report must never have accepted the request: reporting is not contact.
+  const graceAfterReport = await api(source.base, "GET", "/api/directs", { cookie: cookies.grace });
+  const gracePair = (graceAfterReport.body ?? []).find((direct) => direct.id === pairGD);
+  check("report-and-block never accepted contact", gracePair?.request_state !== "accepted" && gracePair?.blocked === true,
+    `state=${gracePair?.request_state} blocked=${gracePair?.blocked}`);
+  const sourceRequestEvidence = (() => {
+    const db = new DatabaseSync(path.join(sourceDir, "brrp.db"), { readOnly: true });
+    const row = db.prepare("SELECT count(*) AS count, snapshot_text, reason, status, expires_at FROM private_request_reports WHERE id=?").get(requestGDEvidenceID);
+    db.close();
+    return row;
+  })();
+  check("the snapshot source really holds the request evidence", sourceRequestEvidence.count === 1, `${sourceRequestEvidence.count} rows`);
+  check("the snapshot source holds the exact introduction delta confirmed",
+    sourceRequestEvidence.snapshot_text === requestGDPreview.body?.introduction,
+    `${String(sourceRequestEvidence.snapshot_text).length} characters, preview has ${String(requestGDPreview.body?.introduction).length}`);
 
   const requestEC = await api(source.base, "POST", "/api/directs", {
     cookie: cookies.echo,
@@ -571,7 +624,7 @@ async function main() {
 
     const fresh = {};
     fresh.owner = await signIn(restored.base, "owner", OWNER_PASSWORD, ownerSecret);
-    for (const name of ["alpha", "beta", "carol", "delta", "echo"]) {
+    for (const name of ["alpha", "beta", "carol", "delta", "echo", "grace"]) {
       fresh[name] = await signIn(restored.base, name, memberPassword(name));
     }
     const frankLogin = await api(restored.base, "POST", "/api/login", { body: { username: "frank", password: memberPassword("frank") } });
@@ -644,6 +697,63 @@ async function main() {
     check("a retry after the restore deduplicates onto the original evidence",
       retryEvidence.status === 200 && retryEvidence.body?.id === evidenceID && retryEvidence.body?.duplicate === true,
       `HTTP ${retryEvidence.status} id=${retryEvidence.body?.id}`);
+
+    // The request-evidence operation has to survive the restore as a whole: the
+    // evidence, the block it committed and the command receipt that makes a retry
+    // safe are three parts of one decision, and a restore that kept only some of
+    // them would leave delta able to report the same introduction twice.
+    {
+      const db = new DatabaseSync(path.join(restoredDir, "brrp.db"), { readOnly: true });
+      const row = db.prepare("SELECT id,status,expires_at,snapshot_text,reason FROM private_request_reports WHERE id=?").get(requestGDEvidenceID);
+      const receipt = db.prepare("SELECT outcome,source_kind FROM private_report_receipts WHERE operation_key=? AND user_id=?").get("p10-rehearsal-report-and-block", ids.delta);
+      db.close();
+      check("the request evidence survived the restore", row?.id === requestGDEvidenceID, row ? "present" : "missing");
+      check("the restored request evidence keeps its exact expiry, text and reason",
+        row?.expires_at === sourceRequestEvidence.expires_at &&
+          row?.snapshot_text === sourceRequestEvidence.snapshot_text &&
+          row?.reason === sourceRequestEvidence.reason &&
+          row?.status === sourceRequestEvidence.status,
+        `expires ${row?.expires_at === sourceRequestEvidence.expires_at ? "matches" : "differs"}, ` +
+          `text ${row?.snapshot_text === sourceRequestEvidence.snapshot_text ? "matches" : "differs"}`);
+      check("the command receipt survived the restore", receipt?.source_kind === "request" && Boolean(receipt?.outcome),
+        `source_kind=${receipt?.source_kind}`);
+    }
+    // The block is the durable half. The reported introduction is gone from the
+    // recipient's side, the sender is still barred, and a restore that carried the
+    // request back would undo a decision the snapshot happened after.
+    const graceWriteAfter = await api(restored.base, "POST", `/api/conversations/${pairGD}/messages`, {
+      cookie: fresh.grace,
+      body: { content: "after the restore", idempotency_key: "p10-rehearsal-grace-write-2" },
+    });
+    check("the restore did not resurrect the reported request", graceWriteAfter.status === 404, `HTTP ${graceWriteAfter.status}`);
+    const graceRetryAfter = await api(restored.base, "POST", "/api/directs", {
+      cookie: fresh.grace,
+      body: { user_id: ids.delta, introduction: "grace tries again after the restore" },
+    });
+    check("the block survives the restore", graceRetryAfter.status >= 400, `HTTP ${graceRetryAfter.status} ${JSON.stringify(graceRetryAfter.body ?? {})}`);
+    const graceAfterRestore = await api(restored.base, "GET", "/api/directs", { cookie: fresh.grace });
+    const gracePairAfter = (graceAfterRestore.body ?? []).find((direct) => direct.id === pairGD);
+    check("the restore did not re-open contact that reporting never accepted",
+      gracePairAfter?.request_state !== "accepted" && gracePairAfter?.blocked === true,
+      `state=${gracePairAfter?.request_state} blocked=${gracePairAfter?.blocked}`);
+    // A retry with the same operation key returns the original receipt rather than
+    // reporting a second time: the restored key is still spent.
+    const retryAfterRestore = await api(restored.base, "POST", `/api/directs/${pairGD}/report-and-block`, {
+      cookie: fresh.delta,
+      body: { reason: "rehearsal introduction concern, not a real one", operation_key: "p10-rehearsal-report-and-block", version: requestGDPreview.body?.version },
+    });
+    check("a retry after the restore returns the original receipt",
+      retryAfterRestore.status === 200 && retryAfterRestore.body?.id === requestGDEvidenceID,
+      `HTTP ${retryAfterRestore.status} id=${retryAfterRestore.body?.id}`);
+    // The key is bound to the reason, so reusing it for different work is a conflict
+    // rather than a second report. A restore that lost that binding would silently
+    // file a new report under a spent key.
+    const reusedKey = await api(restored.base, "POST", `/api/directs/${pairGD}/report-and-block`, {
+      cookie: fresh.delta,
+      body: { reason: "a different reason under a spent key", operation_key: "p10-rehearsal-report-and-block", version: requestGDPreview.body?.version },
+    });
+    check("a spent operation key cannot be reused for different work",
+      reusedKey.status === 409, `HTTP ${reusedKey.status}`);
 
     const deltaDirects = await api(restored.base, "GET", "/api/directs", { cookie: fresh.delta });
     const deltaCD = (deltaDirects.body ?? []).find((direct) => direct.id === pairCD);
