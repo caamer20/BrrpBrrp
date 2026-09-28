@@ -51,6 +51,14 @@
 <section class="settings-section">
   <h3>Mention notifications</h3>
   <p class="muted">These settings apply to this browser and device.</p>
+  {#if workspace.privateConversationsEnabled}
+    <p class="muted">
+      These notifications are for mentions in channels. Direct messages do not use them: a new
+      message request is shown as a count on <strong>Messages and requests</strong>, and an unread
+      direct message is shown there and in the conversation itself. Nothing rings, pops up or
+      reaches this device for a direct message. Turning these off does not change either.
+    </p>
+  {/if}
   {#if status}<div
       class="notification-status"
       class:enabled={status.state === 'enabled'}

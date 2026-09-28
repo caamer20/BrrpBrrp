@@ -100,9 +100,15 @@ test('direct consent isolates messages and blocking recovers pending text withou
     const saved = shared.find((message) => message.content === secret);
     expect(saved.conversation_id).toBe(direct.id);
     expect(saved.channel_id || '').toBe('');
+    // A direct message is reported through the private-evidence dialog, which has
+    // its own disclosure contract (ADR 0013), so the community report control is
+    // still absent here and the private one is what the person is offered.
     await expect(aliceLog.getByRole('button', { name: 'Report message', exact: true })).toHaveCount(
       0
     );
+    await expect(
+      aliceLog.getByRole('button', { name: 'Report private message', exact: true })
+    ).toBeVisible();
 
     // Replies and scoped search reuse the existing conversation components/endpoints.
     await aliceLog
@@ -564,22 +570,15 @@ test('an unsent request introduction and its held response never cross an accoun
     "the previous account's held request response reported a result to the new account"
   ).toHaveCount(bobBefore);
 
-  // bob opens his own composer. The dialog is closed first when it is still open,
-  // because clicking the entry while the inbox is showing does not re-open it, and
-  // the search below would then run against a stale dialog.
-  if (
-    await page
-      .getByRole('dialog', { name: 'Messages', exact: true })
-      .isVisible()
-      .catch(() => false)
-  ) {
-    await page
-      .getByRole('dialog', { name: 'Messages', exact: true })
-      .getByRole('button', { name: 'Close dialog' })
-      .click();
-  }
+  // bob opens his own composer. The dialog is explicitly closed and reopened
+  // rather than reused: alice left it open, and clicking the entry while the
+  // inbox is showing does not re-open it, so the search below would run against
+  // a dialog bound to the previous account.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Messages', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
   const bobInbox = page.getByRole('dialog', { name: 'Messages', exact: true });
+  await expect(bobInbox).toBeVisible();
   await bobInbox.getByRole('button', { name: 'New conversation', exact: true }).click();
   await bobInbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
   // carol has no relationship with bob, so this is genuinely a new request target.
@@ -605,4 +604,121 @@ test('an unsent request introduction and its held response never cross an accoun
     (bobRequests ?? []).filter((direct) => direct.request_state === 'pending').length,
     "the previous account's request appeared in the new account's conversations"
   ).toBe(0);
+});
+
+// P9-04/P9-05, rendered. The badge and the private report are the two new member
+// surfaces, and both are disclosure decisions rather than controls: what a person is
+// shown, what they agree to, and what a reviewer can reach afterwards. The store
+// tests cover the counting rules; this proves the disclosure is actually in front
+// of the person, and that a reviewer gets the snapshot and nothing more.
+test('a request badge appears for a waiting request and a private report discloses exactly one message', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  const alice = { username: 'evidence_alice', password: 'an evidence alice passphrase' };
+  const bob = { username: 'evidence_bob', password: 'an evidence bob passphrase' };
+  const carol = { username: 'evidence_carol', password: 'an evidence carol passphrase' };
+  await signInOverApi(request);
+  const aliceID = await createAccount(request, alice);
+  const carolID = await createAccount(request, carol);
+  await createAccount(request, bob);
+  await signIn(page, bob);
+
+  // One accepted conversation with a message alice wrote, plus a pending request
+  // from carol so the badge has something real to count.
+  const accepted = await request.post('/api/directs', {
+    data: { user_id: aliceID, introduction: 'let us talk' }
+  });
+  expect(accepted.status()).toBe(201);
+  const pair = await accepted.json();
+  expect((await request.post(`/api/directs/${pair.id}/accept`, { data: {} })).status()).toBe(200);
+  expect(
+    (
+      await request.post(`/api/conversations/${pair.id}/messages`, {
+        data: { content: 'the reported sentence', idempotency_key: 'evidence-journey-1' }
+      })
+    ).status()
+  ).toBe(201);
+  expect(
+    (
+      await request.post('/api/directs', { data: { user_id: carolID, introduction: 'may I' } })
+    ).status()
+  ).toBe(201);
+  await page.reload();
+  await expect(page.getByLabel('Your preferences')).toBeVisible();
+
+  // The badge counts the pending request and names itself for a screen reader, so
+  // the number is not only visual.
+  const entry = page.getByRole('button', { name: /Messages and requests/ });
+  await expect(entry).toHaveAttribute('aria-label', /1 waiting for you/);
+  // Opening the dialog does not consume it: the request is still actionable.
+  await entry.click();
+  const inbox = page.getByRole('dialog', { name: 'Messages', exact: true });
+  await expect(inbox).toBeVisible();
+  await expect(inbox.getByText(/request is waiting for you/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Messages and requests/ })).toHaveAttribute(
+    'aria-label',
+    /1 waiting for you/
+  );
+  await inbox.getByRole('button', { name: 'Close dialog' }).click();
+
+  // Reporting the message shows the exact server text and what is excluded. The
+  // reporter must be able to see the whole disclosure before agreeing to it.
+  const log = page.getByRole('log', { name: 'Direct messages', exact: true });
+  await page
+    .locator('nav.channel-navigation button.channel-link')
+    .filter({ hasText: alice.username })
+    .click();
+  await expect(
+    log.locator('.message-content').filter({ hasText: 'the reported sentence' })
+  ).toBeVisible();
+  await log.getByRole('button', { name: 'Report private message', exact: true }).first().click();
+
+  const report = page.getByRole('dialog', { name: 'Report a private message', exact: true });
+  await expect(report).toBeVisible();
+  // The disclosure states the boundary rather than implying it.
+  await expect(
+    report.getByText(/not the rest of the conversation, not replies, not\s+files/)
+  ).toBeVisible();
+  await expect(report.getByText(/Reviewing it does not delete the message/)).toBeVisible();
+  await expect(report.getByRole('heading', { name: 'What will be saved' })).toBeVisible();
+  // The exact text the server would save is on screen, quoted as evidence.
+  await expect(report.locator('blockquote')).toHaveText('the reported sentence');
+  // Reviewer count is computed, not asserted as a constant.
+  await expect(report.getByText(/account\(s\) can read this after you send it/)).toBeVisible();
+  await report.getByRole('textbox', { name: /Why are you reporting/ }).fill('unwelcome wording');
+  await report.getByRole('button', { name: 'Send report' }).click();
+  await expect(report.getByText(/Report sent\./)).toBeVisible();
+  await report.getByRole('button', { name: 'Done' }).click();
+
+  // The reporter gets a receipt, not a reviewer view: no management surface opens
+  // for them, and their own count is unaffected by reporting.
+  await expect(page.getByRole('button', { name: 'Manage server' })).toHaveCount(0);
+  const queue = await request.get('/api/admin/private-reports');
+  expect(queue.status(), 'the reporter is not a reviewer').toBe(403);
+
+  // The owner holds the review capability, so the queue opens and shows the
+  // snapshot — and offers no way into the conversation it came from.
+  await signOut(page);
+  await signIn(page, OWNER);
+  await page.getByRole('button', { name: 'Manage server' }).click();
+  const tools = page.getByRole('dialog', { name: 'Manage your server' });
+  await tools
+    .getByRole('navigation', { name: 'Server administration' })
+    .getByRole('button', { name: 'Private evidence' })
+    .click();
+  const evidence = tools.getByRole('article', { name: /Private evidence reported by/ });
+  await expect(evidence).toBeVisible();
+  await expect(evidence.locator('blockquote')).toHaveText('the reported sentence');
+  await expect(evidence.getByText('unwelcome wording')).toBeVisible();
+  // Resolving is triage: the wording is present, and the conversation is not
+  // reachable from anywhere in this queue.
+  await expect(tools.getByRole('link', { name: /conversation/ })).toHaveCount(0);
+  await evidence.getByRole('textbox', { name: 'Review note (optional)' }).fill('reviewed');
+  await evidence.getByRole('button', { name: 'Mark reviewed' }).click();
+  await expect(tools.getByText('Marked as reviewed.')).toBeVisible();
+  // The permitted control: the conversation itself is still completely private.
+  const history = await request.get(`/api/conversations/${pair.id}/messages`);
+  expect(history.status(), 'the owner still cannot read the conversation').toBe(404);
 });

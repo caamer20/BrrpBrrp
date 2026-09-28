@@ -212,6 +212,15 @@
     Direct messages open only after a request is accepted. Only participants can read them in the
     app. The server operator manages storage; messages are not end-to-end encrypted.
   </p>
+  {#if outstanding > 0}
+    <p class="muted">
+      {outstanding}
+      {outstanding === 1 ? 'request is' : 'requests are'} waiting for you. Opening this does not dismiss
+      {outstanding === 1 ? 'it' : 'them'} — a request stays here until you accept, decline, or the other
+      person withdraws. A new direct message does not ring or pop up on this device; unread messages show
+      here and in the conversation.
+    </p>
+  {/if}
   <nav class="admin-tabs" aria-label="Messages sections">
     {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests', count: outstanding }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
       <button

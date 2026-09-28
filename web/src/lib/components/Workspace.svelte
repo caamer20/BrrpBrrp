@@ -143,11 +143,13 @@
           ? `Messages and requests, ${outstanding} waiting for you`
           : 'Messages and requests'}
         onclick={() => {
-          // The badge counts pending requests this account can act on; opening
-          // the dialog must not consume them, so only the panel is opened here and
-          // the count is left to the server's next snapshot (ADR 0013).
+          // The badge is a way into Requests, so a pending count leads straight
+          // there. With nothing outstanding the entry opens the conversation list
+          // as it always did: a member who is simply keeping up with messages
+          // should not be dropped into a requests section they did not ask for
+          // (ADR 0013).
           workspace.messagesOpen = true;
-          workspace.messagesTab = 'requests';
+          workspace.messagesTab = outstanding > 0 ? 'requests' : 'conversations';
         }}
         ><Icon name="users" size={16} /><span>Messages and requests</span>{#if outstanding > 0}<b
             class="unread-badge"
