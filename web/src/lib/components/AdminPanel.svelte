@@ -24,12 +24,21 @@
     // Private evidence is a separate queue behind its own capability, not another
     // section of Reports: a reviewer of one is not automatically a community
     // moderator, and an account with only message.delete_any must not learn that a
-    // private queue exists (ADR 0013).
-    { name: 'Private evidence', capabilities: ['report.review_private'] },
+    // private queue exists (ADR 0013). It also depends on the feature being on —
+    // with it off there is no evidence to review, and offering an empty section
+    // whose every action the server refuses is the thing this panel exists to
+    // avoid (completion review 10, R10-07).
+    { name: 'Private evidence', capabilities: ['report.review_private'], gated: true },
     { name: 'Settings', capabilities: ['settings.manage'] },
     { name: 'Maintenance', capabilities: ['operator.backup', 'settings.manage', 'audit.read'] }
   ];
-  const allowed = $derived(tabs.filter((entry) => workspace.canAny(...entry.capabilities)));
+  const allowed = $derived(
+    tabs.filter(
+      (entry) =>
+        workspace.canAny(...entry.capabilities) &&
+        (entry.gated !== true || workspace.privateConversationsEnabled)
+    )
+  );
   // The requested tab may not be one this account may open (a privileged refusal sends
   // an account to Settings, which an owner-only capability does not reach), so fall
   // back to the first tab the account can use.

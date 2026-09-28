@@ -306,15 +306,6 @@ func (s *Server) submitPrivateEvidence(w http.ResponseWriter, r *http.Request, u
 		problem(w, http.StatusBadRequest, "Explain your report in 1–2,000 characters.")
 		return
 	}
-	// The version is a fixed-size digest, so this bounds its *shape* rather than
-	// guessing a length that happens to fit the largest supported message.
-	// Accepting an arbitrary short string would let a caller claim to have
-	// confirmed a preview they never fetched; the equality check below is the real
-	// gate, and this only rejects what could never have come from a preview.
-	if len(input.Version) != privateEvidenceVersionLength || !isHex(input.Version) {
-		problem(w, http.StatusBadRequest, "That preview is no longer current. Look at the message again.")
-		return
-	}
 	tx, err := s.store.BeginTx(r.Context(), nil)
 	if err != nil {
 		s.failed(w, err)
@@ -342,6 +333,15 @@ func (s *Server) submitPrivateEvidence(w http.ResponseWriter, r *http.Request, u
 	}
 	if scope.Kind != "direct" {
 		hidden(w)
+		return
+	}
+	// The version is a fixed-size digest, so this bounds its *shape* rather than
+	// guessing a length that happens to fit the largest supported message. It runs
+	// after the access check on purpose: a caller with no right to read the message
+	// must learn nothing about it, including whether the body they sent was well
+	// formed. The equality check below is the real gate.
+	if len(input.Version) != privateEvidenceVersionLength || !isHex(input.Version) {
+		problem(w, http.StatusBadRequest, "That preview is no longer current. Look at the message again.")
 		return
 	}
 	preview, err := s.privateEvidenceForMessage(r.Context(), tx, principal, messageID, scope.ID)
@@ -386,16 +386,27 @@ func (s *Server) submitPrivateEvidence(w http.ResponseWriter, r *http.Request, u
 		s.failed(w, err)
 		return
 	}
+	// Capacity is checked before the allowance is consumed, so a full store does
+	// not also burn the reporter's hourly budget for a report that was never
+	// taken. A full store is an operator condition rather than a server fault, so
+	// it gets a defined answer that keeps the reporter's text rather than a
+	// generic 500 (completion review 10, R10-07).
+	full, err := s.privateEvidenceIsFull(r.Context(), tx)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	if full {
+		problem(w, http.StatusServiceUnavailable,
+			"This server is not accepting new private reports right now. Your explanation has been kept; please try again later.")
+		return
+	}
 	if allowed, err := s.consumePrivateReportAllowance(r.Context(), tx, user.ID, now); err != nil {
 		s.failed(w, err)
 		return
 	} else if !allowed {
 		w.Header().Set("Retry-After", "3600")
 		problem(w, http.StatusTooManyRequests, "You have sent several private reports. Please try again later.")
-		return
-	}
-	if err := s.checkPrivateEvidenceCapacity(r.Context(), tx); err != nil {
-		s.failed(w, err)
 		return
 	}
 	report := privateMessageReport{
@@ -453,22 +464,19 @@ func (s *Server) consumePrivateReportAllowance(ctx context.Context, tx *sql.Tx, 
 	return true, nil
 }
 
-// checkPrivateEvidenceCapacity refuses new evidence when unexpired evidence has
-// reached the installation bound. It never evicts: dropping a record a reviewer is
-// mid-triage on, or one a reporter submitted and may appeal, would be a quieter and
-// worse failure than an honest refusal.
-func (s *Server) checkPrivateEvidenceCapacity(ctx context.Context, tx *sql.Tx) error {
+// privateEvidenceIsFull reports whether unexpired evidence has reached the
+// installation bound. It never evicts: dropping a record a reviewer is mid-triage
+// on, or one a reporter submitted and may appeal, would be a quieter and worse
+// failure than an honest refusal. The answer is a boolean rather than an error so
+// the caller can refuse deliberately instead of reporting an operator condition
+// as a server fault.
+func (s *Server) privateEvidenceIsFull(ctx context.Context, tx *sql.Tx) (bool, error) {
 	var stored int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM private_message_reports WHERE expires_at>?`, db.Now()).Scan(&stored); err != nil {
-		return err
+		return false, err
 	}
-	if stored >= privateReportStorageLimit {
-		return errPrivateEvidenceFull
-	}
-	return nil
+	return stored >= privateReportStorageLimit, nil
 }
-
-var errPrivateEvidenceFull = errors.New("private report storage is full")
 
 // listPrivateEvidence returns the reviewer queue.
 //

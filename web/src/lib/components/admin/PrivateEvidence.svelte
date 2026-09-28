@@ -26,8 +26,9 @@
     created_at: string;
     expires_at: string;
   }
-  const account = untrack(() => workspace.user?.id);
-  const generation = untrack(() => workspace.authorizationGeneration);
+  // The account and generation are read per request, below. Capturing them once
+  // here is what made every read after an authority change permanently
+  // inadmissible (completion review 10, R10-04).
   let alive = true;
   onDestroy(() => {
     alive = false;
@@ -55,8 +56,18 @@
     workspace.can('report.review_private') &&
     !workspace.authorizationUnverified;
 
+  // The identity is captured per request, not once when the panel mounted. A
+  // capture at construction meant every read issued after an unrelated authority
+  // change compared against a stale generation, was refused, and could never be
+  // admitted again — so the queue could not refresh at all once the account's
+  // generation moved, and Refresh could not repair it (completion review 10,
+  // R10-04).
   async function load(older = false) {
-    const request = { account, generation, version: ++version };
+    const request = {
+      account: workspace.user?.id,
+      generation: workspace.authorizationGeneration,
+      version: ++version
+    };
     loading = !older;
     error = '';
     if (!older) reports = [];
@@ -67,7 +78,7 @@
       if (!admitted(request)) return;
       reports = older ? [...reports, ...result.reports] : result.reports;
       cursor = result.next_cursor;
-      loadedFor = `${account}:${generation}:${status}`;
+      loadedFor = `${request.account}:${request.generation}:${status}`;
       for (const report of result.reports) notes[report.id] ??= report.review_note;
     } catch (failure) {
       if (admitted(request)) error = errorMessage(failure);
@@ -75,10 +86,20 @@
       if (admitted(request)) loading = false;
     }
   }
+  // The gate is checked here, not only in the route. An API refusal alone is not
+  // the interface contract: with the private feature off there is no evidence to
+  // review, so the queue must not offer itself, and whatever it was showing must
+  // be cleared rather than left on screen (completion review 10, R10-07).
   $effect(() => {
     void status;
     void workspace.authorizationGeneration;
-    if (workspace.can('report.review_private') && !workspace.authorizationUnverified) void load();
+    void workspace.privateConversationsEnabled;
+    if (
+      workspace.privateConversationsEnabled &&
+      workspace.can('report.review_private') &&
+      !workspace.authorizationUnverified
+    )
+      void load();
     else {
       reports = [];
       loadedFor = '';
@@ -87,25 +108,33 @@
 
   async function review(report: Evidence, next: 'open' | 'resolved') {
     if (busy) return;
+    // The mutation is admitted the same way the read is, against the identity
+    // captured when it started: a response arriving after the account or its
+    // authority changed belongs to a view that no longer exists, and applying it
+    // would edit a queue the account may no longer be allowed to see.
+    const request = {
+      account: workspace.user?.id,
+      generation: workspace.authorizationGeneration,
+      version: ++version
+    };
     busy = report.id;
     error = '';
     notice = '';
     try {
-      const updated = await api<Evidence>(`/admin/private-reports/${report.id}`, 'PATCH', {
+      await api<Evidence>(`/admin/private-reports/${report.id}`, 'PATCH', {
         status: next,
         note: (notes[report.id] ?? '').trim()
       });
-      if (!alive || account !== workspace.user?.id) return;
+      if (!admitted(request)) return;
       // A resolve moves the record out of this view; a reopen brings it back. The
       // queue is re-read rather than patched in place, so a filter that no longer
       // admits the record cannot leave it stranded.
       reports = reports.filter((entry) => entry.id !== report.id);
-      void updated;
       notice = next === 'resolved' ? 'Marked as reviewed.' : 'Reopened for review.';
     } catch (failure) {
-      if (alive) error = errorMessage(failure);
+      if (admitted(request)) error = errorMessage(failure);
     } finally {
-      if (alive) busy = '';
+      if (admitted(request)) busy = '';
     }
   }
 
@@ -138,7 +167,7 @@
       No {status === 'open' ? 'open' : 'reviewed'} private evidence.
     </p>
   {/if}
-  {#if loadedFor && `${account}:${generation}:${status}` !== loadedFor && !error}
+  {#if loadedFor && `${workspace.user?.id}:${workspace.authorizationGeneration}:${status}` !== loadedFor && !error}
     <p role="alert">Your access to this queue changed. Reload to see what you may still read.</p>
   {/if}
   {#each reports as report (report.id)}

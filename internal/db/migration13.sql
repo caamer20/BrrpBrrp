@@ -15,6 +15,12 @@
 -- is community moderation. The mechanics (expiry, pagination, resolve/reopen,
 -- bounded cleanup) are shared code; the disclosure boundary is not.
 --
+-- The row holds the selected message's bounded text, the two account ids that
+-- describe it, and the conversation it belongs to. The conversation id is
+-- provenance — it records where the evidence came from — and it is not a route
+-- into that conversation: history, files, search and context all resolve through
+-- the caller's own accepted membership, which holding this row does not confer.
+--
 -- The source message has no foreign key on purpose: deleting the message does not
 -- erase evidence a reporter already submitted. Identities are cleared rather than
 -- cascaded, so a removed account leaves no identity attached to a record that must

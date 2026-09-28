@@ -67,10 +67,17 @@
   }
   void load();
 
+  // submitted records that a send was attempted, so an authority change can say
+  // "not yet confirmed" rather than "nothing was sent" — a report may well have
+  // committed, and telling a person it did not would be a false claim about
+  // something they may have to rely on.
+  let submitted = $state(false);
+
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (busy || !admitted() || !preview || changed || !reason.trim()) return;
     busy = true;
+    submitted = true;
     error = '';
     try {
       const result = await api<{ duplicate: boolean }>(
@@ -87,13 +94,19 @@
       if (failure instanceof APIError && failure.status === 409) {
         // The message changed after the preview. The answer carries the current
         // text; showing it is the new consent step, and the explanation is kept so
-        // a re-read costs a glance rather than retyping.
-        const refreshed = failure as unknown as { preview?: Preview };
-        if (refreshed.preview) {
+        // a re-read costs a glance rather than retyping. The refreshed preview
+        // arrives in the error's structured detail — the old code read it off the
+        // error itself, which never carried it (completion review 10, R10-03).
+        const refreshed = (failure.detail ?? {}) as { preview?: Preview };
+        if (refreshed.preview?.version) {
           preview = refreshed.preview;
           changed = true;
         } else {
-          error = 'This message changed. Close and report it again.';
+          // A conflict without usable detail is still a change, so the safe answer
+          // is to re-read rather than to offer a send against text nobody read.
+          changed = true;
+          error = 'This message changed. Read it again before reporting it.';
+          void reload();
         }
       } else {
         error = errorMessage(failure);
@@ -102,11 +115,45 @@
       if (admitted()) busy = false;
     }
   }
+
+  // acknowledgeChange is the explicit second consent: the reporter has now read
+  // the new text and says so. Nothing is submitted until they do, so a change can
+  // never be disclosed-and-saved in one step, and no automatic consent is implied
+  // by having asked.
+  function acknowledgeChange() {
+    changed = false;
+    error = '';
+  }
+
+  async function reload() {
+    loading = true;
+    loadError = '';
+    try {
+      const result = await api<Preview>(`/messages/${message.id}/private-report-preview`);
+      if (!admitted()) return;
+      preview = result;
+    } catch (failure) {
+      if (admitted()) loadError = errorMessage(failure);
+    } finally {
+      if (admitted()) loading = false;
+    }
+  }
 </script>
 
 <Modal title="Report a private message" {close} initialFocus="textarea">
   {#if !admitted()}
-    <p role="status">Your access changed. Nothing from this message is sent.</p>
+    <p role="status">
+      {#if sent}
+        Your access changed after this report was sent, so this confirmation is no longer shown. The
+        report stands.
+      {:else if submitted}
+        Your access changed while the report was being sent. Whether it was saved is not yet
+        confirmed here — reopen the report list, or ask a reviewer, rather than sending it again.
+      {:else}
+        Your access changed. Nothing you typed here has been sent.
+      {/if}
+    </p>
+    <button onclick={close}>Close</button>
   {:else if sent}
     <p role="status">
       {duplicate
@@ -128,9 +175,10 @@
     <section aria-label="What will be saved">
       <h3>What will be saved</h3>
       <p>
-        One message, exactly as shown below, from {preview.author_name}. Your explanation is saved
-        with it. Reviewers see only this: not the rest of the conversation, not replies, not files,
-        and nothing you did not choose to send here.
+        One message, exactly as shown below, from {preview.author_name}. Saved with it are your
+        explanation <strong>and your own account name</strong> — a reviewer can see who reported it, not
+        just what was reported. Reviewers see nothing else: not the rest of the conversation, not replies,
+        not files, and nothing you did not choose to send here.
       </p>
       {#if preview.has_attachment}
         <p class="muted">
@@ -141,17 +189,18 @@
       <p class="muted">
         Anyone who holds the private-evidence review permission
         {preview.reviewer_count === 1 ? '(1 account)' : `(${preview.reviewer_count} accounts)`} can read
-        this after you send it. It is kept until {new Date(
-          preview.expires_at
-        ).toLocaleDateString()}. Reviewing it does not delete the message, block anyone, or give
-        anyone access to your conversation.
+        this after you send it, along with your own name, the person who wrote it and your explanation.
+        It stops being available in the app on
+        {new Date(preview.expires_at).toLocaleDateString()}; the operator's backups are outside that
+        promise. Reviewing it does not delete the message, block anyone, or give anyone access to
+        your conversation.
       </p>
     </section>
     {#if changed}
       <p role="status">
-        This message changed after you first read it. The text above is what would be saved now —
-        read it before sending.
+        This message changed after you first read it. The text above is what would be saved now.
       </p>
+      <button class="secondary" onclick={acknowledgeChange}>I have read the new text</button>
     {/if}
     <form onsubmit={submit}>
       <label

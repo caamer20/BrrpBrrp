@@ -523,3 +523,49 @@ func TestPrivateReviewAuditIsRestrictedToTheEvidencePolicy(t *testing.T) {
 		t.Fatalf("the audit-only reader reached the private audit feed: %d", w.Code)
 	}
 }
+
+// R10-06: a request the recipient can act on must appear in the count. The
+// requester's own contact preference controls whether they may *receive* new
+// requests; it does not withdraw one they already sent, so filtering on it made the
+// badge read zero while the inbox held an actionable request.
+func TestRequesterOptingOutDoesNotWithdrawAnOutstandingRequest(t *testing.T) {
+	s, h, _, _, b, _ := privateEvidenceFixtureWithConversation(t)
+	bobID := evidenceUserID(t, h, b)
+	// The fixture pair is already accepted, so the pending request below is made
+	// by a fresh account: re-requesting an accepted peer would not be pending.
+	_, requester := memberAccount(t, s, "opt_out_requester")
+	asked := request(t, h, "POST", "/api/directs", map[string]string{"user_id": bobID, "introduction": "may I"}, requester)
+	if asked.Code != 201 {
+		t.Fatalf("request: %d %s", asked.Code, asked.Body.String())
+	}
+	// The requester opts out of receiving new requests afterwards.
+	if w := request(t, h, "PUT", "/api/me/contact-preferences", map[string]any{"allow_requests": false}, requester); w.Code != 200 {
+		t.Fatalf("opt out: %d %s", w.Code, w.Body.String())
+	}
+	count, err := s.outstandingIncomingRequests(t.Context(), s.store, db.User{ID: bobID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("an actionable request counted %d: opting out of receiving requests did not withdraw the one that was sent", count)
+	}
+	// The permitted control: accepting it clears the count.
+	accepted := request(t, h, "POST", "/api/directs/"+readJSON[directConversation](t, asked).ID+"/accept", map[string]any{}, b)
+	if accepted.Code != 200 {
+		t.Fatalf("accept: %d %s", accepted.Code, accepted.Body.String())
+	}
+	if count, err := s.outstandingIncomingRequests(t.Context(), s.store, db.User{ID: bobID}); err != nil || count != 0 {
+		t.Fatalf("count after accepting = %d (err %v), want 0", count, err)
+	}
+	// And a block does clear it, so the count is not simply unconditional.
+	blockerID, blocker := memberAccount(t, s, "second_requester")
+	if other := request(t, h, "POST", "/api/directs", map[string]string{"user_id": bobID, "introduction": "again"}, blocker); other.Code != 201 {
+		t.Fatalf("second request: %d %s", other.Code, other.Body.String())
+	}
+	if w := request(t, h, "PUT", "/api/me/blocks/"+blockerID, map[string]any{}, b); w.Code != 200 {
+		t.Fatalf("block: %d %s", w.Code, w.Body.String())
+	}
+	if count, err := s.outstandingIncomingRequests(t.Context(), s.store, db.User{ID: bobID}); err != nil || count != 0 {
+		t.Fatalf("count after blocking = %d (err %v), want 0", count, err)
+	}
+}

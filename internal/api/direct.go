@@ -162,10 +162,19 @@ func (s *Server) directConversations(ctx context.Context, user db.User) ([]direc
 //
 // It is derived from durable current state rather than accumulated, so it is
 // correct on a cold start, after a restart, and for a device that missed every
-// event while it was closed. Only requests addressed to this account, still
-// pending, from an available identity that has not opted out and is not blocked
-// in either direction are counted: a request the recipient could not act on
-// anyway must not sit in a badge forever.
+// event while it was closed.
+//
+// Eligibility is derived from the state the recipient's own list uses: the
+// request is addressed to this account, still pending, its conversation is still
+// pending, the requester's identity is available, and the two are not blocked in
+// either direction. A request the recipient could not act on must not sit in a
+// badge forever.
+//
+// It deliberately does not filter on the *requester's* contact preference.
+// `allow_requests` controls whether its owner may receive new incoming requests;
+// it does not withdraw a request already sent, and the recipient can still accept
+// it. Filtering on it made the badge show zero while the inbox held a request the
+// recipient could act on (completion review 10, R10-06).
 //
 // It is a count, not an activity history. It deliberately does not read request
 // introductions, so a closed workspace can draw a badge without the account's
@@ -178,7 +187,6 @@ func (s *Server) outstandingIncomingRequests(ctx context.Context, q db.Queryer, 
 		JOIN users u ON u.id=r.requester_id
 		WHERE r.recipient_id=? AND r.state='pending' AND r.requester_id IN(p.user_low,p.user_high)
 		AND u.is_deleted=0 AND u.is_banned=0 AND u.is_deactivated=0
-		AND COALESCE((SELECT cp.allow_requests FROM contact_preferences cp WHERE cp.user_id=r.requester_id),1)=1
 		AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=r.requester_id AND b.blocked_id=?) OR (b.blocker_id=? AND b.blocked_id=r.requester_id))`,
 		user.ID, user.ID, user.ID).Scan(&count)
 	return count, err

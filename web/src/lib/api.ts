@@ -1,9 +1,17 @@
 export class APIError extends Error {
+  // detail carries whatever structured fields the server sent alongside the
+  // message. A conflict that has to be shown differently — a refreshed preview the
+  // person must re-read, for instance — cannot be acted on from a message alone,
+  // and throwing the fields away is what made that flow impossible (completion
+  // review 10, R10-03). It is the server's own body, never anything assembled here.
+  detail: unknown;
   constructor(
     message: string,
-    public status: number
+    public status: number,
+    detail?: unknown
   ) {
     super(message);
+    this.detail = detail;
   }
 }
 
@@ -25,7 +33,11 @@ export async function api<T>(
     });
     const result = await response.json().catch(() => null);
     if (!response.ok)
-      throw new APIError(result?.error || 'The request failed. Please try again.', response.status);
+      throw new APIError(
+        result?.error || 'The request failed. Please try again.',
+        response.status,
+        result
+      );
     if (result === null)
       throw new Error('The server returned an unreadable response. Please try again.');
     return result as T;

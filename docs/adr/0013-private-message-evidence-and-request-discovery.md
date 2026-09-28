@@ -97,18 +97,28 @@ maintenance cadence rather than at the moment of expiry.
 - **Source deletion:** deleting the reported message does not erase submitted
   evidence. The evidence was a consented snapshot, and its value is precisely that it
   survives the source going away.
-- **Account removal/erasure:** reporter and author identities are cleared the way
-  community reports clear them, so a removed account leaves no identity attached. The
-  evidence text itself is not rewritten by an unrelated account's deletion.
+- **Account removal versus erasure:** these are different operations and behave
+  differently here, following ADR 0011. *Removal* (the anonymize ceremony) keeps the
+  account's stable identity under a tombstoned "Deleted member" presentation, so a
+  record that names it keeps naming that identity. *Physical erasure* nulls the
+  foreign keys, so the reporter and author columns become empty and the evidence
+  text survives without attribution. Neither rewrites the evidence text because of
+  an unrelated account's deletion.
 - **Reviewer revocation:** as above, checked at transaction time.
-- **Backup/restore:** a restored copy carries its snapshot's evidence and expiry. A
-  restore does not resurrect the snapshot's reviewer grants or role changes; those need
-  the same explicit reconciliation as any other post-snapshot authority decision.
+- **Backup/restore:** a restored copy carries its snapshot's evidence, expiry *and*
+  the roles and grants that existed at snapshot time — those are ordinary rows and
+  they do come back. What the backup cannot contain is any revocation made after the
+  snapshot, so a role that was withdrawn later reads as granted again on the
+  restored copy. That is why the same explicit reconciliation as any other
+  post-snapshot authority decision applies to reviewer grants, and why "restores the
+  snapshot's authority" is the accurate description rather than "restores the
+  current authority".
 - **Private feature off:** when `BRRP_ENABLE_PRIVATE_CONVERSATIONS` is off, private
-  report submission and review are refused and the private UI is not shown. Stored
-  evidence is retained until its normal expiry. Disabling the feature is not erasure,
-  and this ADR does not pretend otherwise: the operator still controls the database
-  and the backups.
+  report submission and review are refused and the private interface is not shown —
+  the admin tab is hidden and a queue that was open is cleared, rather than left on
+  screen offering actions the server refuses. Stored evidence is retained until its
+  normal expiry. Disabling the feature is not erasure, and this ADR does not pretend
+  otherwise: the operator still controls the database and the backups.
 
 ## Limits and concurrency
 
@@ -116,9 +126,20 @@ Private submissions reuse the community size limits (4,000 characters of text, 2
 for the explanation). The **durable per-account rate is ten new private reports per
 hour**, counted in the database rather than in memory, so a restart cannot reset it;
 the community limiter remains in-memory and is not described as durable. Exceeding it
-returns `429` with `Retry-After`. A server storage bound is enforced by refusing new
-evidence when unexpired evidence exceeds the bound, with a clear error, rather than
-silently evicting unexpired records.
+returns `429` with `Retry-After`.
+
+A server storage bound is enforced by refusing new evidence when unexpired evidence
+reaches the bound, with a defined `503` and the reporter's text kept, rather than
+silently evicting unexpired records. The capacity check runs *before* the hourly
+allowance is consumed, so a full store does not also spend the reporter's budget for
+a report that was never taken.
+
+The preview version is a fixed-size SHA-256 digest over the length-prefixed message
+content and its edit state. It is the same length for every message and carries no
+part of the message, which is what keeps a 4,000-character message in a non-Latin
+script reportable: a version that grew with the content would have exceeded the
+submission bound for exactly the messages most likely to need reporting. The digest
+changes if and only if the text changes, so the confirmation check keeps its force.
 
 Concurrent retried submissions are deduplicated without replacing the original
 evidence or explanation: the first submission wins and a retry returns that same
@@ -131,9 +152,17 @@ identity, or their reason.
 Private review mutations write restricted audit metadata atomically with the review
 change, with an explicit failure policy: an audit write that fails aborts the
 transaction, exactly as the community review path does. No private text, reason, or
-membership ever enters the general community audit feed; the audit entry names the
-reviewer, the action and the evidence id only, and is readable only through the
-appropriate evidence policy.
+membership ever enters the audit record; it names the reviewer, the action and the
+evidence id only.
+
+Those records are also excluded from the *general* community audit feed, not merely
+uninteresting there. Naming the reviewer, the report and the time discloses that a
+specific person reported a specific private message, to a reader who cannot see
+the message — so the community feed filters them out before its limit, where they
+could otherwise occupy a page slot or shift a cursor, and a policy-scoped endpoint
+serves them to an account holding `report.review_private`. The review remains
+accountable; it is simply not disclosed to an audience the evidence policy does not
+cover.
 
 Resolving a report records triage. It does not delete a message, ban an account, or
 grant any moderation power over a private conversation. Reopen returns the record to
