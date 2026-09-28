@@ -303,3 +303,50 @@ outstanding-request count for an account that has one and one that does not.
 6. Independent security/privacy and browser/accessibility reviews; newcomer
    install/restore; the 14-day beta period; a frozen candidate; explicit
    publication approval.
+
+
+## Review 10 repairs (28 September 2026)
+
+Review 10 examined this checkpoint and found eight issues against P9 — two reproduced,
+several source-confirmed. All are repaired on this branch; the results below were run
+against the committed source at `4e149ad`.
+
+| Finding | Repair | Proof |
+| --- | --- | --- |
+| R10-01 valid Unicode messages were unreportable | the preview version is a fixed-size SHA-256 digest over the length-prefixed content and edit state | reproduced first (an 8,100-byte CJK message produced an 8,131-byte version and a misleading 400); regression posts full-length ASCII, CJK and emoji and asserts each is reportable and that all 4,000 characters were stored |
+| R10-02 private review metadata reached the community audit audience | the general feed excludes `private_report.%` before its limit; a policy-scoped endpoint serves them to `report.review_private` | reproduced first (an audit-only reader read reviewer, report id, action and time); regression covers the audit-only reader, the authorized reviewer and revocation |
+| R10-03 changed-preview recovery could not finish | `APIError` carries the server body; the dialog reads the refreshed preview and requires an explicit "I have read the new text" | new unit test on the real helper, proven failing without the detail; new rendered journey proves the refreshed text is shown, the explanation survives, Send stays disabled until acknowledged, and acknowledging lets it through |
+| R10-04 reviewer queue could not refresh after an authority change | identity is captured per request for reads and mutations; the tab and queue respect the feature gate | source-confirmed and fixed; the stale constants are gone |
+| R10-05 the Linux step audit ran in the Windows matrix | moved to the Linux browser job; exits non-zero on Windows rather than skipping | audit self-test green in the job that owns the browser steps |
+| R10-06 the badge excluded an actionable request | the count no longer filters on the requester's `allow_requests` | regression covers opt-out, accept and block |
+| R10-07 contract and disclosure corrections | ADR 0013 lifecycle/audit/limits, the migration comment, the disclosure copy and a defined capacity refusal | each correction names what it now says and why |
+| R10-08 evidence and documentation gaps | the rehearsal compares exact expiry, text and reason; a diagnostic prints its own response; ledger attribution corrected; docs name alpha.7/schema 13 | private rehearsal 85/85 with exact comparison |
+
+A regression introduced by this work was also fixed: the version shape check ran before
+the access check, so a caller with no right to read a message learned its version format
+instead of receiving a 404.
+
+### Results on the committed source (`4e149ad`)
+
+| Check | Result |
+| --- | --- |
+| Frontend unit/state tests | **114/114 pass** |
+| Frontend types/a11y · format | **0 errors, 0 warnings** · clean |
+| Full race suite | **all 10 packages ok**; `internal/api` 1008.170s, `internal/db` 87.945s, `internal/backup` 19.787s, `internal/rtc` 18.171s, `internal/authz` 12.519s, `internal/app` 11.640s, `internal/installer` 10.965s, `internal/scraper` 7.372s, `internal/ws` 5.922s, `web` 7.036s; wall ≈16.8 min |
+| Browser, default-off · opted in | **13/13** (1.6 min) · **19/19** (2.2 min) |
+| Recovery community · private | **23/23** · **85/85** |
+| Rollback alpha.5 · alpha.3 | **57/57** (schema 10→13) · **55/55** (schema 2→13) |
+| Tooling audits | browser-step, Docker inputs, source package, licenses and baseline-fetch all pass |
+| Candidate binary | `dist/brrpbrrp-p9`, sha256 `051b7f3d39e416c776f8b294104299fc8b4982e38606687f794706ba5cb23ae5`; frontend build identity `20d76bada950286f` |
+
+`internal/rtc` failed once during this work with "peer failed to connect" and passed on
+both re-runs of the package and the following full sweep. The package is unchanged since
+alpha.5, so this is recorded as a flaky SFU connection timing under full-suite load
+rather than claimed as green on first attempt.
+
+### Still not established
+
+No hosted CI run, Windows/Tailscale host, Docker runtime, physical media, encrypted
+off-host recovery, RPO/RTO measurement, load/soak, or independent security and
+accessibility review. No alpha.7 distribution archives are produced here, so the
+extracted-package consumer obligation is still open. No G0–G8 release gate has passed.
