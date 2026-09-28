@@ -15,8 +15,8 @@
     "backup_format": 2
   },
   "candidate": {
-    "version": "0.4.0-alpha.6",
-    "binary_sha256": "37693fe784bbe73a91c9c2a734afdd5fe44538f55996d4f384fd779fccd2ef8d",
+    "version": "0.4.0-alpha.7",
+    "binary_sha256": "fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f",
     "schema": 13,
     "backup_format": 2,
     "pending_migrations": [
@@ -27,15 +27,15 @@
   },
   "archives": {
     "rollback": {
-      "bytes": 15152,
-      "sha256": "822da73e5f3bb3fb0a0880f42ca9561e3b142a521eaa5f9b7ccf13be8cc5bfdf",
+      "bytes": 15172,
+      "sha256": "605db32c3693ff0e340c95aafeb06c3fa30b13be10a1f24e225b3b9544458802",
       "format": 2,
       "schema": 10,
       "written_by": "the prior release, from the un-migrated installation"
     },
     "candidate": {
-      "bytes": 15153,
-      "sha256": "77b12f16f526d67f87826748af25dc3b67518ca17f5c153c5d3ea81ed433ba51",
+      "bytes": 15171,
+      "sha256": "d3e08668150ee65513c5f1f8ae6ea5071ed90ff1f24fdfb39fb2ba95f3d14b2b",
       "format": 2,
       "schema": 10,
       "prior_reader_compatible": true,
@@ -147,12 +147,12 @@
     {
       "name": "the prior release wrote an archive",
       "ok": true,
-      "detail": "15152 bytes"
+      "detail": "15172 bytes"
     },
     {
       "name": "the candidate reads the old archive",
       "ok": true,
-      "detail": "format 2, created 2026-09-28T01:50:12.606009000Z, written by 0.4.0-alpha.5, schema 10"
+      "detail": "format 2, created 2026-09-28T04:43:40.508650000Z, written by 0.4.0-alpha.5, schema 10"
     },
     {
       "name": "the old archive reports its backup format",
@@ -167,12 +167,12 @@
     {
       "name": "the candidate wrote an archive",
       "ok": true,
-      "detail": "15153 bytes"
+      "detail": "15171 bytes"
     },
     {
       "name": "the candidate verifies its own archive and reports its format",
       "ok": true,
-      "detail": "format 2, created 2026-09-28T01:50:12.720963000Z, written by 0.4.0-alpha.6, schema 10"
+      "detail": "format 2, created 2026-09-28T04:43:40.613197000Z, written by 0.4.0-alpha.7, schema 10"
     },
     {
       "name": "snapshotting an un-migrated installation did not migrate it",
@@ -267,7 +267,7 @@
     {
       "name": "the enrolled factor still verifies after the upgrade",
       "ok": true,
-      "detail": "HTTP 200 {\"id\":\"01a0e5b4-92a2-7b8d-b52c-28d4f7ed9f3f\",\"username\":\"owner\",\"display_name\":\"owner\",\"is_admin\":true,\"is_owner\":false,"
+      "detail": "HTTP 200 {\"id\":\"01a0e653-6304-70d6-a8dd-aa2bd009deff\",\"username\":\"owner\",\"display_name\":\"owner\",\"is_admin\":true,\"is_owner\":false,"
     },
     {
       "name": "the rehearsal recorded post-snapshot changes",
@@ -376,10 +376,10 @@
     }
   ],
   "transcript": [
-    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rollback-0NSQn0",
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rollback-06ZpdL",
     "Platform: darwin/amd64",
-    "Old executable: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rollback-0NSQn0/old-release/brrpbrrp (0.4.0-alpha.5) from /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/releases/brrpbrrp-0.4.0-alpha.5-darwin-amd64.zip",
-    "Candidate:      /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9 (0.4.0-alpha.6)",
+    "Old executable: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-rollback-06ZpdL/old-release/brrpbrrp (0.4.0-alpha.5) from /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/releases/brrpbrrp-0.4.0-alpha.5-darwin-amd64.zip",
+    "Candidate:      /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9-checkpoint (0.4.0-alpha.7)",
     "",
     "1. Install with the archived prior release and write a representative dataset",
     "  ok    the prior release accepted first-time setup — HTTP 201",
@@ -400,14 +400,14 @@
     "",
     "2. Snapshot the installation with the prior release (the rollback source)",
     "  ok    the baseline schema is known before either snapshot — schema 10 of 13",
-    "  ok    the prior release wrote an archive — 15152 bytes",
-    "  ok    the candidate reads the old archive — format 2, created 2026-09-28T01:50:12.606009000Z, written by 0.4.0-alpha.5, schema 10",
+    "  ok    the prior release wrote an archive — 15172 bytes",
+    "  ok    the candidate reads the old archive — format 2, created 2026-09-28T04:43:40.508650000Z, written by 0.4.0-alpha.5, schema 10",
     "  ok    the old archive reports its backup format — format 2",
     "  ok    the old archive's schema metadata agrees with the baseline — schema 10",
     "",
     "3. Check the candidate snapshot's schema and prior-reader compatibility",
-    "  ok    the candidate wrote an archive — 15153 bytes",
-    "  ok    the candidate verifies its own archive and reports its format — format 2, created 2026-09-28T01:50:12.720963000Z, written by 0.4.0-alpha.6, schema 10",
+    "  ok    the candidate wrote an archive — 15171 bytes",
+    "  ok    the candidate verifies its own archive and reports its format — format 2, created 2026-09-28T04:43:40.613197000Z, written by 0.4.0-alpha.7, schema 10",
     "  ok    snapshotting an un-migrated installation did not migrate it — recorded schema 10",
     "  ok    the installation is still at the prior schema — schema 10 of 13, 3 pending",
     "  ok    the prior release restores the candidate's compatible pre-upgrade archive — exit 0, formats 2 -> 2",
@@ -429,7 +429,7 @@
     "  ok    search finds the pre-upgrade message — 3 hits",
     "  ok    attachment bytes are identical after the upgrade — HTTP 200, sha256 053331a55b6d",
     "  ok    the upgraded installation still answers with a second-factor step — HTTP 200",
-    "  ok    the enrolled factor still verifies after the upgrade — HTTP 200 {\"id\":\"01a0e5b4-92a2-7b8d-b52c-28d4f7ed9f3f\",\"username\":\"owner\",\"display_name\":\"owner\",\"is_admin\":true,\"is_owner\":false,",
+    "  ok    the enrolled factor still verifies after the upgrade — HTTP 200 {\"id\":\"01a0e653-6304-70d6-a8dd-aa2bd009deff\",\"username\":\"owner\",\"display_name\":\"owner\",\"is_admin\":true,\"is_owner\":false,",
     "",
     "5. Record what changed after the snapshot (the data-loss boundary)",
     "  ok    the rehearsal recorded post-snapshot changes — a message sent after the snapshot, a ban applied after the snapshot",
@@ -460,7 +460,7 @@
     "  ok    an interrupted upgrade is repaired and verified — marker state injected between the migration and its postconditions",
     "",
     "Rehearsal PASS: 57 checks, 0 failed.",
-    "Compatibility: 0.4.0-alpha.5 (schema 10, backup format 2) -> 0.4.0-alpha.6 (schema 13, backup format 2).",
-    "Rollback source: darwin/amd64 archive of 0.4.0-alpha.5, sha256 822da73e5f3bb3fb…"
+    "Compatibility: 0.4.0-alpha.5 (schema 10, backup format 2) -> 0.4.0-alpha.7 (schema 13, backup format 2).",
+    "Rollback source: darwin/amd64 archive of 0.4.0-alpha.5, sha256 605db32c3693ff0e…"
   ]
 }

@@ -13,15 +13,15 @@ has passed.
 | Identity | Value |
 | --- | --- |
 | Base (reviewed by review 9) | `876260ab1c01313efd3358459b4178c010ee2f45` |
-| P9 implementation commits | `06e39fe` R9-01 · `ead585c` R9-02 · `d255140` R9-04/05/06 · `ca3e13c` P9-02/03 backend · `8037023` P9-04/05 client · `1f89a81` P9 copy and journeys |
-| Working tree during final runs | clean except `planning/p9-checkpoint/` (this evidence) |
+| P9 implementation commits | `06e39fe` R9-01 · `ead585c` R9-02 · `d255140` R9-04/05/06 · `ca3e13c` P9-02/03 backend · `8037023` P9-04/05 client · `1f89a81` P9 copy and journeys · `2869db5` P9 checkpoint record |
+| Checkpoint commit (clean) | `2869db55394b2b2a004424672517b38d6908586b` |
 | Schema | 12 → **13** (additive: two tables, no change to `message_reports`) |
 | Backup format | **2**, unchanged — a schema 13 database is still format 2 |
 | Version | `0.4.0-alpha.6` → **`0.4.0-alpha.7`** |
 | Toolchain | Go 1.27.1 (`.tools/go/bin/go`), Node 24.2.0, Playwright Chromium 1243 |
 | `GOCACHE` | `/private/tmp/brrpbrrp-go-build` (module cache `/Users/cameronamer/go/pkg/mod`, `GOPROXY=off`) |
-| Frontend build identity | `c44e6ddb8756ae43` |
-| Ad-hoc candidate binary | `dist/brrpbrrp-p9`, sha256 recorded below |
+| Frontend build identity | `6b00f391da81a4bc` |
+| Candidate binary | `dist/brrpbrrp-p9-checkpoint`, sha256 `fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f`, built from the clean checkpoint commit with `CGO_ENABLED=0 -trimpath -ldflags='-s -w'`. This is the exact binary every recovery, rollback and browser run below consumed, so the recorded results describe these bytes. |
 
 The P8 archives and digests are preserved unchanged. This tranche does not rebuild
 alpha.6 packages in place, and the P8 evidence ledger carries dated corrections
@@ -236,11 +236,11 @@ All commands from the repository root, with `GOCACHE=/private/tmp/brrpbrrp-go-bu
 | Frontend unit/state tests | `npm --prefix web test` | **112/112 pass** |
 | Frontend types/a11y | `npm --prefix web run check` | **0 errors, 0 warnings** |
 | Frontend format | `npm --prefix web run format:check` | clean |
-| Frontend build | `npm --prefix web run build` | `c44e6ddb8756ae43` |
+| Frontend build | `npm --prefix web run build` | `6b00f391da81a4bc` |
 | Static analysis | `go vet ./...` | clean |
-| Full race suite | `go test -race -count=1 -timeout 25m ./...` | **all 10 packages ok**; `internal/api` 1112.692s, `internal/db` 101.390s, `internal/backup` 22.611s, `internal/rtc` 18.455s, `internal/authz` 13.482s, `internal/app` 10.281s, `internal/ws` 5.736s, `internal/installer` 5.903s, `internal/scraper` 3.118s, `web` 2.762s; wall ≈18.7 min |
-| Browser, default-off | `BRRP_E2E_PRIVATE_CONVERSATIONS=0 npm --prefix web run test:e2e` | see below |
-| Browser, opted in | `BRRP_E2E_PRIVATE_CONVERSATIONS=1 npm --prefix web run test:e2e` | see below |
+| Full race suite | `go test -race -count=1 -timeout 25m ./...` | **all 10 packages ok on the committed checkpoint**; `internal/api` 966.515s, `internal/db` 82.295s, `internal/backup` 18.354s, `internal/rtc` 17.438s, `internal/authz` 10.872s, `internal/app` 8.905s, `internal/installer` 6.413s, `internal/scraper` 5.550s, `internal/ws` 5.162s, `web` 1.976s; wall ≈16.2 min. An earlier uncached run on the same code reported `internal/api` 1112.692s. |
+| Browser, default-off | `BRRP_E2E_PRIVATE_CONVERSATIONS=0 npm --prefix web run test:e2e` | **13/13 pass**, 1.6 min |
+| Browser, opted in | `BRRP_E2E_PRIVATE_CONVERSATIONS=1 npm --prefix web run test:e2e` | **18/18 pass**, 2.2 min (adds the six `directs` journeys) |
 | Fresh recovery (community) | `node scripts/upgrade-recovery.mjs --binary … --report planning/p9-checkpoint/recovery.json` | **23/23 pass**, schema 13 |
 | Fresh recovery (private) | `node scripts/upgrade-recovery-private.mjs --binary … --report planning/p9-checkpoint/recovery-private.json` | **85/85 pass** (was 68) |
 | Upgrade/rollback vs alpha.5 | `node scripts/upgrade-rollback.mjs --old-release dist/releases/brrpbrrp-0.4.0-alpha.5-darwin-amd64.zip --report …` | **57/57 pass**, alpha.5 schema 10 → 13 |

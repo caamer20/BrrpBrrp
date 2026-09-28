@@ -1,14 +1,14 @@
 {
   "rehearsal": "upgrade-recovery-private",
   "passed": true,
-  "binary": "/Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9",
-  "binary_sha256": "37693fe784bbe73a91c9c2a734afdd5fe44538f55996d4f384fd779fccd2ef8d",
+  "binary": "/Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9-checkpoint",
+  "binary_sha256": "fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f",
   "feature_mode": "private conversations enabled on disposable servers",
-  "work_dir": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF",
+  "work_dir": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9",
   "archive": {
-    "path": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/source/backups/private.zip",
-    "sha256": "7b0287424059f35f30ecd5c4e1caf5a6dded04ce1498d3165fa74eb2c844ac11",
-    "bytes": 20982
+    "path": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/source/backups/private.zip",
+    "sha256": "3f9d92adf1e6c075cd861b8efb5b1ef3bb923ff1df377b286d721e262edd20e2",
+    "bytes": 20938
   },
   "post_snapshot_decisions": {
     "blockAppliesOnSource": true,
@@ -27,32 +27,32 @@
     },
     {
       "name": "member alpha created",
-      "ok": "01a0e5b2-560b-71f7-addf-52ca89b2731b",
+      "ok": "01a0e652-2385-7e7e-a591-ca774093789e",
       "detail": "HTTP 201"
     },
     {
       "name": "member beta created",
-      "ok": "01a0e5b2-57fb-7b42-807a-ed377270c1f0",
+      "ok": "01a0e652-2539-7908-b59d-f1f4f5e61e63",
       "detail": "HTTP 201"
     },
     {
       "name": "member carol created",
-      "ok": "01a0e5b2-59f9-7e25-9cdb-3eefe7fdc892",
+      "ok": "01a0e652-26e8-7e0d-a5ad-7b9175e18dfe",
       "detail": "HTTP 201"
     },
     {
       "name": "member delta created",
-      "ok": "01a0e5b2-5bf7-7c7b-9a38-5b75db9361b0",
+      "ok": "01a0e652-2891-7c21-a142-d554617877c2",
       "detail": "HTTP 201"
     },
     {
       "name": "member echo created",
-      "ok": "01a0e5b2-5de8-7b4e-964f-2b13976e68ee",
+      "ok": "01a0e652-2a39-7a8b-abad-919c40b50b9d",
       "detail": "HTTP 201"
     },
     {
       "name": "member frank created",
-      "ok": "01a0e5b2-5fe9-7795-9958-1fe18fcce82d",
+      "ok": "01a0e652-2bdf-797d-bedb-3670530d6210",
       "detail": "HTTP 201"
     },
     {
@@ -213,7 +213,7 @@
     {
       "name": "backup produced an archive",
       "ok": true,
-      "detail": "20982 bytes"
+      "detail": "20938 bytes"
     },
     {
       "name": "verify-backup accepts the archive",
@@ -338,7 +338,7 @@
     {
       "name": "the stored evidence keeps its original status and expiry",
       "ok": true,
-      "detail": "status=open expires=2026-12-27T01:48:00.519810000Z"
+      "detail": "status=open expires=2026-12-27T04:42:30.318435000Z"
     },
     {
       "name": "the restored evidence is the bounded snapshot, not the whole conversation",
@@ -348,7 +348,7 @@
     {
       "name": "a retry after the restore deduplicates onto the original evidence",
       "ok": true,
-      "detail": "HTTP 200 id=01a0e5b2-9288-7134-863d-e22ad59ede42"
+      "detail": "HTTP 200 id=01a0e652-542e-792b-9abc-7f5c0ff65911"
     },
     {
       "name": "delta still sees carol's pending incoming request",
@@ -447,8 +447,8 @@
     }
   ],
   "transcript": [
-    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF",
-    "Binary: /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9 (sha256 37693fe784bbe73a91c9c2a734afdd5fe44538f55996d4f384fd779fccd2ef8d)",
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9",
+    "Binary: /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-p9-checkpoint (sha256 fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f)",
     "Feature mode: BRRP_ENABLE_PRIVATE_CONVERSATIONS=true on both disposable servers",
     "",
     "1. Install and seed consented private state",
@@ -492,11 +492,11 @@
     "  ok    source server stopped cleanly — exit 0",
     "",
     "2. Snapshot the state without the later decisions",
-    "$ brrpbrrp backup --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/source --out backups/private.zip",
-    "  Backup saved: /private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/source/backups/private.zip",
-    "  ok    backup produced an archive — 20982 bytes",
-    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/source/backups/private.zip",
-    "  Archive: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/source/backups/private.zip\n    format 2, created 2026-09-28T01:48:00.635818000Z, written by 0.4.0-alpha.6, schema 13\n    database 503808 bytes, 1 attachments, 39 attachment bytes\n    sha256 7b0287424059f35f30ecd5c4e1caf5a6dded04ce1498d3165fa74eb2c844ac11\n  Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "$ brrpbrrp backup --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/source --out backups/private.zip",
+    "  Backup saved: /private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/source/backups/private.zip",
+    "  ok    backup produced an archive — 20938 bytes",
+    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/source/backups/private.zip",
+    "  Archive: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/source/backups/private.zip\n    format 2, created 2026-09-28T04:42:30.346166000Z, written by 0.4.0-alpha.7, schema 13\n    database 503808 bytes, 1 attachments, 39 attachment bytes\n    sha256 3f9d92adf1e6c075cd861b8efb5b1ef3bb923ff1df377b286d721e262edd20e2\n  Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
     "  ok    verify-backup accepts the archive — Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
     "",
     "3. Prove decisions taken after the snapshot point",
@@ -506,10 +506,10 @@
     "  ok    delta cannot sign in on the source while deactivated — HTTP 401",
     "",
     "4. Restore the snapshot into an empty destination",
-    "$ brrpbrrp restore --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/restored --file restore.zip",
+    "$ brrpbrrp restore --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/restored --file restore.zip",
     "  Restored. All users must sign in again.",
     "  ok    restore accepted the archive — exit 0",
-    "$ brrpbrrp verify --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-pcNGvF/restored",
+    "$ brrpbrrp verify --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-private-rehearsal-DgHbC9/restored",
     "  Schema 13 verified: 7 users, 2 channels, 3 messages, 1 attachments. No migration was applied and nothing was repaired.",
     "  ok    restored copy verifies",
     "  ok    restored state carries no sessions — 0 rows",
@@ -531,9 +531,9 @@
     "  ok    unhiding stays an explicit choice — HTTP 200",
     "  ok    the owner still cannot read the queue without the explicit grant — HTTP 403",
     "  ok    the private evidence record survived the restore — present",
-    "  ok    the stored evidence keeps its original status and expiry — status=open expires=2026-12-27T01:48:00.519810000Z",
+    "  ok    the stored evidence keeps its original status and expiry — status=open expires=2026-12-27T04:42:30.318435000Z",
     "  ok    the restored evidence is the bounded snapshot, not the whole conversation — 23 characters",
-    "  ok    a retry after the restore deduplicates onto the original evidence — HTTP 200 id=01a0e5b2-9288-7134-863d-e22ad59ede42",
+    "  ok    a retry after the restore deduplicates onto the original evidence — HTTP 200 id=01a0e652-542e-792b-9abc-7f5c0ff65911",
     "  ok    delta still sees carol's pending incoming request — state=pending/incoming",
     "  ok    the restored snapshot reconstructs delta's outstanding request count — count=1",
     "  ok    an account with no pending request reports a zero count — count=0",
