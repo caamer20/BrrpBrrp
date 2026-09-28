@@ -163,6 +163,98 @@ func TestChannelMuteSuppressesLiveMentionsWithoutHidingHistory(t *testing.T) {
 	}
 }
 
+// R9-02: a mute is account-owned policy written by one device, so the account's
+// other connections have to be told to re-read it. A session that cached the old
+// answer keeps filtering mentions on it until it does — and the two ways it used
+// to learn were both conditional on a mounted channel header or a published
+// authority change, neither of which a mute produces.
+func TestChannelMuteTellsTheAccountsOtherDevicesToReReadIt(t *testing.T) {
+	s, handler := testServer(t)
+	admin := setupAdmin(t, s, handler)
+	memberID, member := memberAccount(t, s, "reader")
+	channel := slowModeChannel(t, handler, admin, "chat", 0)
+	// Two connections for one account stand in for two signed-in devices.
+	first := &ws.Client{ID: db.ID(), UserID: memberID, Out: make(chan ws.Queued, 32)}
+	second := &ws.Client{ID: db.ID(), UserID: memberID, Out: make(chan ws.Queued, 32)}
+	for _, client := range []*ws.Client{first, second} {
+		if !s.hub.Add(client) {
+			t.Fatal("register device")
+		}
+		t.Cleanup(func() { s.hub.Remove(client) })
+	}
+	otherID, _ := memberAccount(t, s, "bystander")
+	bystander := &ws.Client{ID: db.ID(), UserID: otherID, Out: make(chan ws.Queued, 32)}
+	if !s.hub.Add(bystander) {
+		t.Fatal("register bystander")
+	}
+	t.Cleanup(func() { s.hub.Remove(bystander) })
+
+	setChannelMute(t, handler, member, channel.ID, true)
+	if events := drainNotificationEvents(t, first); events["preferences.changed"] != 1 {
+		t.Fatalf("the writing device was not told to re-read the policy it wrote: %v", events)
+	}
+	if events := drainNotificationEvents(t, second); events["preferences.changed"] != 1 {
+		t.Fatalf("another device of the same account was not told: %v", events)
+	}
+	if events := drainNotificationEvents(t, bystander); len(events) != 0 {
+		t.Fatalf("an unrelated account was told about another account's preference: %v", events)
+	}
+
+	// Unmuting is the same signal: the defect was silence in both directions.
+	drainNotificationEvents(t, first)
+	drainNotificationEvents(t, second)
+	setChannelMute(t, handler, member, channel.ID, false)
+	if events := drainNotificationEvents(t, second); events["preferences.changed"] != 1 {
+		t.Fatalf("an unmute did not reach the other device: %v", events)
+	}
+
+	// The policy is account state, not authority: it must not advance the
+	// authorization revision, or every mute would invalidate every connection's
+	// queued events and force a whole-workspace refetch.
+	before := s.authorizationRevision(t.Context())
+	setChannelMute(t, handler, member, channel.ID, true)
+	if after := s.authorizationRevision(t.Context()); after != before {
+		t.Fatalf("a mute advanced the authorization revision %d -> %d", before, after)
+	}
+}
+
+// R9-02: the signal is a hint with no authority in it. A client that trusts the
+// payload instead of re-reading its own policy must be wrong, so the event
+// carries only what changed and never the resulting mute state.
+func TestThePreferenceSignalCarriesNoPolicyValue(t *testing.T) {
+	s, handler := testServer(t)
+	admin := setupAdmin(t, s, handler)
+	memberID, member := memberAccount(t, s, "reader")
+	channel := slowModeChannel(t, handler, admin, "chat", 0)
+	client := &ws.Client{ID: db.ID(), UserID: memberID, Out: make(chan ws.Queued, 32)}
+	if !s.hub.Add(client) {
+		t.Fatal("register device")
+	}
+	t.Cleanup(func() { s.hub.Remove(client) })
+	setChannelMute(t, handler, member, channel.ID, true)
+	select {
+	case queued := <-client.Out:
+		var event ws.Event
+		if err := json.Unmarshal(queued.Event, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type != "preferences.changed" {
+			t.Fatalf("unexpected event %s", event.Type)
+		}
+		// The flag says which policy changed, not what it now is: a payload
+		// carrying `muted` would let a client adopt another device's answer
+		// without reading its own.
+		if strings.Contains(string(queued.Event), "muted") {
+			t.Fatalf("the signal carries a mute value a client could trust: %s", queued.Event)
+		}
+		if !strings.Contains(string(queued.Event), "channel_notifications") {
+			t.Fatalf("the signal does not say which policy changed: %s", queued.Event)
+		}
+	default:
+		t.Fatal("no preference signal was delivered")
+	}
+}
+
 func drainNotificationEvents(t *testing.T, client *ws.Client) map[string]int {
 	t.Helper()
 	events := map[string]int{}

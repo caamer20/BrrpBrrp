@@ -47,6 +47,10 @@ class Workspace {
   error = $state('');
   activeId = $state('');
   messagesOpen = $state(false);
+  // Which section the messages dialog opens on, so the sidebar badge can offer a
+  // direct way into Requests rather than making a member hunt through tabs to act
+  // on a count they were just shown.
+  messagesTab = $state<'conversations' | 'requests' | 'people' | 'blocked'>('conversations');
   contactsVersion = $state(0);
   messages = $state<Message[]>([]);
   messagesLoading = $state(false);
@@ -76,6 +80,13 @@ class Workspace {
   private notificationsLoadVersion = 0;
   private notificationMutations = 0;
   private notificationRetry = 0;
+  // A preference refresh that has been asked for but not yet performed. It is
+  // separate from `channelNotificationsReady` so a scheduled flush carries the
+  // request even when the ready flag was already true, and it is a latch rather
+  // than a count: several signals arriving inside one throttle window are one
+  // re-read, not one per event.
+  private preferencesRefreshPending = false;
+  private preferencesFocusedAt = 0;
   theme = $state(storage.getItem('brrp.theme') || 'system');
   density = $state(storage.getItem('brrp.density') || 'comfortable');
   saveDrafts = $state(false);
@@ -162,6 +173,19 @@ class Workspace {
   }
   get privateConversationsEnabled() {
     return this.state?.features?.private_conversations === true;
+  }
+  // The outstanding incoming-request count. It comes from the account snapshot and
+  // is therefore durable: a cold start, a restart and a reconnect all agree. It
+  // counts pending requests this account can still act on, and nothing else — an
+  // outgoing, rejected, withdrawn, blocked or unavailable request is not in it, and
+  // opening the messages dialog does not clear it (ADR 0013).
+  //
+  // Zero is also the value before the first snapshot arrives, so the badge stays
+  // hidden while the account or its authority is unverified rather than claiming
+  // there is nothing outstanding when nothing has been confirmed.
+  get outstandingIncomingRequests() {
+    if (this.authorizationUnverified || !this.privateConversationsEnabled) return 0;
+    return this.state?.requests?.outstanding_incoming ?? 0;
   }
   get directConversations() {
     return this.privateConversationsEnabled
@@ -530,7 +554,42 @@ class Workspace {
     }
     // Mention policy verifies here rather than in a header component, so a session
     // that spends its life in a direct conversation still learns it (R8-02).
-    if (!this.channelNotificationsReady) void this.loadChannelNotifications();
+    if (!this.channelNotificationsReady || this.preferencesRefreshPending)
+      void this.loadChannelNotifications();
+  }
+
+  // requestPreferenceRefresh asks for the account's cached policy to be re-read.
+  //
+  // The map is dropped and the ready flag cleared before the read is scheduled, so
+  // a mention arriving in the gap is refused (fail-closed) rather than answered
+  // from an answer this session already knows is stale. The read itself runs on the
+  // ordinary throttle, so a burst of signals costs one fetch.
+  private requestPreferenceRefresh() {
+    this.channelNotificationMutes = {};
+    this.channelNotificationsReady = false;
+    // The latch is set before the read starts: the read clears it only when its
+    // answer is admitted, so a signal arriving while this read is in flight leaves
+    // the request owed rather than silently dropped when this read is discarded.
+    this.preferencesRefreshPending = true;
+    if (this.state) void this.loadChannelNotifications();
+    else ++this.notificationsLoadVersion;
+  }
+
+  // reverifyPreferences re-reads account-owned policy when a window regains focus.
+  //
+  // This used to live in the channel header, which is unmounted while a direct
+  // conversation is open — the exact place a stale mute survived indefinitely
+  // (review 9, R9-02). A tab in the background receives no focus event while
+  // hidden, so the one it raises on return is when a change made elsewhere has
+  // most likely gone unseen. It is rate-limited rather than fired per event, and
+  // the elapsed-time gate is not a security control: the read is authorized and
+  // the answer is admitted like any other.
+  reverifyPreferences() {
+    if (this.stopped || !this.state) return;
+    const now = Date.now();
+    if (now - this.preferencesFocusedAt < 1000) return;
+    this.preferencesFocusedAt = now;
+    this.requestPreferenceRefresh();
   }
 
   // loadChannelNotifications fetches the account's channel mute map. The answer is
@@ -558,6 +617,10 @@ class Workspace {
       this.channelNotificationsReady = true;
       this.channelNotificationError = '';
       this.notificationRetry = 0;
+      // The refresh this read was answering is now answered. A later signal clears
+      // it again, so a request that arrived while this read was in flight is not
+      // lost and one that never arrived is not retried.
+      this.preferencesRefreshPending = false;
       return true;
     } catch (error) {
       if (this.stopped || !this.admitted(request) || version !== this.notificationsLoadVersion)
@@ -1335,8 +1398,20 @@ class Workspace {
       this.scheduleChanges();
     } else if (event.t === 'hello' || event.t === 'reconnect.required') {
       // Reload after reconnect to repair events missed while the socket was down.
+      // The mention policy is re-read too, not just the workspace: a mute written
+      // on another device while this socket was down has no event left to carry
+      // it, and a same-revision reconnect produces none either (review 9, R9-02).
       this.refreshWorkspace = true;
+      this.requestPreferenceRefresh();
       this.scheduleChanges(true);
+    } else if (event.t === 'preferences.changed') {
+      // Another device (or another tab) changed account-owned policy this session
+      // caches. The event carries no authority, so it is only a reason to re-read
+      // the account's own preferences; what the new answer says is decided by the
+      // server. The cached map is dropped first so a session that was filtering
+      // mentions on the old answer stops doing so before the read lands, and the
+      // version bump refuses a read that was already in flight.
+      if (event.d?.channel_notifications) this.requestPreferenceRefresh();
     } else if (event.t === 'workspace.changed') {
       // Structure moved, but this account's own authority did not: the open
       // conversation is kept and the panel generations still advance.
@@ -1410,6 +1485,9 @@ class Workspace {
       reconnect = this.reconnectSync;
     this.refreshWorkspace = this.refreshUnread = this.reconnectSync = false;
     try {
+      // A preference re-read is issued where the request was made, not here: the
+      // policy is not part of the workspace snapshot, and folding it into this flush
+      // would delay it behind whatever else the flush is already waiting on.
       if (refresh) await this.refreshState();
       if (!this.admitted(request)) return;
       if (reconnect) {
@@ -1727,6 +1805,11 @@ class Workspace {
     this.messageChanges.clear();
     this.messageRevisions.clear();
     this.refreshWorkspace = this.refreshUnread = this.reconnectSync = this.flushing = false;
+    // A preference refresh belongs to the session that asked for it. Carrying it
+    // into the next account would make the first flush after a switch fetch the
+    // new account's policy for a reason the previous account created.
+    this.preferencesRefreshPending = false;
+    this.preferencesFocusedAt = 0;
     // Busy and drag state belong to the session that started the work. A move issued by
     // the previous account must not leave the next account's reorder control disabled,
     // so the flags are cleared here as well as in the request's own completion.

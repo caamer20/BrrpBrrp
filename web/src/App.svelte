@@ -40,6 +40,14 @@
       }
     };
     const focus = () => workspace.markRead();
+    // Account-owned policy is re-read when a window regains focus, here rather
+    // than in the channel header: that component is unmounted while a direct
+    // conversation is open, which is where a mute written on another device used
+    // to go unnoticed indefinitely (review 9, R9-02). The store rate-limits it.
+    const refocus = () => {
+      focus();
+      workspace.reverifyPreferences();
+    };
     const shortcut = (event: KeyboardEvent) => {
       if (
         (event.metaKey || event.ctrlKey) &&
@@ -55,8 +63,8 @@
     };
     window.addEventListener('keydown', shortcut);
     window.addEventListener('pointerdown', active);
-    window.addEventListener('focus', focus);
-    document.addEventListener('visibilitychange', focus);
+    window.addEventListener('focus', refocus);
+    document.addEventListener('visibilitychange', refocus);
     return () => {
       stopViewport();
       media.removeEventListener('change', themeChanged);
@@ -64,8 +72,8 @@
       workspace.stop();
       window.removeEventListener('keydown', shortcut);
       window.removeEventListener('pointerdown', active);
-      window.removeEventListener('focus', focus);
-      document.removeEventListener('visibilitychange', focus);
+      window.removeEventListener('focus', refocus);
+      document.removeEventListener('visibilitychange', refocus);
     };
   });
 </script>

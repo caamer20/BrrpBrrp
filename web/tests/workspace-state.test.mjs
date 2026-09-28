@@ -1423,6 +1423,121 @@ test('a failed preference load keeps mention policy fail-closed', async (t) => {
   assert.equal(value.toast, '', 'an unverified failure never permits interruptions');
 });
 
+// R9-02: a mute is account-owned policy, so a change written on one device has to
+// reach the others. These cases cover the three ways a session can miss it that
+// survive the R8-02 repair: a session sitting in a direct conversation (no channel
+// header is mounted), a same-revision reconnect (no authority change is published),
+// and a window that was hidden while the change was made.
+test('another device changing a mute re-reads policy for a session in a direct conversation', async (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  let muted = true;
+  setHandler((path) =>
+    path === '/me/channel-notifications'
+      ? Promise.resolve([{ channel_id: 'a', muted }])
+      : Promise.resolve([])
+  );
+  assert.equal(await value.loadChannelNotifications(), true);
+  assert.equal(value.channelNotificationMutes.a, true);
+  const mention = { t: 'notification.mention', d: { channel_id: 'a', body: 'mentioned you' } };
+  value.receive(mention);
+  assert.equal(value.toast, '', 'the stale mute withholds the mention before the signal');
+
+  // The other device unmutes. The signal carries no policy, only the reason to
+  // re-read, so the answer still comes from the server.
+  muted = false;
+  value.receive({ t: 'preferences.changed', d: { channel_notifications: true } });
+  assert.equal(value.channelNotificationsReady, false, 'the cached answer is dropped first');
+  value.receive(mention);
+  assert.equal(
+    value.toast,
+    '',
+    'a mention in the gap is withheld, not answered from a known-stale answer'
+  );
+  for (let i = 0; i < 100 && !value.channelNotificationsReady; i++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(value.channelNotificationMutes.a, false, "the other device's unmute is installed");
+  value.receive(mention);
+  assert.equal(value.toast, 'mentioned you', 'the unmuted mention is delivered');
+});
+
+// R9-02: the reconnect path must re-verify too. A same-revision reconnect
+// publishes no authority change, so without this the ready flag survives and the
+// account keeps filtering on the answer it loaded before the socket dropped.
+test('reconnecting re-verifies mention policy even when authority did not move', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  setHandler((path) =>
+    path === '/me/channel-notifications'
+      ? Promise.resolve([{ channel_id: 'a', muted: true }])
+      : Promise.resolve(state())
+  );
+  assert.equal(await value.loadChannelNotifications(), true);
+  assert.equal(value.channelNotificationsReady, true);
+  setHandler((path) =>
+    path === '/me/channel-notifications'
+      ? Promise.resolve([{ channel_id: 'a', muted: false }])
+      : Promise.resolve(state())
+  );
+  value.receive({ t: 'hello', d: { refetch: true } });
+  assert.equal(value.channelNotificationsReady, false, 'the cached policy is dropped first');
+  for (let i = 0; i < 100 && !value.channelNotificationsReady; i++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(value.channelNotificationMutes.a, false, 'the reconnect re-read the policy');
+});
+
+// R9-02: focus is the last chance for a change made while this window was hidden,
+// and it must be rate-limited so it cannot become a poll.
+test('focus re-verifies policy once per window focus', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  let reads = 0;
+  setHandler((path) => {
+    if (path !== '/me/channel-notifications') return Promise.resolve(state());
+    reads++;
+    return Promise.resolve([{ channel_id: 'a', muted: false }]);
+  });
+  value.state = state();
+  value.reverifyPreferences();
+  value.reverifyPreferences();
+  value.reverifyPreferences();
+  for (let i = 0; i < 100 && !value.channelNotificationsReady; i++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 1, 'repeated focus events collapse into one re-read');
+});
+
+// R9-02: a policy read belongs to the account that asked for it. A refresh the
+// previous account requested is not an outstanding request for the next one, and
+// an answer that arrives after the switch is refused rather than installed.
+test('a preference refresh does not install across an account switch', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const read = deferred();
+  let reads = 0;
+  setHandler((path) => {
+    if (path !== '/me/channel-notifications') return Promise.resolve(state());
+    reads++;
+    return read.promise;
+  });
+  value.state = state();
+  value.receive({ t: 'preferences.changed', d: { channel_notifications: true } });
+  assert.equal(reads, 1, 'the signal issues the re-read it asked for');
+  value.state = { ...state(), user: { id: 'other' } };
+  read.resolve([{ channel_id: 'a', muted: true }]);
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    value.channelNotificationsReady,
+    false,
+    "the previous account's policy was not installed"
+  );
+  assert.deepEqual(value.channelNotificationMutes, {});
+  value.stop();
+  reads = 0;
+  value.state = { ...state(), user: { id: 'other' } };
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 0, 'the next account did not inherit the previous refresh request');
+});
+
 const directID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 function directWorkspace() {
   const value = recoveryWorkspace();
@@ -1481,6 +1596,52 @@ test('an accepted direct conversation uses the shared send, history and receipt 
   await value.loadMessages();
   assert.equal(calls[1].path, `/conversations/${directID}/messages`);
   assert.equal(value.messages[0].content, 'a private message');
+});
+
+// state from the snapshot, not an accumulation. These cases pin the properties
+// that make it safe to draw: it is hidden rather than zero while the account or
+// its authority is unverified, it does not move on its own when the dialog opens,
+// and it survives an account switch without carrying the previous account's count.
+test('the request badge is hidden, not zero, while the account is unverified', (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  value.state.requests = { outstanding_incoming: 3 };
+  value.channelNotificationsReady = true;
+  assert.equal(value.authorizationUnverified, false);
+  assert.equal(value.outstandingIncomingRequests, 3, 'a confirmed count is shown');
+  value.invalidateAuthorization();
+  assert.equal(value.authorizationUnverified, true);
+  assert.equal(
+    value.outstandingIncomingRequests,
+    0,
+    'an unverified account shows no count rather than a wrong zero'
+  );
+});
+
+test('the request count is per account and never carried across a switch', (t) => {
+  const value = directWorkspace();
+  t.after(() => value.stop());
+  value.state.requests = { outstanding_incoming: 2 };
+  assert.equal(value.outstandingIncomingRequests, 2);
+  // Opening the messages dialog is a view, not an acknowledgement: the count is
+  // the server's and only the server clears it by accepting or declining.
+  value.messagesOpen = true;
+  value.messagesTab = 'requests';
+  assert.equal(value.outstandingIncomingRequests, 2, 'opening the dialog does not clear it');
+  // A different account starts from its own snapshot, not the previous one.
+  value.state = { ...directWorkspace().state, user: { id: 'other' } };
+  value.state.requests = { outstanding_incoming: 1 };
+  assert.equal(value.outstandingIncomingRequests, 1, "the previous account's count is gone");
+});
+
+test('a private-disabled server never shows a request badge', (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.state.features = { private_conversations: false };
+  value.state.requests = { outstanding_incoming: 4 };
+  assert.equal(value.outstandingIncomingRequests, 0, 'no badge without the feature');
+  value.messagesTab = 'requests';
+  assert.equal(value.messagesTab, 'requests', 'the tab choice is still remembered');
 });
 
 test('blocking a direct preserves readable history and recovers pending text without replay on unblock', async (t) => {

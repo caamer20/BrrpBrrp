@@ -124,6 +124,15 @@ func (s *Server) setChannelNotifications(w http.ResponseWriter, r *http.Request,
 		s.failed(w, err)
 		return
 	}
+	// A mute is account-owned policy, not a per-connection view, and this write
+	// comes from one device. Without this signal the account's other sessions keep
+	// a cached answer and silently drop mentions the account is no longer muting
+	// (or keep muting ones it stopped): the flag is only re-read on first load, on
+	// an authority change, and on window focus inside a mounted channel header,
+	// none of which a session sitting in a direct conversation reaches (review 9,
+	// R9-02). It is a hint carrying no authority: the client re-reads its own
+	// preference, and the revision is not bumped because no authorization changed.
+	s.hub.SendUser(user.ID, "preferences.changed", map[string]any{"channel_notifications": true})
 	respond(w, http.StatusOK, preference)
 }
 

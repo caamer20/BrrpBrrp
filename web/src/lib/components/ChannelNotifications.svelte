@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { errorMessage } from '../api';
   import { workspace } from '../workspace.svelte';
   import Icon from './Icon.svelte';
@@ -16,13 +16,9 @@
       ? (workspace.channelNotificationMutes[workspace.activeId] ?? false)
       : undefined
   );
-  onMount(() => {
-    const refresh = () => {
-      if (!busy) void workspace.loadChannelNotifications();
-    };
-    window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  });
+  // Focus-driven re-reads are owned by the store, not by this header: a direct
+  // conversation replaces this component, so a listener here is absent exactly
+  // where a stale mute persisted (review 9, R9-02).
   onDestroy(() => {
     alive = false;
   });
