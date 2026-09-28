@@ -23,6 +23,42 @@ The packaged binary and the ad-hoc checkpoint binary differ because the packager
 embeds the version stamp; the packaged bytes are the candidate used for the final
 consumer, recovery, rollback and browser runs recorded below.
 
+## Corrections (27 September 2026, review 9 / P9-01)
+
+These are dated corrections to the record above. The original execution results
+are left exactly as they were recorded; nothing here replaces a run, it corrects
+how a recorded value was described. They are what review 9 found while verifying
+this checkpoint (R9-03, R9-04), and they are recorded here so the checkpoint stays
+self-describing.
+
+**The tested old-release digests on line 20 are mislabeled.** `168e89422b1a52e9…`
+and `3e08497fddeb669f…` are the **rollback backup archive** digests, not old
+executable digests. Both JSON reports name them as such: `rollback-alpha5.json`
+records them at `archives.rollback.sha256`, written by "the prior release, from the
+un-migrated installation", and `rollback-alpha3.json` at the same field. The
+correct `baseline.binary_sha256` values are:
+
+| Baseline | `baseline.binary_sha256` |
+| --- | --- |
+| alpha.5 Darwin/amd64 | `79d90400e39ce2b08bcbfd15af46b4c95436c2977cbe3117b5063423b2960278` |
+| alpha.3 Darwin/amd64 | `918c4c873b4d848aaaeeaf30a187db985935472ab8b27d74c1472ab13e365099` |
+
+**The source archive file count on the `check-source-package.mjs` row is
+stale.** The recorded 367 describes the package list before three later release
+inputs were added. This is a later file count, not a reopening of the R8-08
+trailing-blank defect that row was written about: the packaging inputs changed
+after that run, and the blank-entry fix is unrelated to them.
+
+**The tested candidate is a dirty-checkout build, not a clean-commit build.** The
+packaged executable `68c2458f…` embeds source `606cdb1` with
+`vcs.modified=true`, and the source archive `623e4d30…` differs from `606cdb1` in
+`Makefile`, `scripts/release.go` and three documentation files. Against `876260a`
+only two progress-ledger header lines differ, so the application inputs in both
+artifacts align; this is a provenance qualification, not evidence of an untested
+application change. These artifacts are preserved as tested local bytes. The P9
+checkpoint builds from one clean committed source and binds source, frontend,
+executable and archive identities to the runs that consume those exact bytes.
+
 ## Fresh verification at this checkpoint (all commands from the repository root)
 
 | Check                              | Command                                                                                                                                                                 | Result                                                                                                                                                                          |

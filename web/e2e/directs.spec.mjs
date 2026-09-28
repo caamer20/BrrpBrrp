@@ -497,3 +497,112 @@ test('an unsent request introduction survives unrelated refreshes and a refused 
   await bobInbox.getByRole('button', { name: 'Request conversation', exact: true }).click();
   await expect(bobInbox.getByRole('textbox', { name: 'Introduction (optional)' })).toHaveValue('');
 });
+
+// R9-06, rendered. The journey above switches accounts only after a successful send
+// has already cleared the draft, so it cannot show what happens to words that were
+// never sent. This one holds the send itself in flight across the switch: the first
+// account's introduction is still in the composer when the response is released, and
+// the second account must see neither the text nor a result belonging to it.
+test('an unsent request introduction and its held response never cross an account switch', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  const alice = { username: 'unsent_alice', password: 'an unsent alice passphrase' };
+  const bob = { username: 'unsent_bob', password: 'an unsent bob passphrase' };
+  const carol = { username: 'unsent_carol', password: 'an unsent carol passphrase' };
+  await signInOverApi(request);
+  const carolID = await createAccount(request, carol);
+  await createAccount(request, alice);
+  await createAccount(request, bob);
+  await signIn(page, alice);
+
+  // alice's send is held at the network layer rather than replaced: the route waits
+  // and then forwards the real request, so the request genuinely commits once
+  // released and the positive control below can prove the draft really was unsent
+  // rather than a response the harness invented.
+  const draftText = 'words alice typed but never sent';
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  let sends = 0;
+  await page.route('**/api/directs', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    sends++;
+    await held;
+    await route.continue();
+  });
+
+  await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+  const inbox = page.getByRole('dialog', { name: 'Messages', exact: true });
+  await inbox.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await inbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
+  await inbox.getByRole('button', { name: 'Request conversation', exact: true }).click();
+  const intro = inbox.getByRole('textbox', { name: 'Introduction (optional)' });
+  await intro.fill(draftText);
+  await inbox.getByRole('button', { name: 'Send request', exact: true }).click();
+  await expect.poll(() => sends).toBe(1);
+  // The draft is still on screen, unsent, while the response is outstanding.
+  await expect(intro).toHaveValue(draftText);
+
+  // bob signs in in place, without a reload, so alice's in-flight send stays alive.
+  await inbox.getByRole('button', { name: 'Close dialog' }).click();
+  await signOut(page);
+  await page.getByLabel('Username').fill(bob.username);
+  await page.locator('input[autocomplete="current-password"]').fill(bob.password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByLabel('Your preferences')).toBeVisible();
+
+  // alice's response now arrives. It belongs to the previous account: it must not
+  // clear bob's composer, add a conversation, or report a result in his view.
+  const bobBefore = await page.getByText('Waiting for them to accept').count();
+  release();
+  await page.waitForTimeout(750);
+  await flushRenders(page);
+  await expect(page.getByText(draftText)).toHaveCount(0);
+  await expect(
+    page.getByText('Waiting for them to accept'),
+    "the previous account's held request response reported a result to the new account"
+  ).toHaveCount(bobBefore);
+
+  // bob opens his own composer. The dialog is closed first when it is still open,
+  // because clicking the entry while the inbox is showing does not re-open it, and
+  // the search below would then run against a stale dialog.
+  if (
+    await page
+      .getByRole('dialog', { name: 'Messages', exact: true })
+      .isVisible()
+      .catch(() => false)
+  ) {
+    await page
+      .getByRole('dialog', { name: 'Messages', exact: true })
+      .getByRole('button', { name: 'Close dialog' })
+      .click();
+  }
+  await page.getByRole('button', { name: 'Messages and requests', exact: true }).click();
+  const bobInbox = page.getByRole('dialog', { name: 'Messages', exact: true });
+  await bobInbox.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await bobInbox.getByRole('searchbox', { name: 'Find a person' }).fill(carol.username);
+  // carol has no relationship with bob, so this is genuinely a new request target.
+  await bobInbox.getByRole('button', { name: 'Request conversation', exact: true }).click();
+  await expect(bobInbox.getByRole('textbox', { name: 'Introduction (optional)' })).toHaveValue('');
+
+  // The permitted control: the held request really did commit, so the draft was
+  // genuinely unsent from the browser's point of view rather than a request the
+  // harness faked. carol now holds a pending request from alice.
+  await page.unroute('**/api/directs');
+  await signInOverApi(request, carol);
+  const carolRequests = await (await request.get('/api/directs')).json();
+  const fromAlice = (carolRequests ?? []).find(
+    (direct) => direct.peer?.username === alice.username && direct.request_state === 'pending'
+  );
+  expect(fromAlice, 'the held request committed for carol').toBeTruthy();
+
+  // And the same account's own draft still works afterwards, so the empty composer
+  // above is isolation rather than a form that stopped accepting input.
+  await signInOverApi(request, bob);
+  const bobRequests = await (await request.get('/api/directs')).json();
+  expect(
+    (bobRequests ?? []).filter((direct) => direct.request_state === 'pending').length,
+    "the previous account's request appeared in the new account's conversations"
+  ).toBe(0);
+});

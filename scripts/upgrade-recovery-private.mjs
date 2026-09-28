@@ -33,7 +33,7 @@
 // --keep is given, and on failure they are always kept for inspection.
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+import { createECDH, createHash, createHmac, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -259,6 +259,21 @@ function countContent(messages, content) {
   return (messages ?? []).filter((message) => (message.content ?? "").includes(content)).length;
 }
 
+// deviceKeys produces the key material the push subscription endpoint validates:
+// an uncompressed P-256 public key (65 bytes) that the server can unmarshal back
+// to a curve point, and the 16-byte auth secret. A fixed key pair is enough — it
+// is a disposable fixture row, never used to encrypt anything — and fixing it
+// makes a failure reproducible.
+function deviceKeys() {
+  const uncompressed = createECDH("prime256v1").generateKeys();
+  return {
+    p256dh: base64url(uncompressed),
+    auth: base64url(randomBytes(16))
+  };
+}
+
+const base64url = (bytes) => Buffer.from(bytes).toString("base64url");
+
 async function main() {
   const workDir = options.workDir ? path.resolve(options.workDir) : mkdtempSync(path.join(tmpdir(), "brrp-private-rehearsal-"));
   workDirForCleanup = workDir;
@@ -421,6 +436,60 @@ async function main() {
     retainedSource.status === 200 && countContent(retainedSource.body, "frank words") === 1,
     `HTTP ${retainedSource.status}`);
 
+  // A real device registration is seeded before the snapshot. The old rehearsal
+  // asserted that the restored copy held zero push registrations without ever
+  // proving the source held one, so the assertion could not tell a correct
+  // restore from a database that never had one (review 9, R9-05).
+  //
+  // It is registered through the real API, which validates the endpoint host and
+  // both keys, so the row is one a browser could actually have created. Nothing
+  // is ever delivered: a stored registration is only read when a mention fires
+  // against it, and this fixture never sends one.
+  //
+  // The endpoint is example.com, reserved for documentation by RFC 2606 and never
+  // a push service. It has to be a resolvable public HTTPS host because the server
+  // refuses an endpoint whose host does not resolve to a public address; a
+  // deliberately unroutable host would be rejected by validation, and the
+  // rehearsal would then prove nothing about a registration that can exist.
+  const pushEndpoint = "https://example.com/brrpbrrp-rehearsal-device";
+  const subscribed = await api(source.base, "POST", "/api/push/subscribe", {
+    cookie: cookies.beta,
+    body: { endpoint: pushEndpoint, keys: deviceKeys() },
+  });
+  check("beta registered a device before the snapshot", subscribed.status === 201, `HTTP ${subscribed.status}`);
+  {
+    const db = new DatabaseSync(path.join(sourceDir, "brrp.db"), { readOnly: true });
+    const registered = db.prepare("SELECT count(*) AS count FROM push_subscriptions WHERE user_id=?").get(ids.beta).count;
+    db.close();
+    check("the snapshot source really holds a push registration", registered === 1, `${registered} rows`);
+  }
+
+  // A private evidence report is submitted through the real two-step flow, so the
+  // row in the snapshot is one a member could actually have created: a
+  // server-confirmed preview, then a confirmation carrying that version.
+  const reportedMessage = (await api(source.base, "GET", `/api/conversations/${pairAB}/messages`, { cookie: cookies.alpha })).body?.at(-1);
+  const preview = await api(source.base, "GET", `/api/messages/${reportedMessage.id}/private-report-preview`, { cookie: cookies.alpha });
+  check("alpha can preview a private message for reporting", preview.status === 200, `HTTP ${preview.status}`);
+  const submitted = await api(source.base, "POST", `/api/messages/${reportedMessage.id}/private-report`, {
+    cookie: cookies.alpha,
+    body: { reason: "rehearsal evidence, not a real concern", version: preview.body.version },
+  });
+  check("alpha submitted private evidence before the snapshot", submitted.status === 201, `HTTP ${submitted.status}`);
+  const evidenceID = submitted.body?.id;
+  check("the submit receipt names only the reporter's own report",
+    evidenceID && Object.keys(submitted.body ?? {}).every((key) => ["id", "status", "created_at", "expires_at", "duplicate"].includes(key)),
+    `receipt keys: ${Object.keys(submitted.body ?? {}).join(",")}`);
+  {
+    const db = new DatabaseSync(path.join(sourceDir, "brrp.db"), { readOnly: true });
+    const stored = db.prepare("SELECT count(*) AS count FROM private_message_reports WHERE id=?").get(evidenceID).count;
+    db.close();
+    check("the snapshot source really holds the private evidence", stored === 1, `${stored} rows`);
+  }
+  // The owner is not a reviewer by membership: without the explicit grant the
+  // queue must be closed even to the installation's own administrator role.
+  const ownerQueue = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.owner });
+  check("a non-participating account cannot read the private evidence queue", ownerQueue.status === 403, `HTTP ${ownerQueue.status}`);
+
   await stopServer(source);
   check("source server stopped cleanly", source.child.exitCode === 0 || source.child.signalCode === "SIGTERM",
     `exit ${source.child.exitCode ?? source.child.signalCode}`);
@@ -477,7 +546,9 @@ async function main() {
     const pushes = db.prepare("SELECT count(*) AS count FROM push_subscriptions").get().count;
     db.close();
     check("restored state carries no sessions", sessions === 0, `${sessions} rows`);
-    check("restored state carries no push registrations", pushes === 0, `${pushes} rows`);
+    // Meaningful because the snapshot source held one (step 1): the restore
+    // removed a registration that existed, not a table that was already empty.
+    check("restored state carries no push registrations", pushes === 0, `${pushes} rows, seeded with 1 before the snapshot`);
   }
 
   say("");
@@ -533,10 +604,48 @@ async function main() {
     const unhide = await api(restored.base, "PUT", `/api/directs/${pairAB}/visibility`, { cookie: fresh.alpha, body: { hidden: false } });
     check("unhiding stays an explicit choice", unhide.status === 200, `HTTP ${unhide.status}`);
 
+    // The submitted evidence, its expiry and its disclosure boundary all survive
+    // the restore. The expiry is the reporter's 90-day promise and must be the
+    // snapshot's value, not a fresh one computed after the restore.
+    const restoredQueue = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: fresh.owner });
+    check("the owner still cannot read the queue without the explicit grant", restoredQueue.status === 403, `HTTP ${restoredQueue.status}`);
+    {
+      const db = new DatabaseSync(path.join(restoredDir, "brrp.db"), { readOnly: true });
+      const row = db.prepare("SELECT id,status,expires_at,length(snapshot_text) AS text_length FROM private_message_reports WHERE id=?").get(evidenceID);
+      db.close();
+      check("the private evidence record survived the restore", row?.id === evidenceID, row ? "present" : "missing");
+      check("the stored evidence keeps its original status and expiry", row?.status === "open" && typeof row?.expires_at === "string" && row.expires_at.length > 0,
+        `status=${row?.status} expires=${row?.expires_at}`);
+      check("the restored evidence is the bounded snapshot, not the whole conversation",
+        row?.text_length > 0 && row.text_length <= 4000, `${row?.text_length} characters`);
+    }
+    // A retry after the restore must land on the original evidence rather than
+    // replacing it: the same message, previewed again and confirmed, is a duplicate.
+    const retryPreview = await api(restored.base, "GET", `/api/messages/${reportedMessage.id}/private-report-preview`, { cookie: fresh.alpha });
+    const retryEvidence = await api(restored.base, "POST", `/api/messages/${reportedMessage.id}/private-report`, {
+      cookie: fresh.alpha,
+      body: { reason: "a retry after the restore", version: retryPreview.body?.version },
+    });
+    check("a retry after the restore deduplicates onto the original evidence",
+      retryEvidence.status === 200 && retryEvidence.body?.id === evidenceID && retryEvidence.body?.duplicate === true,
+      `HTTP ${retryEvidence.status} id=${retryEvidence.body?.id}`);
+
     const deltaDirects = await api(restored.base, "GET", "/api/directs", { cookie: fresh.delta });
     const deltaCD = (deltaDirects.body ?? []).find((direct) => direct.id === pairCD);
     check("delta still sees carol's pending incoming request", deltaCD?.request_state === "pending" && deltaCD?.request_direction === "incoming",
       `state=${deltaCD?.request_state}/${deltaCD?.request_direction}`);
+    // The outstanding incoming-request badge is derived from current state, not
+    // stored, so it must be reconstructed by the restore rather than carried in it.
+    // delta has one genuinely pending incoming request; alpha's pair is accepted, so
+    // a count that merely echoed the conversation list would fail here.
+    const deltaState = await api(restored.base, "GET", "/api/state", { cookie: fresh.delta });
+    check("the restored snapshot reconstructs delta's outstanding request count",
+      deltaState.body?.requests?.outstanding_incoming === 1,
+      `count=${deltaState.body?.requests?.outstanding_incoming}`);
+    const alphaState = await api(restored.base, "GET", "/api/state", { cookie: fresh.alpha });
+    check("an account with no pending request reports a zero count",
+      alphaState.body?.requests?.outstanding_incoming === 0,
+      `count=${alphaState.body?.requests?.outstanding_incoming}`);
     const echoDirects = await api(restored.base, "GET", "/api/directs", { cookie: fresh.echo });
     const echoEC = (echoDirects.body ?? []).find((direct) => direct.peer?.id === ids.carol);
     check("echo's rejected request stays rejected", echoEC?.request_state === "rejected", `state=${echoEC?.request_state}`);
@@ -590,9 +699,28 @@ async function main() {
         countContent(listAfter.body, "quokka") === countContent(listBefore.body, "quokka"),
       `HTTP ${replayedAfter.status}`);
 
-    // Reconciliation before cutover: the operator re-applies the recorded decision.
+    // Reconciliation before cutover. Both decisions the rehearsal deliberately
+    // lost are re-applied: the old rehearsal took the post-snapshot block away in
+    // step 3 but only re-applied that one, so the deactivation it also lost was
+    // never proven to be recoverable and the rehearsal could declare success with
+    // a deactivated account still able to sign in on the copy an operator is about
+    // to put in front of members (review 9, R9-05).
     const reblock = await api(restored.base, "PUT", `/api/me/blocks/${ids.alpha}`, { cookie: fresh.beta, body: {} });
     check("reconciliation re-applies the post-snapshot block", reblock.status === 200, `HTTP ${reblock.status}`);
+    const redeactivate = await api(restored.base, "PATCH", `/api/admin/users/${ids.delta}`, {
+      cookie: fresh.owner,
+      body: { is_deactivated: true, confirm: "delta" },
+    });
+    check("reconciliation re-applies the post-snapshot deactivation", redeactivate.status === 200, `HTTP ${redeactivate.status}`);
+    const deltaAfterReconcile = await api(restored.base, "POST", "/api/login", {
+      body: { username: "delta", password: memberPassword("delta") },
+    });
+    check("the reconciled deactivation denies sign-in before cutover", deltaAfterReconcile.status !== 200, `HTTP ${deltaAfterReconcile.status}`);
+    const deltaAfterDeactivation = await api(restored.base, "GET", "/api/state", { cookie: fresh.delta });
+    check("the deactivated account's earlier session no longer authorizes", deltaAfterDeactivation.status === 401, `HTTP ${deltaState.status}`);
+    // Both decisions are the operator's and are recorded before traffic returns: a
+    // rehearsal that re-applied only one cannot say cutover is safe.
+    postSnapshot.reconciledBeforeCutover = ["block", "deactivation"];
     const alphaAfter = await api(restored.base, "POST", `/api/conversations/${pairAB}/messages`, {
       cookie: fresh.alpha,
       body: { content: "write after reconciliation", idempotency_key: "kab-4-after-reconcile" },
@@ -617,7 +745,7 @@ async function main() {
     work_dir: workDir,
     archive: { path: archive, sha256: archiveDigest, bytes: statSync(archive).size },
     post_snapshot_decisions: postSnapshot,
-    reconciliation: "the post-snapshot block was absent from the restored copy and re-applied explicitly before cutover, as the runbook requires",
+    reconciliation: "both post-snapshot decisions (the block and the deactivation) were absent from the restored copy and re-applied explicitly on the isolated server before cutover, as the runbook requires",
     checks,
     transcript,
   };
