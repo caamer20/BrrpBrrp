@@ -1,5 +1,5 @@
 GO ?= go
-.PHONY: build web test check browser-check dev release format docker docker-check notices rehearsal rollback-rehearsal docker-inputs source-package
+.PHONY: build web test check browser-check browser-steps dev release format docker docker-check notices rehearsal rollback-rehearsal docker-inputs source-package
 web:
 	cd web && npm ci && npm run build
 build: web
@@ -15,6 +15,15 @@ check: web
 	node scripts/check-docker-inputs.mjs --self-test
 	node scripts/check-docker-inputs.mjs
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
+	node scripts/check-browser-steps.mjs --self-test
+	node scripts/check-browser-steps.mjs
+
+# The browser steps must fail on a failing suite rather than on tee's status. The
+# audit executes those step bodies against a failing stub, so it is a real
+# control rather than a reading of the YAML.
+browser-steps:
+	node scripts/check-browser-steps.mjs --self-test
+	node scripts/check-browser-steps.mjs
 docker-inputs:
 	node scripts/check-docker-inputs.mjs --self-test
 	node scripts/check-docker-inputs.mjs

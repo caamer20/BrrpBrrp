@@ -47,6 +47,11 @@ jobs:
       # Makefile runs and every Docker build input, and must exclude the operator's own
       # host notes.
       - run: node scripts/check-source-package.mjs
+      # The browser steps must report the test process's own status, not tee's.
+      # The audit executes each of those step bodies against a failing stub, so
+      # it can fail on the defect it exists for rather than only reading YAML.
+      - run: node scripts/check-browser-steps.mjs --self-test
+      - run: node scripts/check-browser-steps.mjs
   browser:
     needs: test
     runs-on: ubuntu-latest
@@ -69,13 +74,22 @@ jobs:
         working-directory: web
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
-      - run: npx playwright install --with-deps chromium
-        working-directory: web
       # Both feature gates are required: the default-off suite proves the shipped
       # default, and the opted-in suite must visibly include the direct-message
       # journeys. A run that silently skipped them would pass nothing extra.
+      #
+      # `shell: bash` is declared, not left to the runner's default. The default
+      # Linux shell is `bash -e`, which has no pipefail, so `npm run test:e2e |
+      # tee` reported tee's status and a failing suite that still printed its
+      # project names — including the `[directs]` the grep below looks for — left
+      # this required job green (completion review 9, R9-01). `shell: bash` is
+      # `bash --noprofile --norc -eo pipefail`, so the test process's own exit
+      # status fails the step. scripts/check-browser-steps.mjs audits that
+      # property and proves it by running these step bodies against a failing
+      # stub; it is not a substitute for this job actually running.
       - name: Browser journeys (default feature set)
         working-directory: web
+        shell: bash
         env:
           PLAYWRIGHT_HTML_OUTPUT_DIR: report-default
         run: |
@@ -83,6 +97,7 @@ jobs:
           mv test-results test-results-default 2>/dev/null || true
       - name: Browser journeys (private conversations enabled)
         working-directory: web
+        shell: bash
         env:
           BRRP_E2E_PRIVATE_CONVERSATIONS: '1'
           PLAYWRIGHT_HTML_OUTPUT_DIR: report-private
@@ -90,15 +105,22 @@ jobs:
           npm run test:e2e 2>&1 | tee browser-private.log
           test -d test-results && mv test-results test-results-private || true
           grep -q '\[directs\]' browser-private.log || { echo 'FAIL: the opted-in run never executed the directs project'; exit 1; }
+      # `if: always()`, and the original paths are collected as well as the
+      # renamed ones. With pipefail the run body stops at the failing pipeline,
+      # so the `mv` above never happens and a failed run leaves its artifacts
+      # under test-results/; uploading only the renamed directories would
+      # discard exactly the traces, screenshots and logs a failure produces.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
+        if: always()
         with:
           name: browser-report
+          if-no-files-found: warn
           path: |
             web/report-default/
             web/report-private/
             web/browser-default.log
             web/browser-private.log
+            web/test-results/
             web/test-results-default/
             web/test-results-private/
   docker:

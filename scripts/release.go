@@ -18,7 +18,7 @@ import (
 
 func main() {
 	targets := flag.String("targets", "linux/amd64,linux/arm64,windows/amd64,windows/arm64,darwin/amd64,darwin/arm64", "comma-separated OS/architecture targets")
-	version := flag.String("version", "0.4.0-alpha.6", "release version")
+	version := flag.String("version", "0.4.0-alpha.7", "release version")
 	noticesOnly := flag.String("notices", "", "write dependency notices to this file without building packages")
 	sourceList := flag.Bool("source-list", false, "print the source-package contents (one path per line) without building anything")
 	nativeList := flag.String("native-list", "", "print the documents a native package for this GOOS ships (one path per line) without building anything")
@@ -265,7 +265,7 @@ func dockerSourcePaths() []string {
 	for _, workflow := range []string{"check.yml", "docker.yml"} {
 		paths = append(paths, filepath.Join(".github", "workflows", workflow))
 	}
-	for _, script := range []string{"release.go", "check-docker.mjs", "check-docker-inputs.mjs", "check-package.mjs", "check-source-package.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs"} {
+	for _, script := range []string{"release.go", "check-browser-steps.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-package.mjs", "check-source-package.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs"} {
 		paths = append(paths, filepath.Join("scripts", script))
 	}
 	// The per-platform release scripts are a transitive dependency of `make release`:
