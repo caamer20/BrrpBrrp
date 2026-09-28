@@ -47,3 +47,65 @@ func TestExpiredReportEvidenceIsPurgedInBoundedBatches(t *testing.T) {
 		t.Fatalf("unexpired evidence removed: %q %v", text, err)
 	}
 }
+
+// Restricted review audit metadata has to outlive the evidence it describes, and
+// the community audit log must still be reclaimed on the shorter clock. ADR 0014
+// promises both, and they fail independently: reclaiming restricted entries with
+// the ordinary ones destroys the only record that a private review happened, while
+// keeping them forever is not what was promised either.
+func TestRestrictedReviewAuditOutlivesCommunityAudit(t *testing.T) {
+	s, h := testServer(t)
+	setupAdmin(t, s, h)
+	now := time.Now()
+	// Past the community age, short of the restricted one.
+	stale := db.Timestamp(now.Add(-200 * 24 * time.Hour))
+	// Past both, so it must actually be reclaimed.
+	ancient := db.Timestamp(now.Add(-500 * 24 * time.Hour))
+	tx, err := s.store.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for _, row := range []struct{ id, action, at string }{
+		{"community", "channel.purged", stale},
+		{"review", "private_report.resolved", stale},
+		{"request", "request_evidence.reported", stale},
+		{"ancient-review", "private_report.resolved", ancient},
+		{"ancient-community", "channel.purged", ancient},
+	} {
+		if _, err := tx.Exec(`INSERT INTO audit_logs(id,action,target_id,created_at) VALUES(?,?,'',?)`, row.id, row.action, row.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.maintain(now); err != nil {
+		t.Fatal(err)
+	}
+	remaining := map[string]bool{}
+	rows, err := s.store.Query(`SELECT id FROM audit_logs`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		remaining[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !remaining["review"] || !remaining["request"] {
+		t.Fatal("restricted review audit was reclaimed with the evidence it describes")
+	}
+	if remaining["community"] {
+		t.Fatal("community audit outlived its retention")
+	}
+	if remaining["ancient-review"] || remaining["ancient-community"] {
+		t.Fatal("audit past both retentions survived")
+	}
+}

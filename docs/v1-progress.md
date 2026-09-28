@@ -94,7 +94,7 @@ platform and capacity qualification — none of which this workspace can establi
 
 ## Earlier implementation record (schemas 3–6)
 
-The remainder of this historical record describes earlier tranches. Current status and corrections are above and in the alpha.6 release record; alpha.5 remains the prior packaged checkpoint. Present-tense statements below describe those earlier snapshots until the final next-actions section.
+The remainder of this historical record describes earlier tranches. Current status and corrections are above and in the alpha.7 release record; alpha.6 remains the prior packaged checkpoint. Present-tense statements below describe those earlier snapshots until the final next-actions section.
 
 Schema 3 adds two stages in one migration:
 

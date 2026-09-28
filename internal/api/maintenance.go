@@ -13,6 +13,22 @@ import (
 	"brrpbrrp/internal/db"
 )
 
+
+// Restricted review audit metadata outlives the evidence it describes. An audit
+// record is administrative accountability: if it were reclaimed with the 90-day
+// evidence, the only record that a review happened would vanish with the thing
+// reviewed, and no later question about that review could be answered. Ordinary
+// community audit entries keep the shorter default (ADR 0014).
+const (
+	auditLogRetention           = 90 * 24 * time.Hour
+	restrictedAuditLogRetention = 400 * 24 * time.Hour
+)
+
+// restrictedAuditActions are the audit actions written for private evidence review
+// and for recipient request evidence. They are matched by prefix because the
+// status and the source kind are part of the action name.
+var restrictedAuditActions = []string{"private_report.", "request_evidence."}
+
 func (s *Server) purgeChannel(w http.ResponseWriter, r *http.Request, user db.User) {
 	channel, err := s.channel(r.PathValue("id"))
 	if !s.found(w, err) {
@@ -87,7 +103,14 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM attachments WHERE message_id IS NULL AND created_at<?`, orphanCutoff); err != nil {
 		return err
 	}
-	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<?`, db.Timestamp(now.AddDate(0, 0, -90))); err != nil {
+	// Two ages, not one. Restricted review metadata is administrative
+	// accountability and outlives the evidence it describes; ordinary community
+	// audit entries do not. Reclaiming both on the same clock would delete the only
+	// record that a private review ever happened (ADR 0014).
+	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND action NOT LIKE 'private_report.%' AND action NOT LIKE 'request_evidence.%'`, db.Timestamp(now.Add(-auditLogRetention))); err != nil {
+		return err
+	}
+	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND (action LIKE 'private_report.%' OR action LIKE 'request_evidence.%')`, db.Timestamp(now.Add(-restrictedAuditLogRetention))); err != nil {
 		return err
 	}
 	// Compact old deleted receipts in bounded batches, retaining a minimal spent key

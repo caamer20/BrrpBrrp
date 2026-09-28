@@ -94,6 +94,16 @@ cleanup is a separate bounded maintenance pass. The two are deliberately distinc
 an expired record is unreadable immediately, and the bytes are reclaimed on the
 maintenance cadence rather than at the moment of expiry.
 
+The 90-day clock is the evidence's own, and it is not the audit log's. Each review
+also writes an audit entry recording that a review happened, and that entry is
+retained for **400 days** — administrative accountability outliving the thing
+reviewed. Reclaiming it on the evidence clock would destroy the only record that a
+private review ever occurred, which is the opposite of what an audit entry is for.
+Ordinary community audit entries keep the shorter 90-day default; the two are
+reclaimed by separate statements precisely so neither rule is applied to the
+other's rows. ADR 0014 states the full set of durations, including command
+receipts, in one place.
+
 - **Source deletion:** deleting the reported message does not erase submitted
   evidence. The evidence was a consented snapshot, and its value is precisely that it
   survives the source going away.
