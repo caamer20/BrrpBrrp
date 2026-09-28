@@ -479,12 +479,20 @@ async function main() {
   check("the submit receipt names only the reporter's own report",
     evidenceID && Object.keys(submitted.body ?? {}).every((key) => ["id", "status", "created_at", "expires_at", "duplicate"].includes(key)),
     `receipt keys: ${Object.keys(submitted.body ?? {}).join(",")}`);
-  {
+  // The exact stored values are captured here so the restore can be compared
+  // against them, rather than against "some non-empty expiry" and "some text of a
+  // plausible length" (completion review 10, R10-08). A rehearsal that only checks
+  // shapes cannot tell a faithful restore from one that rewrote either value.
+  const sourceEvidence = (() => {
     const db = new DatabaseSync(path.join(sourceDir, "brrp.db"), { readOnly: true });
-    const stored = db.prepare("SELECT count(*) AS count FROM private_message_reports WHERE id=?").get(evidenceID).count;
+    const row = db.prepare("SELECT count(*) AS count, snapshot_text, reason, status, expires_at FROM private_message_reports WHERE id=?").get(evidenceID);
     db.close();
-    check("the snapshot source really holds the private evidence", stored === 1, `${stored} rows`);
-  }
+    return row;
+  })();
+  check("the snapshot source really holds the private evidence", sourceEvidence.count === 1, `${sourceEvidence.count} rows`);
+  check("the snapshot source holds the exact evidence the reporter confirmed",
+    sourceEvidence.snapshot_text === preview.body.snapshot_text && sourceEvidence.reason === "rehearsal evidence, not a real concern",
+    `${String(sourceEvidence.snapshot_text).length} characters`);
   // The owner is not a reviewer by membership: without the explicit grant the
   // queue must be closed even to the installation's own administrator role.
   const ownerQueue = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.owner });
@@ -611,13 +619,20 @@ async function main() {
     check("the owner still cannot read the queue without the explicit grant", restoredQueue.status === 403, `HTTP ${restoredQueue.status}`);
     {
       const db = new DatabaseSync(path.join(restoredDir, "brrp.db"), { readOnly: true });
-      const row = db.prepare("SELECT id,status,expires_at,length(snapshot_text) AS text_length FROM private_message_reports WHERE id=?").get(evidenceID);
+      const row = db.prepare("SELECT id,status,expires_at,snapshot_text,reason FROM private_message_reports WHERE id=?").get(evidenceID);
       db.close();
       check("the private evidence record survived the restore", row?.id === evidenceID, row ? "present" : "missing");
-      check("the stored evidence keeps its original status and expiry", row?.status === "open" && typeof row?.expires_at === "string" && row.expires_at.length > 0,
-        `status=${row?.status} expires=${row?.expires_at}`);
-      check("the restored evidence is the bounded snapshot, not the whole conversation",
-        row?.text_length > 0 && row.text_length <= 4000, `${row?.text_length} characters`);
+      // Exact equality, not a shape check: the expiry is the promise made to the
+      // reporter and the text is the disclosure they agreed to, so a restore that
+      // shifted either would be a different record wearing the same id.
+      check("the restored evidence keeps its exact expiry, text and reason",
+        row?.expires_at === sourceEvidence.expires_at &&
+          row?.snapshot_text === sourceEvidence.snapshot_text &&
+          row?.reason === sourceEvidence.reason &&
+          row?.status === sourceEvidence.status,
+        `expires ${row?.expires_at === sourceEvidence.expires_at ? "matches" : "differs"}, ` +
+          `text ${row?.snapshot_text === sourceEvidence.snapshot_text ? "matches" : "differs"}, ` +
+          `reason ${row?.reason === sourceEvidence.reason ? "matches" : "differs"}`);
     }
     // A retry after the restore must land on the original evidence rather than
     // replacing it: the same message, previewed again and confirmed, is a duplicate.
@@ -717,7 +732,11 @@ async function main() {
     });
     check("the reconciled deactivation denies sign-in before cutover", deltaAfterReconcile.status !== 200, `HTTP ${deltaAfterReconcile.status}`);
     const deltaAfterDeactivation = await api(restored.base, "GET", "/api/state", { cookie: fresh.delta });
-    check("the deactivated account's earlier session no longer authorizes", deltaAfterDeactivation.status === 401, `HTTP ${deltaState.status}`);
+    // The diagnostic reports this request's own status. It previously printed an
+    // earlier check's response, so a failure here read as a 200 while the session
+    // had in fact been refused — evidence that cannot be trusted (completion
+    // review 10, R10-08).
+    check("the deactivated account's earlier session no longer authorizes", deltaAfterDeactivation.status === 401, `HTTP ${deltaAfterDeactivation.status}`);
     // Both decisions are the operator's and are recorded before traffic returns: a
     // rehearsal that re-applied only one cannot say cutover is safe.
     postSnapshot.reconciledBeforeCutover = ["block", "deactivation"];

@@ -10,7 +10,7 @@ For an ordered rollout and sign-off record covering both Windows and Docker, use
 
 The packaged **0.4.0-alpha.5** checkpoint adds message reporting, channel slow mode, per-channel notification muting, explicit recovery for failed sends, and account removal that keeps conversation history under “Deleted member.” It includes focused reply discussions, a keyboard channel picker, roles and channel access controls. See the [community guide](docs/community-guide.md), [alpha.5 release record](docs/releases/0.4.0-alpha.5.md) and [verification](docs/acceptance.md).
 
-The current source candidate **0.4.0-alpha.6** adds opt-in consented direct messaging and blocking on the shared message pipeline (schema 12). See the [alpha.6 record](docs/releases/0.4.0-alpha.6.md) and [private conversation policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md). Its default feature gate remains off pending privacy acceptance.
+The current source candidate **0.4.0-alpha.7** builds on opt-in consented direct messaging, adding private message evidence and incoming-request discovery (schema 13). See the [alpha.7 record](docs/releases/0.4.0-alpha.7.md), the [private conversation policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md) and the [private evidence policy](docs/adr/0013-private-message-evidence-and-request-discovery.md). Every private feature remains default-off pending privacy acceptance.
 
 ## Start a server
 

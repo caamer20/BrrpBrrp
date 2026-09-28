@@ -193,8 +193,11 @@ database — not memory — with `Retry-After` on refusal and a passing control 
 account with room. Retries deduplicate onto the original evidence and never
 replace the reporter's explanation. Review is triage: it deletes nothing, bans
 nobody, and the account stays active afterwards. Disabling the feature refuses the
-routes and **retains** the evidence, which the recovery rehearsal proves survives
-the feature being turned off and on.
+routes and **retains** the evidence, and re-enabling brings the record back intact.
+That preservation is covered by the server suite
+(`TestDisablingPrivateConversationsRefusesEvidenceWithoutErasingIt`), not by the
+recovery rehearsal: the rehearsal runs with the feature always on, so it could never
+have shown this (completion review 10, R10-08).
 
 **UI.** Report is offered on direct history, including a blocked peer's read-only
 history, and opens a dialog that shows the exact server text, who wrote it, who
