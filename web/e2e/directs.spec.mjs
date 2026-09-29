@@ -948,7 +948,7 @@ test('a group is created, joined and handed over through the interface', async (
   const outsider = { username: 'group_outsider', password: 'a group outsider passphrase' };
   await signInOverApi(request);
   const ownerID = await createAccount(request, owner);
-  const guestID = await createAccount(request, guest);
+  await createAccount(request, guest);
   await createAccount(request, outsider);
   const guestContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
   const guestPage = await guestContext.newPage();
@@ -962,7 +962,10 @@ test('a group is created, joined and handed over through the interface', async (
   await expect(page.getByLabel('Start a group')).toBeVisible();
   await page.getByLabel('Start a group').fill('the rendered group');
   await page.getByRole('button', { name: 'Create group' }).click();
-  const groupCard = page.getByRole('article').filter({ hasText: 'the rendered group' });
+  const groupCard = page
+    .getByRole('dialog')
+    .getByRole('article')
+    .filter({ hasText: 'the rendered group' });
   await expect(groupCard.getByRole('heading', { name: 'the rendered group' })).toBeVisible();
 
   // The member list is behind a disclosure, so the group's membership is not laid out
@@ -983,12 +986,19 @@ test('a group is created, joined and handed over through the interface', async (
   await guestPage.getByRole('button', { name: /^Messages and requests/ }).click();
   await guestPage.getByRole('button', { name: /^Groups/ }).click();
   await expect(guestPage.getByLabel('Start a group')).toBeVisible();
-  const invitation = guestPage.getByRole('article').filter({ hasText: 'the rendered group' });
+  const invitation = guestPage
+    .getByRole('dialog')
+    .getByRole('article')
+    .filter({ hasText: 'the rendered group' });
   await expect(invitation).toBeVisible();
   await expect(invitation.getByText(/read everything already said/i)).toBeVisible();
   await invitation.getByRole('button', { name: 'Accept' }).click();
   await expect(
-    guestPage.getByRole('article').filter({ hasText: 'the rendered group' }).getByRole('heading')
+    guestPage
+      .getByRole('dialog')
+      .getByRole('article')
+      .filter({ hasText: 'the rendered group' })
+      .getByRole('heading')
   ).toBeVisible();
 
   // An outsider is not told the group exists, which is the property that makes the
@@ -1006,7 +1016,7 @@ test('a group is created, joined and handed over through the interface', async (
   await expect(outsiderPage.getByRole('button', { name: /^Groups/ })).toBeVisible();
   await outsiderPage.getByRole('button', { name: /^Groups/ }).click();
   await expect(
-    outsiderPage.getByRole('article').filter({ hasText: 'the rendered group' })
+    outsiderPage.getByRole('dialog').getByRole('article').filter({ hasText: 'the rendered group' })
   ).toHaveCount(0);
   await expect(
     outsiderPage.getByRole('status').filter({ hasText: /not in any groups/i })
@@ -1037,7 +1047,10 @@ test('a group is created, joined and handed over through the interface', async (
   await expect(guestPage.getByRole('button', { name: /^Groups/ })).toBeVisible();
   await guestPage.getByRole('button', { name: /^Groups/ }).click();
   await expect(guestPage.getByLabel('Start a group')).toBeVisible();
-  const guestCard = guestPage.getByRole('article').filter({ hasText: 'the rendered group' });
+  const guestCard = guestPage
+    .getByRole('dialog')
+    .getByRole('article')
+    .filter({ hasText: 'the rendered group' });
   await guestCard.getByRole('button', { name: 'Members' }).click();
   // The interface does not offer an action the server would refuse: the guest's own
   // row carries no removal, and the former owner's row — now an ordinary member —
@@ -1064,3 +1077,135 @@ test('a group is created, joined and handed over through the interface', async (
   void ownerID;
   void guestID;
 });
+
+// V13-01, rendered. The previous journey managed a group's membership; this one
+// uses a group as the conversation it is, between two pages that are both open at
+// the same time. Reloading between steps would prove the management screen works,
+// not that a member can talk in a group.
+test('two members talk in a group through the interface without reloading', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(180000);
+  const owner = { username: 'chat_owner', password: 'a chat owner passphrase' };
+  const guest = { username: 'chat_guest', password: 'a chat guest passphrase' };
+  const outsider = { username: 'chat_outsider', password: 'a chat outsider passphrase' };
+  await signInOverApi(request);
+  await createAccount(request, owner);
+  const guestID = await createAccount(request, guest);
+  await createAccount(request, outsider);
+  const guestContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const guestPage = await guestContext.newPage();
+
+  // Set the group up over the API, which is where the membership rules live, and then
+  // use the interface for everything a member would actually do with it.
+  const groupID = await createGroupWithMember(request, owner, guest, guestID, 'the chat group');
+
+  await signIn(page, owner);
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
+  await page.getByRole('button', { name: /^Groups/ }).click();
+  await expect(page.getByLabel('Start a group')).toBeVisible();
+  const cardHeading = page.getByRole('dialog').getByRole('heading', { name: 'the chat group' });
+  const card = cardHeading.locator('xpath=ancestor::article[1]');
+  await expect(cardHeading).toBeVisible();
+  // The card is located by its own heading rather than by its text, because the
+  // invitation article above it also mentions the group's name, and the
+  // direct-conversation card carries a button with the same name as this one.
+  await card.getByRole('button', { name: 'Open conversation' }).click();
+  // The panel is unmounted rather than hidden, so its disappearance is the proof the
+  // open action took effect — and waiting for the composer alone would pass even if
+  // the panel were still covering it.
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // The composer is named from the active conversation, so this is the honest proof
+  // that a group became the thing being talked in rather than a card that opened.
+  await expect(page.getByRole('textbox', { name: 'Message the chat group' })).toBeVisible();
+
+  const composer = page.getByRole('textbox', { name: 'Message the chat group' });
+  await composer.fill('first group message');
+  await composer.press('Enter');
+  await expect(
+    page.locator('.message-content').filter({ hasText: 'first group message' })
+  ).toBeVisible();
+
+  // The other member is open at the same time and sees it arrive without reloading.
+  await signIn(guestPage, guest);
+  await expect(guestPage.getByRole('button', { name: /^Messages and requests/ })).toBeVisible();
+  await guestPage.getByRole('button', { name: /^Messages and requests/ }).click();
+  await guestPage.getByRole('button', { name: /^Groups/ }).click();
+  const guestHeading = guestPage
+    .getByRole('dialog')
+    .getByRole('heading', { name: 'the chat group' });
+  await expect(guestHeading).toBeVisible();
+  await guestHeading
+    .locator('xpath=ancestor::article[1]')
+    .getByRole('button', { name: 'Open conversation' })
+    .click();
+  const guestComposer = guestPage.getByRole('textbox', { name: 'Message the chat group' });
+  await expect(guestComposer).toBeVisible();
+  await expect(
+    guestPage.locator('.message-content').filter({ hasText: 'first group message' })
+  ).toBeVisible();
+
+  // And a reply travels the other way while both pages stay open.
+  await guestComposer.fill('a reply from the other member');
+  await guestComposer.press('Enter');
+  await expect(
+    guestPage.locator('.message-content').filter({ hasText: 'a reply from the other member' })
+  ).toBeVisible();
+  await expect(
+    page.locator('.message-content').filter({ hasText: 'a reply from the other member' })
+  ).toBeVisible();
+
+  // A member may report a message in the group: consent governs the conversation, and
+  // the evidence is the same selected snapshot a direct message produces.
+  const message = page
+    .locator('.message')
+    .filter({ hasText: 'a reply from the other member' })
+    .first();
+  await message.hover();
+  await message
+    .getByRole('button', { name: /Report/ })
+    .first()
+    .click();
+  await page.getByLabel('Why are you reporting this message').fill('unwanted in this group');
+  await page.getByRole('button', { name: 'Submit report' }).click();
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: /report/i })
+      .first()
+  ).toBeVisible();
+
+  await guestContext.close();
+  void groupID;
+});
+
+/** Creates a group with one accepted member, through the real membership path. */
+async function createGroupWithMember(request, owner, guest, guestID, name) {
+  await signInOverApi(request, owner);
+  const created = await request.post('/api/groups', { data: { name } });
+  if (created.status() !== 201)
+    throw new Error(`create group: ${created.status()} ${await created.text()}`);
+  const groupID = (await created.json()).id;
+  const invited = await request.post(`/api/groups/${groupID}/invite`, {
+    data: { user_id: guestID }
+  });
+  if (invited.status() !== 201)
+    throw new Error(`invite: ${invited.status()} ${await invited.text()}`);
+  await request.post('/api/login', { data: guest });
+  const invitations = await request.get('/api/group-invitations');
+  const open = (await invitations.json()).invitations.find(
+    (row) => row.state === 'pending' && row.my_state === 'invited'
+  );
+  if (!open) throw new Error('the guest has no pending invitation');
+  const accepted = await request.post(`/api/group-invitations/${open.id}/accept`, { data: {} });
+  if (accepted.status() !== 200)
+    throw new Error(`accept: ${accepted.status()} ${await accepted.text()}`);
+  // The shared request fixture holds one cookie jar, so the guest's acceptance
+  // replaced the owner's session. Without this the owner signs in again, sees an
+  // empty group list, and the journey fails for a reason that has nothing to do with
+  // groups (completion review 13, V13-01).
+  await signInOverApi(request, owner);
+  return groupID;
+}

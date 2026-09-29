@@ -205,6 +205,22 @@ class Workspace {
   get direct() {
     return this.directConversations.find((item) => item.id === this.activeId);
   }
+  // A group is the other kind of private conversation. It resolves through the same
+  // navigation, read cursor, outbox, drafts and composer as a direct pair, so the
+  // distinction is carried once here rather than re-decided at each use — which is
+  // how a route ends up sending a group to the community channel path (V13-01).
+  get groups() {
+    return this.privateConversationsEnabled ? (this.state?.groups ?? []) : [];
+  }
+  get group() {
+    return this.groups.find((item) => item.id === this.activeId);
+  }
+  isGroup(id: string) {
+    return this.groups.some((item) => item.id === id);
+  }
+  isPrivate(id: string) {
+    return this.isDirect(id) || this.isGroup(id);
+  }
   userFor(id: string) {
     return (
       this.state?.users.find((user) => user.id === id) ||
@@ -214,6 +230,7 @@ class Workspace {
   get conversationName() {
     return (
       this.channel?.name ||
+      this.group?.name ||
       this.direct?.peer.display_name ||
       this.direct?.peer.username ||
       'Conversation'
@@ -228,21 +245,24 @@ class Workspace {
   canReadConversation(id: string) {
     return (
       !!this.state?.channels.some((item) => item.id === id && item.type === 'text') ||
-      this.isDirect(id)
+      this.isPrivate(id)
     );
   }
   canWriteConversation(id: string) {
     const direct = this.directConversations.find((item) => item.id === id);
-    return direct
-      ? direct.can_write
-      : !!this.state?.channels.some((item) => item.id === id && item.type === 'text') &&
-          this.can('message.send');
+    if (direct) return direct.can_write;
+    const group = this.groups.find((item) => item.id === id);
+    if (group) return group.can_write;
+    return (
+      !!this.state?.channels.some((item) => item.id === id && item.type === 'text') &&
+      this.can('message.send')
+    );
   }
   conversationPath(id: string, resource: string) {
-    return `/${this.isDirect(id) ? 'conversations' : 'channels'}/${id}/${resource}`;
+    return `/${this.isPrivate(id) ? 'conversations' : 'channels'}/${id}/${resource}`;
   }
   conversationURL(id: string) {
-    return `/?${this.isDirect(id) ? 'conversation' : 'channel'}=${encodeURIComponent(id)}`;
+    return `/?${this.isPrivate(id) ? 'conversation' : 'channel'}=${encodeURIComponent(id)}`;
   }
   get user() {
     return this.state?.user;
@@ -431,7 +451,7 @@ class Workspace {
     const initial =
       this.state?.channels.find((channel) => channel.id === requested && channel.type === 'text') ||
       this.state?.channels.find((channel) => channel.type === 'text');
-    if (requested && this.isDirect(requested)) await this.selectChannel(requested);
+    if (requested && this.isPrivate(requested)) await this.selectChannel(requested);
     else if (initial) await this.selectChannel(initial.id);
     if (restored?.reply) {
       const channel = this.activeId;

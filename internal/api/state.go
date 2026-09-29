@@ -87,6 +87,11 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 		return
 	}
 	directs := []directConversation{}
+	// Groups are the other kind of private conversation and are listed alongside the
+	// direct ones, because the workspace resolves both through the same navigation,
+	// read cursor, outbox and draft state. Membership is the consent, so this returns
+	// only groups the account has been accepted into (ADR 0016).
+	groups := []groupConversation{}
 	// outstanding_incoming_requests is the badge: how many pending requests are
 	// addressed to this account and still actionable. It is derived from durable
 	// state, so a cold start, a restart and a device that missed every event all
@@ -109,9 +114,14 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 			s.failed(w, err)
 			return
 		}
+		groups, err = s.groupConversations(r.Context(), user)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
 	respond(w, 200, map[string]any{
-		"conversations": directs, "features": map[string]bool{"private_conversations": s.config.PrivateConversations},
+		"conversations": directs, "groups": groups, "features": map[string]bool{"private_conversations": s.config.PrivateConversations},
 		"requests": map[string]int{"outstanding_incoming": incomingRequests},
 		"user":     user, "channels": channels, "users": users, "settings": s.Settings(), "unread": unread,
 		"reaction_palette": reactionPalette, "presence": s.visiblePresence(), "push_public_key": s.vapidPublic,

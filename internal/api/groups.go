@@ -1022,3 +1022,71 @@ func (s *Server) groupParticipants(ctx context.Context, q db.Queryer, groupID st
 	}
 	return ids
 }
+
+// groupConversation is the snapshot shape for a group. It is deliberately not a
+// `directConversation` with a synthesised peer: a group has no second participant,
+// and inventing one would make every "who is the other person" affordance — user
+// context, per-person actions, per-person search — answer about somebody who does
+// not exist (completion review 13, V13-01).
+type groupConversation struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	State         string `json:"state"`
+	Name          string `json:"name"`
+	OwnerID       string `json:"owner_id"`
+	OwnerName     string `json:"owner_name"`
+	Members       int    `json:"members"`
+	CanWrite      bool    `json:"can_write"`
+	CanRead       bool    `json:"can_read"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	CanInvite     bool    `json:"can_invite"`
+	CanTransfer   bool    `json:"can_transfer"`
+	PendingInvite int     `json:"pending_invitations"`
+	BlockedByMe   bool    `json:"blocked_by_me"`
+	Hidden        bool    `json:"hidden"`
+}
+
+// groupConversations returns the active groups this account has been accepted into.
+// Membership is the consent, so an account not in the group is not told it exists —
+// there is no listing, no count and no search result for it anywhere in this product.
+func (s *Server) groupConversations(ctx context.Context, user db.User) ([]groupConversation, error) {
+	rows, err := s.store.QueryContext(ctx, `SELECT c.id,c.created_at,c.updated_at,COALESCE(d.name,''),
+        COALESCE(o.user_id,''),COALESCE(u.username,''),
+        (SELECT count(*) FROM conversation_members m2 JOIN users mu ON mu.id=m2.user_id
+          WHERE m2.conversation_id=c.id AND m2.state='accepted' AND mu.is_deleted=0 AND mu.is_deactivated=0 AND mu.is_banned=0),
+        (SELECT count(*) FROM group_invitations WHERE conversation_id=c.id AND state='pending')
+        FROM conversations c
+        JOIN conversation_members m ON m.conversation_id=c.id AND m.user_id=? AND m.state='accepted'
+        LEFT JOIN group_details d ON d.conversation_id=c.id
+        LEFT JOIN group_owners o ON o.conversation_id=c.id
+        LEFT JOIN users u ON u.id=o.user_id
+        WHERE c.kind='group' AND c.state='active'
+        ORDER BY c.updated_at DESC, c.id DESC LIMIT 200`, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []groupConversation{}
+	for rows.Next() {
+		var g groupConversation
+		if err := rows.Scan(&g.ID, &g.CreatedAt, &g.UpdatedAt, &g.Name, &g.OwnerID, &g.OwnerName, &g.Members, &g.PendingInvite); err != nil {
+			return nil, err
+		}
+		// A group with no owner is a state the lifecycle refuses to create, but a
+		// physical erasure can cascade one away underneath a surviving membership. The
+		// group is still readable by its members; it simply cannot be administered
+		// until ownership is resolved, and saying so is better than a 500.
+		g.Kind = "group"
+		g.State = "active"
+		g.CanRead = true
+		g.CanWrite = true
+		g.CanInvite = g.OwnerID != "" && g.OwnerID == user.ID && g.PendingInvite < groupInvitationLimit
+		g.CanTransfer = g.OwnerID != "" && g.OwnerID == user.ID
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

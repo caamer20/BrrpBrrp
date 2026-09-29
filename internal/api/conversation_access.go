@@ -229,7 +229,9 @@ func (s *Server) publishToConversation(ctx context.Context, id, kind string, dat
 	switch kind {
 	case "message.created", "message.updated", "reaction.updated", "message.embed_updated":
 		var direct, blocked bool
-		err := tx.QueryRowContext(ctx, `SELECT c.kind='direct',EXISTS(SELECT 1 FROM direct_pairs p JOIN user_blocks b ON (b.blocker_id=p.user_low AND b.blocked_id=p.user_high) OR (b.blocker_id=p.user_high AND b.blocked_id=p.user_low) WHERE p.conversation_id=c.id) FROM conversations c WHERE c.id=?`, id).Scan(&direct, &blocked)
+		// A direct conversation is read-only when the pair is blocked; a group is not a
+	// pair, so there is nothing here that a block between two members would change.
+	err := tx.QueryRowContext(ctx, `SELECT c.kind='direct',c.kind='direct' AND EXISTS(SELECT 1 FROM direct_pairs p JOIN user_blocks b ON (b.blocker_id=p.user_low AND b.blocked_id=p.user_high) OR (b.blocker_id=p.user_high AND b.blocked_id=p.user_low) WHERE p.conversation_id=c.id) FROM conversations c WHERE c.id=?`, id).Scan(&direct, &blocked)
 		if err != nil || (direct && (len(audience) != 2 || blocked)) {
 			return
 		}

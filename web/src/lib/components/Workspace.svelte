@@ -179,6 +179,24 @@
           {:else}<button class="channel-link" onclick={() => (workspace.messagesOpen = true)}
               ><Icon name="plus" /><span>Start a conversation</span></button
             >{/each}
+          <!-- Groups are the other kind of private conversation and are listed
+               beside the direct ones, because a member opens them the same way. -->
+          {#if workspace.groups.length}
+            <h2>GROUPS</h2>
+            {#each workspace.groups as group (group.id)}
+              {@const unread = workspace.unreadFor(group.id)}
+              <button
+                class="channel-link"
+                class:active={workspace.activeId === group.id}
+                class:unread={!!unread?.count}
+                aria-current={workspace.activeId === group.id ? 'page' : undefined}
+                onclick={() => workspace.selectChannel(group.id)}
+              >
+                <span>{group.name}</span>{#if !group.can_write}<small>Read-only</small
+                  >{/if}{#if unread?.count}<i class="unread-dot"></i>{/if}
+              </button>
+            {/each}
+          {/if}
         </div>{/if}
       {#each categories as category}<div class="channel-group">
           <h2>{category.name || 'TEXT CHANNELS'}</h2>

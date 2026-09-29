@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import { api, errorMessage } from '../api';
   import { workspace } from '../workspace.svelte';
   import type { DirectConversation, Group, GroupInvitation, GroupMember, User } from '../types';
@@ -82,6 +82,15 @@
       : 0
   );
   const visible = $derived(scope && admitted(scope) ? directs : []);
+  // Groups, invitations and the open member list are private metadata and are
+  // rendered without an equivalent projection to `visible`, which is how a group
+  // kept rendering after the authority change that should have cleared it
+  // (completion review 13, V13-03). They are gated the same way, so a panel that has
+  // failed admission shows nothing at all rather than whatever arrived last.
+  const admittedNow = $derived(!!scope && admitted(scope));
+  const visibleGroups = $derived(admittedNow ? groups : []);
+  const visibleInvitations = $derived(admittedNow ? groupInvitations : []);
+  const visibleMembers = $derived(admittedNow ? groupMembers : []);
   const visibleBlocks = $derived(scope && admitted(scope) ? blocked : []);
   const candidates = $derived(
     (workspace.state?.users || [])
@@ -119,6 +128,14 @@
   onDestroy(() => {
     alive = false;
     version++;
+  });
+  // Fetch on open. The effect below re-runs when the account, the authorization
+  // generation or the contact list changes, none of which happens simply by opening
+  // the panel, so without this the first render had whatever the last account left
+  // behind — or nothing at all.
+  $effect(() => {
+    if (!workspace.privateConversationsEnabled || workspace.authorizationUnverified) return;
+    untrack(() => void load());
   });
   $effect(() => {
     const account = workspace.user?.id || '';
@@ -281,10 +298,21 @@
       // Consent and blocking advance authority. Refresh through the workspace protocol;
       // its generation checks own all histories and pending sends.
       await workspace.refreshState();
-      if (!current()) return false;
+      // An authority change clears the notice, and inviting, accepting, transferring
+      // and removing all advance the generation — so a notice set before the refresh
+      // was wiped a moment later and a person who had just handed over a group saw
+      // nothing happen. It is set after the reload, once the panel has settled, and
+      // only while this is still the mounted account's panel (completion review 13,
+      // V13-01).
       await load();
-      if (!current()) return false;
-      notice = success;
+      // The effect that clears the notice runs on the generation the refresh just
+      // produced, which is the same turn; the notice is therefore set on the next
+      // one, so it lands after the panel has settled rather than being wiped by the
+      // invalidation it describes.
+      if (alive && request.account === workspace.user?.id) {
+        await tick();
+        notice = success;
+      }
       return true;
     } catch (failure) {
       if (current()) error = errorMessage(failure);
@@ -381,8 +409,13 @@
                 : 'Read-only conversation'}</small
             >
           </div>
-          <button class="secondary" onclick={() => open(direct)} disabled={busy}
-            >Open conversation</button
+          <button
+            class="secondary"
+            disabled={busy}
+            onclick={() => {
+              workspace.messagesOpen = false;
+              open(direct);
+            }}>Open conversation</button
           >{#if !direct.hidden}<button
               class="secondary"
               disabled={busy}
@@ -479,7 +512,7 @@
         in it, including before they joined.
       </p>
 
-      {#each groupInvitations.filter((row) => row.my_state === 'invited') as invitation (invitation.id)}
+      {#each visibleInvitations.filter((row) => row.my_state === 'invited') as invitation (invitation.id)}
         <article>
           <h3>{invitation.group_name || 'A group'}</h3>
           <p>
@@ -527,10 +560,10 @@
         <button disabled={busy || !newGroupName.trim()}>Create group</button>
       </form>
 
-      {#if !loading && groups.length === 0}
+      {#if !loading && visibleGroups.length === 0}
         <p role="status">You are not in any groups yet. Start one, or wait for an invitation.</p>
       {/if}
-      {#each groups as group (group.id)}
+      {#each visibleGroups as group (group.id)}
         <article>
           <h3>{group.name}</h3>
           <p>
@@ -542,6 +575,17 @@
             {/if}
           </p>
           <div class="button-row">
+            <!-- A group card that cannot be opened is a management screen, not a
+                 conversation, and a member who joined a group came here to use it. -->
+            <button
+              onclick={() => {
+                openGroup = '';
+                groupMembers = [];
+                invitingGroup = '';
+                workspace.messagesOpen = false;
+                void workspace.selectChannel(group.id);
+              }}>Open conversation</button
+            >
             <button
               onclick={() => openGroupMembers(group.id)}
               aria-expanded={openGroup === group.id}
@@ -601,11 +645,11 @@
           {/if}
           {#if openGroup === group.id}
             <h4>Members</h4>
-            {#if groupMembers.length === 0}
+            {#if visibleMembers.length === 0}
               <p role="status">No members to show.</p>
             {/if}
             <ul>
-              {#each groupMembers as member (member.id)}
+              {#each visibleMembers as member (member.id)}
                 <li>
                   {member.display_name || member.username}{member.is_owner ? ' (owner)' : ''}
                   {#if group.can_transfer && !member.is_owner && member.id !== workspace.user?.id}

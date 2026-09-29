@@ -161,7 +161,7 @@ func (s *Server) privateEvidencePreviewInTx(ctx context.Context, tx *sql.Tx, pri
 		}
 		return nil, false, err
 	}
-	if scope.Kind != "direct" {
+	if scope.Kind != "direct" && scope.Kind != "group" {
 		return nil, false, nil
 	}
 	preview, err := s.privateEvidenceForMessage(ctx, tx, principal, messageID, scope.ID)
@@ -331,7 +331,7 @@ func (s *Server) submitPrivateEvidence(w http.ResponseWriter, r *http.Request, u
 		hidden(w)
 		return
 	}
-	if scope.Kind != "direct" {
+	if scope.Kind != "direct" && scope.Kind != "group" {
 		hidden(w)
 		return
 	}

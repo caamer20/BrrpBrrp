@@ -218,6 +218,7 @@ export interface WorkspaceState {
   authorization: Authorization;
   features?: { private_conversations: boolean };
   conversations?: DirectConversation[];
+  groups?: GroupConversation[];
   // outstanding_incoming is the count of pending requests addressed to this
   // account that are still actionable. It is a badge, not an activity feed: no
   // request introduction is carried here, so a closed workspace never pulls
@@ -285,4 +286,25 @@ export interface GroupMember {
   display_name: string;
   state: string;
   is_owner: boolean;
+}
+
+// A group in the workspace snapshot. A group is not a direct conversation with a
+// synthesised second participant — it has no peer — so it carries its own identity
+// and the facts the interface needs about it. It resolves through the same
+// navigation, read cursor, outbox and composer as a direct pair (ADR 0016).
+export interface GroupConversation {
+  id: string;
+  kind: 'group';
+  state: string;
+  name: string;
+  owner_id: string;
+  owner_name: string;
+  members: number;
+  can_read: boolean;
+  can_write: boolean;
+  created_at: string;
+  updated_at: string;
+  can_invite: boolean;
+  can_transfer: boolean;
+  pending_invitations: number;
 }

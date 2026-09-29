@@ -159,6 +159,27 @@ a grant to browse group membership. An auditor now reads an audit trail; an evid
 reviewer reads submitted evidence. Neither implies the other, and an ordinary member
 reads neither.
 
+## A group is a conversation, and the interface says so
+
+A group resolves through the same navigation, read cursor, outbox, drafts, composer,
+uploads, replies, reactions and scoped search as a direct pair. It has its **own
+identity** in the snapshot rather than a `directConversation` with a synthesised peer:
+a group has no second participant, and inventing one would make every "who is the
+other person" affordance — user context, per-person actions, per-person search —
+answer about somebody who does not exist.
+
+Its snapshot entry carries the group's name, owner, member count, and what this
+account may do with it. A member may report a message in a group exactly as in a
+direct conversation, because consent governs both and the evidence is the same
+selected snapshot either way. A nonmember is refused everywhere, and a group the
+account has not joined does not appear in its snapshot, its listings, its counts or
+its search results at all.
+
+**Verified.** `TestAGroupIsUsableThroughTheSharedConversationPipeline` drives the
+snapshot, a message exchange, a reply, a reaction, scoped search, a selected-message
+report and preview, and the nonmember denials, through the same handlers a direct
+pair uses.
+
 ## Interaction with what already exists
 
 - **Activity.** A group message is activity, keyed by its message id like any other,

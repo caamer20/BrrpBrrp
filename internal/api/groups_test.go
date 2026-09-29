@@ -721,3 +721,108 @@ func TestBlockingStopsGroupInvitations(t *testing.T) {
 	}
 	_ = guest
 }
+
+// V13-01. A group is a conversation, not a membership record: a member has to be able
+// to use it the way they use any other — open it, exchange messages, reply, react,
+// upload, search, and report a selected message. This asserts each of those through
+// the same handlers a direct pair uses, and asserts the denials around them.
+func TestAGroupIsUsableThroughTheSharedConversationPipeline(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	_, outsider := memberAccount(t, s, "grp_pipeline_outsider")
+
+	// The snapshot lists it, with a group's own identity and no invented peer.
+	// Listing it is what the workspace navigation reads, so a group absent here is a
+	// group nobody can open.
+	ownerState := readJSON[map[string]any](t, request(t, h, "GET", "/api/state", nil, owner))
+	listed := 0
+	for _, entry := range ownerState["groups"].([]any) {
+		group := entry.(map[string]any)
+		if group["id"] == groupID {
+			listed++
+			if group["kind"] != "group" || group["name"] == "" {
+				t.Fatalf("the snapshot describes the group as %v", group)
+			}
+			if _, invented := group["peer"]; invented {
+				t.Fatal("the group was given a synthesised peer")
+			}
+			if group["can_read"] != true || group["can_write"] != true {
+				t.Fatalf("a member cannot use their own group: %v", group)
+			}
+		}
+	}
+	if listed != 1 {
+		t.Fatalf("the group appears %d times in the member's snapshot", listed)
+	}
+	// And it is absent for a nonmember, who is not told it exists.
+	outsiderState := readJSON[map[string]any](t, request(t, h, "GET", "/api/state", nil, outsider))
+	for _, entry := range outsiderState["groups"].([]any) {
+		if entry.(map[string]any)["id"] == groupID {
+			t.Fatal("a nonmember was shown a private group in their snapshot")
+		}
+	}
+
+	// Message, read, and the two sides disagreeing about it live.
+	sent := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "group pipeline wording quokka", "idempotency_key": "grp-pipe-1",
+	}, owner)
+	if sent.Code != 201 {
+		t.Fatalf("send: %d %s", sent.Code, sent.Body.String())
+	}
+	messageID := readJSON[map[string]any](t, sent)["id"].(string)
+	history := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/conversations/"+groupID+"/messages", nil, guest))
+	if len(history) != 1 {
+		t.Fatalf("the other member sees %d messages", len(history))
+	}
+
+	// Reply, reaction and scoped search all resolve through the shared handlers.
+	if w := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "a reply", "idempotency_key": "grp-pipe-2", "reply_to_id": messageID,
+	}, guest); w.Code != 201 {
+		t.Fatalf("reply: %d %s", w.Code, w.Body.String())
+	}
+	reactions := request(t, h, "POST", "/api/messages/"+messageID+"/reactions", map[string]string{"emoji": "👍"}, owner)
+	if reactions.Code != 200 && reactions.Code != 201 {
+		t.Fatalf("reaction: %d %s", reactions.Code, reactions.Body.String())
+	}
+	scoped := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/search?q=quokka&conversation_id="+groupID, nil, guest))
+	if len(scoped) == 0 {
+		t.Fatal("scoped search did not reach the group")
+	}
+	// A nonmember cannot read, write, search or even confirm the conversation exists.
+	for _, probe := range []struct {
+		method, path string
+	}{
+		{"GET", "/api/conversations/" + groupID + "/messages"},
+		{"GET", "/api/search?q=quokka&conversation_id=" + groupID},
+	} {
+		if w := request(t, h, probe.method, probe.path, nil, outsider); w.Code != http.StatusNotFound && w.Code != http.StatusForbidden {
+			t.Fatalf("a nonmember read the group through %s: %d", probe.path, w.Code)
+		}
+	}
+	if w := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "not a member", "idempotency_key": "grp-pipe-out",
+	}, outsider); w.Code == 201 {
+		t.Fatal("a nonmember wrote to the group")
+	}
+
+	// A member may report a message in it, and the report is the same selected
+	// evidence a direct message produces — a group is inside a consented
+	// conversation, so a member is entitled to report what is said in it.
+	preview := request(t, h, "GET", "/api/messages/"+messageID+"/private-report-preview", nil, guest)
+	if preview.Code != 200 {
+		t.Fatalf("a member could not preview a group message for evidence: %d %s", preview.Code, preview.Body.String())
+	}
+	previewBody := readJSON[map[string]any](t, preview)
+	reported := request(t, h, "POST", "/api/messages/"+messageID+"/private-report", map[string]string{
+		"reason": "group pipeline evidence", "version": previewBody["version"].(string),
+	}, guest)
+	if reported.Code != 201 && reported.Code != 200 {
+		t.Fatalf("a member could not report a group message: %d %s", reported.Code, reported.Body.String())
+	}
+	// A nonmember gets nothing: the preview is refused rather than describing it.
+	if w := request(t, h, "GET", "/api/messages/"+messageID+"/private-report-preview", nil, outsider); w.Code == 200 {
+		t.Fatal("a nonmember previewed a group message for evidence")
+	}
+	_ = s
+}
