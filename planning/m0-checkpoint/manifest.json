@@ -1,0 +1,13 @@
+{
+  "candidate": "0.4.0-alpha.7",
+  "source_commit": "153202da9ae15118be8fff13bcf7c84e688db345",
+  "schema": 14,
+  "backup_format": 2,
+  "frontend_build": "be50533485433eca",
+  "toolchain": "go1.27.1",
+  "vcs_stamp_in_built_binary": {
+    "revision": "153202da9ae15118be8fff13bcf7c84e688db345",
+    "modified": false
+  },
+  "note": "This checkpoint records repairs to the alpha.7 candidate. The alpha.7 archives under dist/releases were built from 9763661 and are unchanged; these source changes are not yet packaged, so no alpha.7 archive describes this commit and a new prerelease label is required before distribution."
+}
