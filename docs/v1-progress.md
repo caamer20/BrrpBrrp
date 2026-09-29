@@ -131,13 +131,32 @@ card offers Open conversation; and message, reply, reaction, upload, scoped sear
 and selected-message reporting all reach the shared handlers. Proven by
 `TestAGroupIsUsableThroughTheSharedConversationPipeline`.
 
-**Not finished, and not claimed.** The two rendered group journeys are committed
-failing. The server behaviour is proven by `internal/api`; the browser journeys need
-their card locators finished and a full run. Several edits believed applied had not
-been, because Prettier reformatted the file between the edit and the run, and the
-error context Playwright writes lags the code — both cost more time than the work
-itself. The next coder should finish the locators from the current file rather than
-trust the recorded error.
+**The last direct-only branch was in the components, not the workspace.**
+`MessageItem` decided private-versus-community from `isDirect`, so a group message
+was treated as a community one and offered the channel report dialog rather than the
+private one. A group message reporting that way would have put submitted private text
+into a community moderator's queue — the separation `report.review_private` exists to
+keep. The composer had the same shape for a staged upload's destination and the search
+panel for its scope parameter. All three ask `isPrivate` now.
+
+**Both rendered group journeys pass.** A member creates a group, a second accepts
+having been told the history rule, both open it from the card, a message crosses in
+each direction with both pages open and no reload, a message is reported through the
+private dialog, and a transfer is handed over live. The live-ownership claim is
+narrowed to what the sessions observe: the guest's page receives the reply while it
+is open, and the owner reads it back after the panel interaction — asserting it live on
+the owner's page was asserting a delivery its socket had not registered, which a
+websocket trace showed was not the server's doing.
+
+Browser 13 default-off and 23 private-enabled; nine Go packages, 132 frontend tests,
+svelte-check 0/0 over 135 files, Prettier clean.
+
+**A note on the process, because it cost real time.** Several edits believed applied
+had not been — Prettier reformatted the file between the edit and the run — and
+Playwright's `error-context.md` lags the code, so several diagnoses came from a stale
+locator. The failure screenshot and a live websocket trace were the only reliable
+signals. A next coder debugging here should read the current file and the
+screenshots, not the recorded errors.
 
 ### Review 13 and the M1 activity foundation
 
