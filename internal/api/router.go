@@ -308,6 +308,14 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/api/directs/{id}/report-preview", routePolicy{Note: "the exact introduction a report would save, for the recipient of the current attempt only"}, s.previewRequestEvidence},
 		{http.MethodPost, "/api/directs/{id}/report-and-block", routePolicy{Note: "stores introduction evidence, rejects the request, clears it and blocks the sender in one transaction; never accepts contact"}, s.reportRequestAndBlock},
 		{http.MethodGet, "/api/me/report-receipt", routePolicy{Note: "the caller's own minimal outcome for their own operation key; never reviewer or evidence data"}, s.ownReportReceipt},
+		// Durable account activity is the caller's own record of what it was told
+		// about, and is readable only about the signed-in account. It is not a
+		// privileged view of anyone else's inbox, and a row is filtered against
+		// current access before it is returned (ADR 0015).
+		{http.MethodGet, "/api/me/activity", routePolicy{Capability: capabilityForActivity(), Note: "the caller's own activity, filtered by current access; never another account's"}, s.listActivity},
+		{http.MethodPost, "/api/me/activity/acknowledge", routePolicy{Capability: capabilityForActivity(), Note: "monotonic acknowledgment of the caller's own activity; separate from reading so a failed read cannot consume it"}, s.acknowledgeActivity},
+		{http.MethodGet, "/api/me/notification-preferences", routePolicy{Note: "the caller's own private notification preferences, defaulting to the documented quiet defaults"}, s.privateNotificationPreference},
+		{http.MethodPut, "/api/me/notification-preferences", routePolicy{Note: "interruption preferences only; grants no access and changes no history"}, s.setPrivateNotificationPreference},
 		{http.MethodGet, "/api/admin/request-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "submitted request-introduction evidence only; the conversation is omitted and cannot be opened"}, s.listRequestEvidence},
 		{http.MethodPatch, "/api/admin/request-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "nonpunitive triage of one request evidence record"}, s.reviewRequestEvidence},
 		{http.MethodGet, "/api/admin/private-reports/audit", routePolicy{Capability: authz.ReportReviewPrivate, Note: "audit of private evidence review, readable only under the evidence policy and never by a community audit reader"}, s.privateEvidenceAuditLogs},

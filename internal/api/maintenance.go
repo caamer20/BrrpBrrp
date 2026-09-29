@@ -129,6 +129,13 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM private_message_reports WHERE rowid IN (SELECT rowid FROM private_message_reports WHERE expires_at<=? ORDER BY expires_at LIMIT 500)`, db.Timestamp(now)); err != nil {
 		return err
 	}
+	// Account activity is reclaimed on its own 30-day clock, acknowledged rows
+	// first, in bounded batches. It is deliberately not on the evidence clock: an
+	// activity row is a catch-up affordance and evidence is a submitted record
+	// someone may appeal (ADR 0015).
+	if err := s.pruneActivity(now); err != nil {
+		return err
+	}
 	files, err := os.ReadDir(s.config.UploadDir)
 	if err != nil {
 		return err

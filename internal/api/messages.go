@@ -332,6 +332,15 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 			return
 		}
 	}
+	// Durable activity is written here, inside the transaction that creates the
+	// message, so a delivered message always has its activity and a rolled-back send
+	// has neither. The row carries the message id and not its content: activity is a
+	// pointer to something that is read under its own authorization, never a second
+	// copy of private text that would outlive it (ADR 0015).
+	if err := s.recordDirectMessageActivity(r.Context(), tx, scope, principal.UserID, id, sentAt); err != nil {
+		s.failed(w, err)
+		return
+	}
 	// The receipt is completed in the same transaction as the message, so a committed message
 	// always has its receipt and a rolled-back send has neither.
 	if err := s.store.CompleteOperation(r.Context(), tx, user.ID, input.IdempotencyKey, id); err != nil {

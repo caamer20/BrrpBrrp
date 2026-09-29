@@ -337,7 +337,11 @@ func (s *Server) createDirectConversation(w http.ResponseWriter, r *http.Request
 	// after a rejection. Without it, a report bound to the pair could resolve
 	// against whatever introduction the pair holds now rather than the one the
 	// reporter was shown (ADR 0014).
-	if _, err := tx.ExecContext(r.Context(), `INSERT INTO direct_requests(conversation_id,requester_id,recipient_id,state,introduction,requested_at,updated_at,retry_after,attempt_id) VALUES(?,?,?,'pending',?,?,?,'',?) ON CONFLICT(conversation_id) DO UPDATE SET requester_id=excluded.requester_id,recipient_id=excluded.recipient_id,state='pending',introduction=excluded.introduction,requested_at=excluded.requested_at,updated_at=excluded.updated_at,retry_after='',attempt_id=excluded.attempt_id`, id, user.ID, peer.ID, input.Introduction, now, now, db.ID()); err != nil {
+	// The attempt is generated here rather than inline because the activity row below
+	// must name the same attempt, not a second one: two ids for one attempt would
+	// make the two events look like different requests.
+	attemptID := db.ID()
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO direct_requests(conversation_id,requester_id,recipient_id,state,introduction,requested_at,updated_at,retry_after,attempt_id) VALUES(?,?,?,'pending',?,?,?,'',?) ON CONFLICT(conversation_id) DO UPDATE SET requester_id=excluded.requester_id,recipient_id=excluded.recipient_id,state='pending',introduction=excluded.introduction,requested_at=excluded.requested_at,updated_at=excluded.updated_at,retry_after='',attempt_id=excluded.attempt_id`, id, user.ID, peer.ID, input.Introduction, now, now, attemptID); err != nil {
 		s.failed(w, err)
 		return
 	}
@@ -348,6 +352,14 @@ func (s *Server) createDirectConversation(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if _, err := tx.ExecContext(r.Context(), `UPDATE direct_preferences SET hidden=0,updated_at=? WHERE conversation_id=?`, now, id); err != nil {
+		s.failed(w, err)
+		return
+	}
+	// Durable activity for the request, written in the same transaction as the
+	// request itself, so a request that exists always has its activity and one that
+	// was rolled back has neither. The source is the attempt id, so a renewed
+	// request is a new event rather than a second copy of the first (ADR 0015).
+	if err := s.recordRequestActivity(r.Context(), tx, id, attemptID, user.ID, peer.ID, time.Now()); err != nil {
 		s.failed(w, err)
 		return
 	}
