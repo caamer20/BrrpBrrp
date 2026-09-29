@@ -278,7 +278,14 @@ func (s *Server) reportRequestAndBlock(w http.ResponseWriter, r *http.Request, u
 		})
 		return
 	}
-	if len(introduction) > requestIntroductionLimit {
+	// Characters, not bytes, and the same rule creation used (direct.go). The bound
+	// is a promise about how much of an introduction a person may write, and a
+	// three-byte CJK character is still one character they typed. Measuring bytes
+	// here meant a request the server had accepted, previewed and shown to the
+	// recipient could be refused at the moment they tried to report it
+	// (completion review 12, R12-03). The stored snapshot remains bounded in bytes
+	// by the column's own CHECK, which is the right place for a storage concern.
+	if !utf8.ValidString(introduction) || utf8.RuneCountInString(introduction) > requestIntroductionLimit {
 		problem(w, http.StatusBadRequest, "That introduction is longer than a request can hold.")
 		return
 	}

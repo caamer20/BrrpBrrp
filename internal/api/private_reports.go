@@ -470,9 +470,20 @@ func (s *Server) consumePrivateReportAllowance(ctx context.Context, tx *sql.Tx, 
 // failure than an honest refusal. The answer is a boolean rather than an error so
 // the caller can refuse deliberately instead of reporting an operator condition
 // as a server fault.
+//
+// Both tables are counted. Message evidence and request evidence are one reviewer
+// queue under one bound, so counting them separately let either kind fill the store
+// while the other still reported room — an installation holding 5,000 request
+// reports was told there was space and admitted row 5,001 (completion review 12,
+// R12-02). The count runs on the submitting transaction, so the two tables are read
+// as one moment and a concurrent submitter is serialized behind this one rather
+// than both deciding the last slot was free (ADR 0014).
 func (s *Server) privateEvidenceIsFull(ctx context.Context, tx *sql.Tx) (bool, error) {
 	var stored int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM private_message_reports WHERE expires_at>?`, db.Now()).Scan(&stored); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT
+        (SELECT count(*) FROM private_message_reports WHERE expires_at>?) +
+        (SELECT count(*) FROM private_request_reports WHERE expires_at>?)`,
+		db.Now(), db.Now()).Scan(&stored); err != nil {
 		return false, err
 	}
 	return stored >= privateReportStorageLimit, nil

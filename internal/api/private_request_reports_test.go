@@ -2,10 +2,12 @@ package api
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
@@ -703,5 +705,179 @@ func TestRequestReviewAuditKeepsTheRestrictedRetention(t *testing.T) {
 	}
 	if left != 0 {
 		t.Fatal("the request review outlived its restricted retention")
+	}
+}
+
+// R12-02. The storage bound covers private evidence as a whole, so a reviewer queue
+// has a defined size. The check counted only message evidence, so an installation
+// holding 5,000 unexpired request reports was told the store had room and admitted
+// row 5,001. Both tables are one queue, so both are counted together, and the count
+// happens inside the submitting transaction.
+func TestRequestAndMessageEvidenceShareOneStorageBound(t *testing.T) {
+	s, h, recipient, _, conversation, senderID, _ := requestFixture(t)
+	fill := func(t *testing.T, table string, n int) {
+		t.Helper()
+		future := db.Timestamp(time.Now().Add(24 * time.Hour))
+		tx, err := s.store.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		for i := 0; i < n; i++ {
+			switch table {
+			case "message":
+				if _, err := tx.Exec(`INSERT INTO private_message_reports(id,message_id,conversation_id,reporter_id,author_id,reason,snapshot_text,status,created_at,updated_at,expires_at)
+					VALUES(?,?,'',?,?,'reason','text','open',?,?,?)`, fmt.Sprintf("cap-msg-%05d", i), fmt.Sprintf("cap-msg-src-%05d", i), senderID, senderID, future, future, future); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				if _, err := tx.Exec(`INSERT INTO private_request_reports(id,conversation_id,attempt_id,requester_id,reporter_id,reason,snapshot_text,status,request_sent_at,created_at,updated_at,expires_at)
+					VALUES(?,'',?,?,?,'reason','text','open',?,?,?,?)`, fmt.Sprintf("cap-req-%05d", i), fmt.Sprintf("att-%05d", i), senderID, senderID, future, future, future, future); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A mixed population: message evidence alone would leave room, and so would
+	// request evidence alone. Together they are at the bound, which is the case the
+	// per-table count could not see.
+	fill(t, "message", 2500)
+	fill(t, "request", 2500)
+	var stored int
+	if err := s.store.QueryRow(`SELECT (SELECT count(*) FROM private_message_reports WHERE expires_at>?) + (SELECT count(*) FROM private_request_reports WHERE expires_at>?)`, db.Now(), db.Now()).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != privateReportStorageLimit {
+		t.Fatalf("fixture holds %d, expected %d", stored, privateReportStorageLimit)
+	}
+	preview := previewRequest(t, h, recipient, conversation)
+	w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "past the bound", "version": preview.Version, "operation_key": "op-cap-1",
+	}, recipient)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a report was admitted past the bound: %d %s", w.Code, w.Body.String())
+	}
+	// The refusal must be total: no evidence, no rejection, no block, no receipt.
+	var evidence, receipts int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_request_reports WHERE id<>'' AND reason='past the bound'`).Scan(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_report_receipts WHERE operation_key='op-cap-1'`).Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	if evidence != 0 || receipts != 0 {
+		t.Fatalf("the refused report left side effects: %d evidence, %d receipts", evidence, receipts)
+	}
+	var stillPending int
+	if err := s.store.QueryRow(`SELECT count(*) FROM direct_requests WHERE conversation_id=? AND state='pending'`, conversation).Scan(&stillPending); err != nil {
+		t.Fatal(err)
+	}
+	if stillPending != 1 {
+		t.Fatal("the refused report rejected or cleared the request")
+	}
+}
+
+// Expired evidence is not stored evidence. A full store whose only rows have passed
+// their expiry must still admit a report, or the bound would become a permanent
+// lockout that only an operator's manual edit could clear.
+func TestRequestEvidenceIgnoresExpiredRowsForTheStorageBound(t *testing.T) {
+	s, h, recipient, _, conversation, senderID, _ := requestFixture(t)
+	past := db.Timestamp(time.Now().Add(-24 * time.Hour))
+	tx, err := s.store.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for i := 0; i < privateReportStorageLimit; i++ {
+		if _, err := tx.Exec(`INSERT INTO private_request_reports(id,conversation_id,attempt_id,requester_id,reporter_id,reason,snapshot_text,status,request_sent_at,created_at,updated_at,expires_at)
+			VALUES(?,?,?,?,?,'reason','text','open',?,?,?,?)`, fmt.Sprintf("exp-cap-%05d", i), conversation, fmt.Sprintf("att-%05d", i), senderID, senderID, past, past, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "expired rows are not stored evidence", "version": preview.Version, "operation_key": "op-cap-expired",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("a full store of expired rows refused a report: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// R12-03. A request introduction is bounded in Unicode characters, and the bound is
+// the server's: creation and preview both accept 500 CJK characters, so the report
+// path could not refuse the introduction it had just shown the recipient. It
+// measured bytes, and a CJK character is three of them.
+func TestRequestIntroductionLimitCountsCharactersNotBytes(t *testing.T) {
+	// A pair can hold one live request at a time and reporting settles it, so each
+	// case gets its own pair on its own server rather than sharing one and failing
+	// for a reason that is not the one under test.
+	// 500 three-byte characters: valid under the source contract, 1,500 bytes.
+	cases := []struct {
+		name  string
+		chars int
+		ok    bool
+	}{
+		{"empty", 0, true},
+		{"ascii at the limit", 500, true},
+		{"cjk at the limit", 500, true},
+		{"emoji at the limit", 500, true},
+		{"cjk past the limit", 501, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A pair holds one live request at a time and reporting settles it, so
+			// each case gets its own pair on its own server rather than sharing one
+			// and failing for a reason that is not the one under test.
+			s, h := testServer(t)
+			s.config.PrivateConversations = true
+			setupAdmin(t, s, h)
+			_, requester := memberAccount(t, s, "cjk_requester")
+			recipientID, recipient := memberAccount(t, s, "cjk_recipient")
+			introduction := strings.Repeat("請", tc.chars)
+			if tc.name == "ascii at the limit" {
+				introduction = strings.Repeat("a", tc.chars)
+			}
+			if tc.name == "emoji at the limit" {
+				introduction = strings.Repeat("🙂", tc.chars)
+			}
+			asked := request(t, h, "POST", "/api/directs", map[string]string{
+				"user_id": recipientID, "introduction": introduction,
+			}, requester)
+			if tc.ok && asked.Code != 201 {
+				t.Fatalf("a valid %d-character introduction was refused at creation: %d %s", tc.chars, asked.Code, asked.Body.String())
+			}
+			if !tc.ok {
+				if asked.Code != http.StatusBadRequest {
+					t.Fatalf("a %d-character introduction was accepted at creation: %d", tc.chars, asked.Code)
+				}
+				return
+			}
+			conversation := readJSON[directConversation](t, asked).ID
+			// The preview shows the same text, so the confirmation has to accept it.
+			preview := previewRequest(t, h, recipient, conversation)
+			if preview.Introduction != introduction {
+				t.Fatalf("the preview did not show the introduction the recipient confirmed (%d vs %d characters)",
+					utf8.RuneCountInString(preview.Introduction), utf8.RuneCountInString(introduction))
+			}
+			w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+				"reason": "cjk", "version": preview.Version, "operation_key": "op-cjk-" + tc.name,
+			}, recipient)
+			if w.Code != 201 {
+				t.Fatalf("reporting an introduction the server itself accepted failed: %d %s", w.Code, w.Body.String())
+			}
+			var snapshot string
+			if err := s.store.QueryRow(`SELECT snapshot_text FROM private_request_reports ORDER BY created_at DESC LIMIT 1`).Scan(&snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot != introduction {
+				t.Fatal("the stored evidence is not the introduction that was confirmed")
+			}
+		})
 	}
 }
