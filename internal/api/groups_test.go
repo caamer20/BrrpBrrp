@@ -397,3 +397,96 @@ func TestAGroupUsesTheSharedMessageAndReceiptModel(t *testing.T) {
 	_ = guest
 }
 
+
+// The membership list is read through a scalar subquery for the owner flag, and a
+// scalar subquery with no matching row returns NULL rather than 0. Scanned into an
+// int that is a 500, which the interface cannot tell from a real fault — so the
+// endpoint is exercised here for every member, including the one who is not the
+// owner.
+func TestGroupMemberListAnswersForEveryMember(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	for name, cookie := range map[string]*http.Cookie{"the owner": owner, "a member": guest} {
+		w := request(t, h, "GET", "/api/groups/"+groupID+"/members", nil, cookie)
+		if w.Code != 200 {
+			t.Fatalf("%s could not read the membership list: %d %s", name, w.Code, w.Body.String())
+		}
+		members := readJSON[map[string]any](t, w)["members"].([]any)
+		if len(members) != 2 {
+			t.Fatalf("%s sees %d members, want 2: %v", name, len(members), members)
+		}
+		owners := 0
+		for _, entry := range members {
+			if entry.(map[string]any)["is_owner"] == true {
+				owners++
+			}
+		}
+		if owners != 1 {
+			t.Fatalf("%s sees %d owners, want exactly 1", name, owners)
+		}
+	}
+	// A non-member is refused identically to a group that does not exist.
+	_, outsider := memberAccount(t, s, "grp_member_list_outsider")
+	if w := request(t, h, "GET", "/api/groups/"+groupID+"/members", nil, outsider); w.Code != http.StatusNotFound {
+		t.Fatalf("an outsider read the membership list: %d", w.Code)
+	}
+}
+
+// The owner cannot be removed: ownership governs who may invite and who may remove,
+// so a group whose owner can be removed has an owner who can do neither. A removal
+// that would empty a group takes the group with it, so a group never survives with
+// nobody able to run it.
+func TestAGroupsOwnerCannotBeRemovedAndAnEmptyingRemovalTakesTheGroup(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	ownerID := evidenceUserID(t, h, owner)
+	guestID := evidenceUserID(t, h, guest)
+	// The owner tries to remove themselves through the removal route, which is
+	// distinct from leaving.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/members/"+ownerID+"/remove", map[string]string{}, owner); w.Code != http.StatusConflict {
+		t.Fatalf("the owner removed themselves through the removal route: %d %s", w.Code, w.Body.String())
+	}
+	// A transfer moves the protection with the role, not with the account. The guest
+	// becomes the owner, and the person who handed over becomes an ordinary member.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/transfer", map[string]string{
+		"new_owner_id": guestID,
+	}, owner); w.Code != 200 {
+		t.Fatalf("transfer: %d", w.Code)
+	}
+	// The new owner cannot be removed, and removing the person who handed over — now
+	// an ordinary member — succeeds. The owner is left, so the group is not empty and
+	// survives: a group with its owner in it is still a group somebody can run.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/members/"+guestID+"/remove", map[string]string{}, guest); w.Code != http.StatusConflict {
+		t.Fatalf("the current owner removed themselves: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/members/"+ownerID+"/remove", map[string]string{}, guest); w.Code != 200 {
+		t.Fatalf("remove the former owner: %d %s", w.Code, w.Body.String())
+	}
+	// With the owner alone, the group survives — and the owner leaving is what takes
+	// it, because the last-member rule is about there being nobody left.
+	var remainingMembers int
+	if err := s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, groupID).Scan(&remainingMembers); err != nil {
+		t.Fatal(err)
+	}
+	if remainingMembers != 1 {
+		t.Fatalf("the removal left %d accepted members, want the owner alone", remainingMembers)
+	}
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/leave", map[string]string{}, guest); w.Code != 200 {
+		t.Fatalf("the last member left: %d %s", w.Code, w.Body.String())
+	}
+	var state string
+	if err := s.store.QueryRow(`SELECT state FROM conversations WHERE id=?`, groupID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "removed" {
+		t.Fatalf("the emptied group survived with state %q", state)
+	}
+
+	if err := s.store.QueryRow(`SELECT state FROM conversations WHERE id=?`, groupID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "removed" {
+		t.Fatalf("the emptied group survived with state %q", state)
+	}
+}

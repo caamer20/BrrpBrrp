@@ -931,3 +931,136 @@ test('a recipient can report a request and block without accepting it', async ({
     'an outsider could preview the request'
   ).toBe(404);
 });
+
+// A group is a feature nobody can reach unless the interface offers it, so this
+// journey drives the rendered path rather than the API: a person creates a group,
+// invites somebody, that person is told what accepting means before they answer,
+// and the owner can hand the group over and remove a member. The API tests already
+// cover the refusals; this covers the part a person actually touches.
+test('a group is created, joined and handed over through the interface', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(180000);
+  const owner = { username: 'group_owner', password: 'a group owner passphrase' };
+  const guest = { username: 'group_guest', password: 'a group guest passphrase' };
+  const outsider = { username: 'group_outsider', password: 'a group outsider passphrase' };
+  await signInOverApi(request);
+  const ownerID = await createAccount(request, owner);
+  const guestID = await createAccount(request, guest);
+  await createAccount(request, outsider);
+  const guestContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const guestPage = await guestContext.newPage();
+  const outsiderContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const outsiderPage = await outsiderContext.newPage();
+
+  await signIn(page, owner);
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
+  await expect(page.getByRole('button', { name: /^Groups/ })).toBeVisible();
+  await page.getByRole('button', { name: /^Groups/ }).click();
+  await expect(page.getByLabel('Start a group')).toBeVisible();
+  await page.getByLabel('Start a group').fill('the rendered group');
+  await page.getByRole('button', { name: 'Create group' }).click();
+  const groupCard = page.getByRole('article').filter({ hasText: 'the rendered group' });
+  await expect(groupCard.getByRole('heading', { name: 'the rendered group' })).toBeVisible();
+
+  // The member list is behind a disclosure, so the group's membership is not laid out
+  // for everyone who opens the tab.
+  await groupCard.getByRole('button', { name: 'Members' }).click();
+  await expect(groupCard.getByRole('listitem').filter({ hasText: 'group_owner' })).toBeVisible();
+
+  // Inviting names the person, and only somebody already in the group can be invited,
+  // so the interface is exercised through the same path a person uses.
+  await groupCard.getByRole('button', { name: 'Invite' }).click();
+  await groupCard.getByLabel('Invite someone').fill('group_guest');
+  await groupCard.getByRole('button', { name: 'Send invitation' }).click();
+  await expect(page.getByRole('status').filter({ hasText: /invitation sent/i })).toBeVisible();
+
+  // The invitee is told what accepting means before answering, which is the point:
+  // consenting to a group is consenting to its earlier history.
+  await signIn(guestPage, guest);
+  await guestPage.getByRole('button', { name: /^Messages and requests/ }).click();
+  await guestPage.getByRole('button', { name: /^Groups/ }).click();
+  await expect(guestPage.getByLabel('Start a group')).toBeVisible();
+  const invitation = guestPage.getByRole('article').filter({ hasText: 'the rendered group' });
+  await expect(invitation).toBeVisible();
+  await expect(invitation.getByText(/read everything already said/i)).toBeVisible();
+  await invitation.getByRole('button', { name: 'Accept' }).click();
+  await expect(
+    guestPage.getByRole('article').filter({ hasText: 'the rendered group' }).getByRole('heading')
+  ).toBeVisible();
+
+  // An outsider is not told the group exists, which is the property that makes the
+  // group's existence private rather than merely its contents.
+  const outsiderSession = await outsiderContext.request.post('/api/login', {
+    data: { username: outsider.username, password: outsider.password }
+  });
+  expect(outsiderSession.ok(), `outsider sign-in: ${outsiderSession.status()}`).toBe(true);
+  await outsiderPage.goto('/');
+  await expect(outsiderPage.getByLabel('Your preferences')).toBeVisible({ timeout: 20000 });
+  await expect(outsiderPage.getByRole('button', { name: /^Messages and requests/ })).toBeVisible({
+    timeout: 20000
+  });
+  await outsiderPage.getByRole('button', { name: /^Messages and requests/ }).click();
+  await expect(outsiderPage.getByRole('button', { name: /^Groups/ })).toBeVisible();
+  await outsiderPage.getByRole('button', { name: /^Groups/ }).click();
+  await expect(
+    outsiderPage.getByRole('article').filter({ hasText: 'the rendered group' })
+  ).toHaveCount(0);
+  await expect(
+    outsiderPage.getByRole('status').filter({ hasText: /not in any groups/i })
+  ).toBeVisible();
+
+  // The new member can be handed the group. The member list is re-read first because
+  // the owner's copy predates the acceptance, and showing a list that is missing
+  // somebody who has actually joined is how a member ends up looking absent.
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Messages and requests/ })).toBeVisible();
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
+  await expect(page.getByRole('button', { name: /^Groups/ })).toBeVisible();
+  await page.getByRole('button', { name: /^Groups/ }).click();
+  await expect(page.getByLabel('Start a group')).toBeVisible();
+  await groupCard.getByRole('button', { name: 'Members' }).click();
+  const guestRow = groupCard.getByRole('listitem').filter({ hasText: 'group_guest' });
+  await expect(guestRow).toBeVisible();
+  await guestRow.getByRole('button', { name: 'Make owner' }).click();
+  await expect(page.getByRole('status').filter({ hasText: /now runs this group/i })).toBeVisible();
+  await expect(groupCard.getByRole('button', { name: 'Invite' })).toHaveCount(0);
+
+  // Ownership moved on the owner's page while the guest was looking at their own, so
+  // the guest re-reads before acting on the new powers. Stale authority showing no
+  // removal action is the honest thing; a person simply reloads.
+  await guestPage.reload();
+  await expect(guestPage.getByRole('button', { name: /^Messages and requests/ })).toBeVisible();
+  await guestPage.getByRole('button', { name: /^Messages and requests/ }).click();
+  await expect(guestPage.getByRole('button', { name: /^Groups/ })).toBeVisible();
+  await guestPage.getByRole('button', { name: /^Groups/ }).click();
+  await expect(guestPage.getByLabel('Start a group')).toBeVisible();
+  const guestCard = guestPage.getByRole('article').filter({ hasText: 'the rendered group' });
+  await guestCard.getByRole('button', { name: 'Members' }).click();
+  // The interface does not offer an action the server would refuse: the guest's own
+  // row carries no removal, and the former owner's row — now an ordinary member —
+  // does.
+  const guestRowAfter = guestCard.getByRole('listitem').filter({ hasText: 'group_guest' });
+  const ownerRowAfter = guestCard.getByRole('listitem').filter({ hasText: 'group_owner' });
+  await expect(guestRowAfter.getByRole('button', { name: 'Remove' })).toHaveCount(0);
+  await expect(ownerRowAfter.getByRole('button', { name: 'Remove' })).toBeVisible();
+
+  // Removing them leaves the new owner alone, so the group survives with them in it
+  // rather than being taken away by a removal that did not empty it.
+  await ownerRowAfter.getByRole('button', { name: 'Remove' }).click();
+  await expect(guestPage.getByRole('status').filter({ hasText: /was removed/i })).toBeVisible();
+  await expect(guestCard.getByRole('listitem').filter({ hasText: 'group_owner' })).toHaveCount(0);
+  // The group survives with the new owner alone in it. The summary is assembled
+  // from several fragments, so the card's own text is read rather than a single
+  // element's — which is also what a person reads.
+  await expect
+    .poll(async () => (await guestCard.innerText()).replace(/\s+/g, ' '))
+    .toContain('1 member, run by group_guest');
+
+  await guestContext.close();
+  await outsiderContext.close();
+  void ownerID;
+  void guestID;
+});

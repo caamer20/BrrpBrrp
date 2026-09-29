@@ -567,8 +567,29 @@ func (s *Server) removeGroupMember(w http.ResponseWriter, r *http.Request, user 
 		problem(w, http.StatusConflict, "Use leaving to remove yourself from your own group.")
 		return
 	}
+	// Removing the owner is refused: ownership governs who may invite and remove, and
+	// a group whose owner can be removed has an owner who can do neither. The owner
+	// hands the role over first, which is the same requirement as leaving. The
+	// comparison is against the owner row read here, not the summary computed before
+	// this transaction, so a transfer that landed in between cannot be answered
+	// against the previous owner.
+	var currentOwner string
+	if err := tx.QueryRowContext(r.Context(), `SELECT user_id FROM group_owners WHERE conversation_id=?`, groupID).Scan(&currentOwner); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if targetID == currentOwner {
+		problem(w, http.StatusConflict, "Transfer ownership to another member before removing them.")
+		return
+	}
 	now := now16()
 	if err := s.removeMemberInTx(r.Context(), tx, groupID, targetID, "removed", now); err != nil {
+		s.failed(w, err)
+		return
+	}
+	// A removal that empties a group leaves nobody to run it, so the group goes with
+	// its members rather than surviving as a room one person can no longer leave.
+	if err := s.discardGroupIfEmpty(r.Context(), tx, groupID, now); err != nil {
 		s.failed(w, err)
 		return
 	}
@@ -784,3 +805,59 @@ func (s *Server) listGroupInvitations(w http.ResponseWriter, r *http.Request, us
 }
 
 func now16() time.Time { return time.Now() }
+
+// listGroupMembers shows the members of a group the caller belongs to.
+//
+// It is a membership list, not a message list: the interface needs it to offer the
+// three actions ownership governs, and it must not become a way to enumerate the
+// people in a private group. A caller who is not an accepted member gets the same
+// answer as one asking about a group that does not exist.
+func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, user db.User) {
+	if !s.requirePrivateConversations(w) {
+		return
+	}
+	groupID := r.PathValue("id")
+	var member int
+	if err := s.store.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM conversation_members m
+		WHERE m.conversation_id=? AND m.user_id=? AND m.state='accepted')`, groupID, user.ID).Scan(&member); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if member != 1 {
+		hidden(w)
+		return
+	}
+	rows, err := s.store.QueryContext(r.Context(), `SELECT u.id,u.username,u.display_name,m.state,
+        EXISTS(SELECT 1 FROM group_owners o WHERE o.conversation_id=m.conversation_id AND o.user_id=u.id) AS owned
+        FROM conversation_members m JOIN users u ON u.id=m.user_id
+        WHERE m.conversation_id=? AND m.state='accepted' AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0
+        ORDER BY owned DESC, u.username`, groupID)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer rows.Close()
+	type groupMemberRow struct {
+		ID          string `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		State       string `json:"state"`
+		IsOwner     bool   `json:"is_owner"`
+	}
+	out := []groupMemberRow{}
+	for rows.Next() {
+		var m groupMemberRow
+		var owned int
+		if err := rows.Scan(&m.ID, &m.Username, &m.DisplayName, &m.State, &owned); err != nil {
+			s.failed(w, err)
+			return
+		}
+		m.IsOwner = owned == 1
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"members": out})
+}

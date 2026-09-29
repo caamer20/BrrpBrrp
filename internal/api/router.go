@@ -321,6 +321,7 @@ func (s *Server) routes() []route {
 		// (ADR 0016).
 		{http.MethodGet, "/api/groups", routePolicy{Capability: capabilityForActivity(), Note: "groups the caller has accepted; a group they were only invited to is not listed"}, s.listGroups},
 		{http.MethodPost, "/api/groups", routePolicy{Capability: capabilityForActivity(), Note: "open a group; the creator is its owner and first member"}, s.createGroup},
+		{http.MethodGet, "/api/groups/{id}/members", routePolicy{Capability: capabilityForActivity(), Note: "the membership list of a group the caller has joined, for the three actions ownership governs"}, s.listGroupMembers},
 		{http.MethodPost, "/api/groups/{id}/invite", routePolicy{Capability: capabilityForActivity(), Note: "invite one person to a group; owner only, and the invitation names the history rule"}, s.inviteToGroup},
 		{http.MethodPost, "/api/groups/{id}/leave", routePolicy{Capability: capabilityForActivity(), Note: "leave a group; an owner must transfer or name a successor in the same act"}, s.leaveGroup},
 		{http.MethodPost, "/api/groups/{id}/members/{user}/remove", routePolicy{Capability: capabilityForActivity(), Note: "remove a member; owner only, and what they read before stays theirs"}, s.removeGroupMember},

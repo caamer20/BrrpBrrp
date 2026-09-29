@@ -245,3 +245,44 @@ export interface MessageReport {
   updated_at: string;
   expires_at: string;
 }
+
+// A consenting group (ADR 0016). A group is a conversation the account has been
+// accepted into, not a list of people, so what the interface needs is who runs it,
+// how many are in it and what this account may do — never its messages, which are
+// read through the conversation the same shared model every other message is.
+export interface Group {
+  id: string;
+  name: string;
+  owner_id: string;
+  owner_name: string;
+  members: number;
+  pending_invitations: number;
+  created_at: string;
+  my_state: string;
+  can_invite: boolean;
+  can_transfer: boolean;
+}
+
+// A group invitation, in one of three states that are genuinely different: one the
+// caller can act on, one they already answered, and one their own group sent that
+// they have no part in. `my_state` is what distinguishes them.
+export interface GroupInvitation {
+  id: string;
+  group_id: string;
+  group_name: string;
+  inviter_name: string;
+  state: 'pending' | 'accepted' | 'rejected' | 'revoked' | 'expired';
+  created_at: string;
+  expires_at: string;
+  my_state: 'invited' | 'member' | 'sent';
+}
+
+// A group member, as far as the owner needs to know for the three actions that
+// ownership governs: invite, remove and transfer.
+export interface GroupMember {
+  id: string;
+  username: string;
+  display_name: string;
+  state: string;
+  is_owner: boolean;
+}

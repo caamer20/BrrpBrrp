@@ -27,6 +27,30 @@ Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canon
 
 ### Review 13 — M1 activity and M2 groups
 
+#### Consenting groups, with an interface
+
+The groups tab is part of the Messages dialog, alongside conversations, requests and
+blocked people, and it carries its own badge for invitations this account can still
+answer. A group feature nobody can reach is not delivered, so the rendered journey
+drives the whole thing: create, see the history rule stated before answering, invite,
+accept, hand over, remove, and confirm an outsider is not told the group exists.
+
+Four defects surfaced while building it, three of them in my own work and one a
+product limitation I had created:
+
+- the invitation field originally accepted only people **already in the group**, which
+  is the opposite of what an invitation is for. The owner is precisely the person who
+  knows whom to ask, so the picker offers anyone usable on the server.
+- the removal action was gated on the ability to *invite*, so a group with full
+  invitations could not remove anybody. Removal and handing over are ownership
+  actions; invitation is a separate allowance that can be spent.
+- the member list and the invitation list both read an owner flag through a scalar
+  subquery, which returns NULL rather than 0 for a non-owner and failed the scan
+  into an int as a 500 — indistinguishable from a real fault.
+- ownership that moves on one page leaves the other page's copy stale, and stale
+  authority correctly shows no removal action. The journey re-reads, which is what a
+  person does; the interface does not pretend otherwise.
+
 #### Consenting groups
 
 ADR 0016 and migrations 16–17 add groups on the shared conversation model. A group

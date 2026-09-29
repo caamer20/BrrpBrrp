@@ -2,13 +2,30 @@
   import { onDestroy, untrack } from 'svelte';
   import { api, errorMessage } from '../api';
   import { workspace } from '../workspace.svelte';
-  import type { DirectConversation, User } from '../types';
+  import type { DirectConversation, Group, GroupInvitation, GroupMember, User } from '../types';
   import Avatar from './Avatar.svelte';
   import ReportRequest from './ReportRequest.svelte';
   import Modal from './Modal.svelte';
   let directs = $state<DirectConversation[]>([]);
   let blocked = $state<User[]>([]);
   let allowRequests = $state(true);
+  // Groups the account has been accepted into, and the invitations addressed to it.
+  // Both are the caller's own state and both are gated by the same admission as the
+  // rest of this panel: a fetched list is not shown to an account that has changed
+  // since it was fetched (ADR 0016).
+  let groups = $state<Group[]>([]);
+  let groupInvitations = $state<GroupInvitation[]>([]);
+  let groupMembers = $state<GroupMember[]>([]);
+  // The open group's id and the member list belong together: a removal changes the
+  // member list, and showing a stale one next to a fresh group would offer an action
+  // against somebody who is no longer there.
+  let openGroup = $state('');
+  let newGroupName = $state('');
+  // Who the owner is inviting, and who they are inviting from. The picker's list is
+  // the people who are not already in the group, so the interface cannot offer an
+  // invite to somebody who is already there.
+  let invitingGroup = $state('');
+  let inviteUsername = $state('');
   let loading = $state(true);
   let busy = $state(false);
   let error = $state('');
@@ -56,6 +73,14 @@
     request.version === version &&
     workspace.privateConversationsEnabled &&
     !workspace.authorizationUnverified;
+  // The group badge counts invitations this account can still answer, which is a
+  // different question from the outstanding request badge and is not derived from it.
+  const pendingGroupInvitations = $derived(
+    scope && admitted(scope)
+      ? groupInvitations.filter((row) => row.my_state === 'invited' && row.state === 'pending')
+          .length
+      : 0
+  );
   const visible = $derived(scope && admitted(scope) ? directs : []);
   const visibleBlocks = $derived(scope && admitted(scope) ? blocked : []);
   const candidates = $derived(
@@ -126,15 +151,19 @@
     loading = true;
     error = '';
     try {
-      const [items, blocks, preference] = await Promise.all([
+      const [items, blocks, preference, groupList, invitations] = await Promise.all([
         api<DirectConversation[]>('/directs'),
         api<User[]>('/me/blocks'),
-        api<{ allow_requests: boolean }>('/me/contact-preferences')
+        api<{ allow_requests: boolean }>('/me/contact-preferences'),
+        api<{ groups: Group[] }>('/groups'),
+        api<{ invitations: GroupInvitation[] }>('/group-invitations')
       ]);
       if (!admitted(request)) return;
       directs = items;
       blocked = blocks;
       allowRequests = preference.allow_requests;
+      groups = groupList.groups;
+      groupInvitations = invitations.invitations;
       scope = request;
     } catch (failure) {
       if (admitted(request)) error = errorMessage(failure);
@@ -142,6 +171,75 @@
       if (admitted(request)) loading = false;
     }
   }
+  // The member list is fetched for one group at a time rather than for all of them,
+  // because it is only needed while somebody is acting on one, and a private group's
+  // membership is not something to hold for every group in the list at once.
+  async function openGroupMembers(groupId: string) {
+    const request = identity();
+    if (!admitted(request)) return;
+    if (openGroup === groupId) {
+      openGroup = '';
+      groupMembers = [];
+      return;
+    }
+    try {
+      const result = await api<{ members: GroupMember[] }>(`/groups/${groupId}/members`);
+      if (!admitted(request)) return;
+      groupMembers = result.members;
+      openGroup = groupId;
+    } catch (failure) {
+      if (admitted(request)) error = errorMessage(failure);
+    }
+  }
+
+  // Group mutations go through act, so they carry the same admission, busy and
+  // supersession rules as everything else in this panel. A refused lifecycle action
+  // says why, and the list is re-read rather than patched locally, so the interface
+  // cannot claim a membership the server did not record.
+  // Who may be invited to the open group: anybody on this server who is usable and
+  // not already a member. Restricting this to existing members was wrong — the
+  // point of an invitation is to add somebody who is not in the group yet, and the
+  // owner is precisely the person who knows whom to ask.
+  const inviteCandidates = $derived(
+    (workspace.state?.users || []).filter(
+      (person) =>
+        person.id !== workspace.user?.id &&
+        !person.is_deactivated &&
+        !person.is_banned &&
+        !person.is_deleted &&
+        !groupMembers.some((member) => member.id === person.id)
+    )
+  );
+
+  async function sendGroupInvite(person: User) {
+    if (!invitingGroup) return;
+    const groupId = invitingGroup;
+    if (
+      await act(`/groups/${groupId}/invite`, 'POST', { user_id: person.id }, 'Invitation sent.')
+    ) {
+      invitingGroup = '';
+      inviteUsername = '';
+    }
+  }
+
+  async function createGroup() {
+    const name = newGroupName.trim();
+    if (!name) return;
+    if (await act('/groups', 'POST', { name }, 'Group created.')) newGroupName = '';
+  }
+  async function groupLifecycle(path: string, body: unknown, success: string) {
+    if (!(await act(path, 'POST', body, success))) return;
+    if (openGroup) {
+      try {
+        const result = await api<{ members: GroupMember[] }>(`/groups/${openGroup}/members`);
+        groupMembers = result.members;
+      } catch {
+        // The lifecycle succeeded; a member list that cannot be re-read is left as it
+        // is rather than shown as empty, which would read as "nobody is here".
+      }
+    }
+  }
+
   // act reports whether the mutation was admitted and completed for this mounted
   // account: a no-op on stale state or a superseded result answers false, never
   // "no error", so callers never treat work nobody confirmed as a success (R8-03).
@@ -230,7 +328,7 @@
     </p>
   {/if}
   <nav class="admin-tabs" aria-label="Messages sections">
-    {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests', count: outstanding }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
+    {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests', count: outstanding }, { id: 'groups', label: 'Groups', count: pendingGroupInvitations }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
       <button
         aria-current={tab === item.id ? 'page' : undefined}
         class:active={tab === item.id}
@@ -350,6 +448,168 @@
             >{/if}
         </article>
       {:else}{#if !loading}<p role="status">No message requests.</p>{/if}{/each}
+    {:else if tab === 'groups'}
+      <!-- The history rule is stated here, before an invitation is answered rather
+           than after, because it is part of what accepting means (ADR 0016). -->
+      <p class="muted">
+        A group is shared with the people in it. Anyone you accept can read everything already said
+        in it, including before they joined.
+      </p>
+
+      {#each groupInvitations.filter((row) => row.my_state === 'invited') as invitation (invitation.id)}
+        <article>
+          <h3>{invitation.group_name || 'A group'}</h3>
+          <p>
+            {invitation.inviter_name} invited you. Accepting means you can read everything already said
+            in the group, and they can read everything you say in it.
+          </p>
+          <small>Open until {new Date(invitation.expires_at).toLocaleString()}</small>
+          <div class="button-row">
+            <button
+              onclick={() =>
+                act(
+                  `/group-invitations/${invitation.id}/accept`,
+                  'POST',
+                  {},
+                  'You joined the group.'
+                )}>Accept</button
+            ><button
+              class="secondary"
+              onclick={() =>
+                act(
+                  `/group-invitations/${invitation.id}/reject`,
+                  'POST',
+                  {},
+                  'Invitation declined.'
+                )}>Decline</button
+            >
+          </div>
+        </article>
+      {/each}
+
+      <form
+        onsubmit={(event) => {
+          event.preventDefault();
+          void createGroup();
+        }}
+      >
+        <label for="new-group-name">Start a group</label>
+        <input
+          id="new-group-name"
+          maxlength="80"
+          required
+          bind:value={newGroupName}
+          placeholder="A name your members will recognise"
+        />
+        <button disabled={busy || !newGroupName.trim()}>Create group</button>
+      </form>
+
+      {#if !loading && groups.length === 0}
+        <p role="status">You are not in any groups yet. Start one, or wait for an invitation.</p>
+      {/if}
+      {#each groups as group (group.id)}
+        <article>
+          <h3>{group.name}</h3>
+          <p>
+            {group.members === 1 ? '1 member' : `${group.members} members`}, run by
+            {group.owner_name}.{#if group.pending_invitations > 0}
+              {group.pending_invitations === 1
+                ? '1 invitation waiting.'
+                : `${group.pending_invitations} invitations waiting.`}
+            {/if}
+          </p>
+          <div class="button-row">
+            <button
+              onclick={() => openGroupMembers(group.id)}
+              aria-expanded={openGroup === group.id}
+              >{openGroup === group.id ? 'Hide members' : 'Members'}</button
+            >
+            {#if group.can_invite}
+              <button
+                class="secondary"
+                aria-expanded={invitingGroup === group.id}
+                onclick={() => {
+                  invitingGroup = invitingGroup === group.id ? '' : group.id;
+                  inviteUsername = '';
+                  error = '';
+                }}>{invitingGroup === group.id ? 'Cancel invite' : 'Invite'}</button
+              >
+            {/if}
+            <!-- Any member may leave. The owner of a group that still has people in it
+                 cannot simply walk out of it, and the server says so with an
+                 actionable reason; the notice here is only what happened on success. -->
+            <button
+              class="secondary"
+              onclick={() =>
+                groupLifecycle(
+                  `/groups/${group.id}/leave`,
+                  {},
+                  group.can_transfer && group.members > 1
+                    ? 'Name a new owner on this card before leaving, or transfer it first.'
+                    : 'You left the group.'
+                )}>Leave</button
+            >
+          </div>
+          {#if invitingGroup === group.id}
+            <label for="group-invite-search">Invite someone</label>
+            <input
+              id="group-invite-search"
+              type="search"
+              bind:value={inviteUsername}
+              placeholder="Name or username"
+            />
+            {#each inviteCandidates.filter((person) => `${person.display_name} ${person.username}`
+                .toLowerCase()
+                .includes(inviteUsername.toLowerCase())) as person (person.id)}
+              <div class="admin-row">
+                <Avatar user={person} />
+                <div class="admin-row-label">
+                  <strong>{person.display_name || person.username}</strong><small
+                    >@{person.username}</small
+                  >
+                </div>
+                <button
+                  class="secondary"
+                  disabled={busy}
+                  onclick={() => void sendGroupInvite(person)}>Send invitation</button
+                >
+              </div>
+            {/each}
+          {/if}
+          {#if openGroup === group.id}
+            <h4>Members</h4>
+            {#if groupMembers.length === 0}
+              <p role="status">No members to show.</p>
+            {/if}
+            <ul>
+              {#each groupMembers as member (member.id)}
+                <li>
+                  {member.display_name || member.username}{member.is_owner ? ' (owner)' : ''}
+                  {#if group.can_transfer && !member.is_owner && member.id !== workspace.user?.id}
+                    <button
+                      class="secondary"
+                      onclick={() =>
+                        groupLifecycle(
+                          `/groups/${group.id}/members/${member.id}/remove`,
+                          {},
+                          `${member.display_name || member.username} was removed.`
+                        )}>Remove</button
+                    ><button
+                      class="secondary"
+                      onclick={() =>
+                        groupLifecycle(
+                          `/groups/${group.id}/transfer`,
+                          { new_owner_id: member.id },
+                          `${member.display_name || member.username} now runs this group.`
+                        )}>Make owner</button
+                    >
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </article>
+      {/each}
     {:else if tab === 'people'}
       {#if target}<form class="admin-form" onsubmit={start}>
           <h3>Request a conversation with {target.display_name || target.username}</h3>
