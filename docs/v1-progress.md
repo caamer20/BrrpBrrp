@@ -89,6 +89,56 @@ notice would have arrived.
 Verified: go vet clean, the full Go suite green, 132 frontend tests, svelte-check 0/0
 over 135 files, both browser modes (13 default-off, 21 private-enabled).
 
+### Review 14 — the private group integration boundary
+
+Source `d08d16e`, schema 17. Four V13 findings closed, each with a permanent
+regression verified failing before its change and passing after.
+
+**V13-02, group metadata in ordinary audit.** A plain `audit.read` account could see
+`group.invited` and `group.joined` with the actor's username and the private group id.
+Group events are now part of the restricted classification, so the one classifier
+covers writers, both readers and cleanup. The audience defect underneath it is
+recorded rather than patched: the restricted feed was gated on
+`report.review_private`, which meant the only accounts able to read who had joined a
+group were evidence reviewers — a grant made to see submitted text was in practice a
+grant to browse group membership. It is now gated on `audit.read`. Two M0 tests
+encoded the old conflation and are updated to the separation.
+
+**V13-03, membership changes bypassing the revocation protocol.** Accept, leave,
+remove and transfer committed as ordinary writes. Reproduced before the fix: a
+removal left the authorization revision at 2 → 2 and a registered attachment
+response running. They now go through the direct-conversation authority protocol —
+revision from the committing transaction, session fencing through it, commit, then
+stream cancellation and post-commit publication. On the client the panel cleared
+direct state on an authority change but not group, invitation or member arrays, and
+the member fetch admitted its late response; both are fenced now, and a group
+transfer's success notice was being wiped by the invalidation it caused, so a person
+who had just handed over a group saw nothing happen.
+
+**V13-04, invitation and empty-group lifecycle.** The reproduced sequence — sole
+owner leaves with an invitation pending, invitee accepts and receives 200, then
+reading the group 404s — is now refused. Acceptance verifies the group is still
+active and checks current block state inside the granting transaction; a block
+closes the invitation rather than leaving it for a later unblock. Ending a group
+closes its invitations and removes its owner row in the same transaction. Invitation
+creation applies the same contact policy, and an absent `allow_requests` row is the
+documented default rather than a refusal.
+
+**V13-01, groups as conversations.** The snapshot carries groups under their own
+identity rather than a synthesised peer; `isPrivate` is the single routing decision
+the navigation, permissions, paths and deep links share; the sidebar lists them; a
+card offers Open conversation; and message, reply, reaction, upload, scoped search
+and selected-message reporting all reach the shared handlers. Proven by
+`TestAGroupIsUsableThroughTheSharedConversationPipeline`.
+
+**Not finished, and not claimed.** The two rendered group journeys are committed
+failing. The server behaviour is proven by `internal/api`; the browser journeys need
+their card locators finished and a full run. Several edits believed applied had not
+been, because Prettier reformatted the file between the edit and the run, and the
+error context Playwright writes lags the code — both cost more time than the work
+itself. The next coder should finish the locators from the current file rather than
+trust the recorded error.
+
 ### Review 13 and the M1 activity foundation
 
 ADR 0015 and migration 15 add durable account activity and private notification
