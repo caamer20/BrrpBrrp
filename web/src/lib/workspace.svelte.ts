@@ -50,14 +50,16 @@ class Workspace {
   // Which section the messages dialog opens on, so the sidebar badge can offer a
   // direct way into Requests rather than making a member hunt through tabs to act
   // on a count they were just shown.
-  messagesTab = $state<'conversations' | 'requests' | 'groups' | 'people' | 'blocked'>(
+  messagesTab = $state<'conversations' | 'requests' | 'activity' | 'groups' | 'people' | 'blocked'>(
     'conversations'
   );
   // openMessagesTab is the single way the sidebar chooses which section the
   // messages dialog opens on. Doing it in one place means the dialog's own
   // read-on-open cannot disagree with what the entry just set, which is what
   // made a stale tab outlive the click that was supposed to change it.
-  openMessagesTab(tab: 'conversations' | 'requests' | 'groups' | 'people' | 'blocked') {
+  openMessagesTab(
+    tab: 'conversations' | 'requests' | 'activity' | 'groups' | 'people' | 'blocked'
+  ) {
     this.messagesTab = tab;
     this.messagesOpen = true;
   }

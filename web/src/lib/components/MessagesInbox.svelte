@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from 'svelte';
   import { api, errorMessage } from '../api';
+  import { activity } from '../activity.svelte';
   import { workspace } from '../workspace.svelte';
   import type { DirectConversation, Group, GroupInvitation, GroupMember, User } from '../types';
+  import ActivityPanel from './ActivityPanel.svelte';
   import Avatar from './Avatar.svelte';
   import ReportRequest from './ReportRequest.svelte';
   import Modal from './Modal.svelte';
@@ -81,6 +83,10 @@
     !workspace.authorizationUnverified;
   // The group badge counts invitations this account can still answer, which is a
   // different question from the outstanding request badge and is not derived from it.
+  const visibleActivityUnacknowledged = $derived(
+    scope && admitted(scope) ? activity.unacknowledged : 0
+  );
+  const activityCount = $derived(visibleActivityUnacknowledged);
   const pendingGroupInvitations = $derived(
     scope && admitted(scope)
       ? groupInvitations.filter((row) => row.my_state === 'invited' && row.state === 'pending')
@@ -391,7 +397,7 @@
     </p>
   {/if}
   <nav class="admin-tabs" aria-label="Messages sections">
-    {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests', count: outstanding }, { id: 'groups', label: 'Groups', count: pendingGroupInvitations }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
+    {#each [{ id: 'conversations', label: 'Conversations' }, { id: 'requests', label: 'Requests', count: outstanding }, { id: 'activity', label: 'Activity', count: activityCount }, { id: 'groups', label: 'Groups', count: pendingGroupInvitations }, { id: 'people', label: 'New conversation' }, { id: 'blocked', label: 'Blocked people' }] as item}
       <button
         aria-current={tab === item.id ? 'page' : undefined}
         class:active={tab === item.id}
@@ -516,6 +522,8 @@
             >{/if}
         </article>
       {:else}{#if !loading}<p role="status">No message requests.</p>{/if}{/each}
+    {:else if tab === 'activity'}
+      <ActivityPanel />
     {:else if tab === 'groups'}
       <!-- The history rule is stated here, before an invitation is answered rather
            than after, because it is part of what accepting means (ADR 0016). -->
