@@ -30,6 +30,12 @@
   let busy = $state(false);
   let error = $state('');
   let notice = $state('');
+  // A committed mutation's outcome survives the invalidation it causes. A group
+  // change bumps the authorization generation twice — once for the mutation and once
+  // for the refresh that follows it — so clearing on the first wiped a notice about
+  // work that had committed, and a person who had just handed over a group was told
+  // nothing had happened (completion review 13, V13-01).
+  let noticePending = $state(false);
   let query = $state('');
   let target = $state<User | null>(null);
   let introduction = $state('');
@@ -129,14 +135,6 @@
     alive = false;
     version++;
   });
-  // Fetch on open. The effect below re-runs when the account, the authorization
-  // generation or the contact list changes, none of which happens simply by opening
-  // the panel, so without this the first render had whatever the last account left
-  // behind — or nothing at all.
-  $effect(() => {
-    if (!workspace.privateConversationsEnabled || workspace.authorizationUnverified) return;
-    untrack(() => void load());
-  });
   $effect(() => {
     const account = workspace.user?.id || '';
     workspace.authorizationGeneration;
@@ -159,7 +157,13 @@
       inviteUsername = '';
       openGroup = '';
       scope = null;
-      error = notice = '';
+      error = '';
+      if (noticePending) {
+        // Keep it: the invalidation is describing the change this notice reports.
+        noticePending = false;
+      } else {
+        notice = '';
+      }
       loading = false;
       busy = false;
       // Fetched data is refreshed, but the same account's unsent request text is
@@ -171,7 +175,12 @@
         introduction = '';
         draftAccount = '';
       }
-      if (ready) void load();
+      // One effect clears the stale private state and then fetches, in that order.
+      // As two effects they raced: the fetch could land before `scope` was cleared,
+      // so its result was discarded as unadmitted and the panel showed nothing —
+      // a member who had just created a group was told they were in none
+      // (completion review 13, V13-01).
+      if (ready) load();
     });
   });
   async function load() {
@@ -305,12 +314,15 @@
       // only while this is still the mounted account's panel (completion review 13,
       // V13-01).
       await load();
-      // The effect that clears the notice runs on the generation the refresh just
-      // produced, which is the same turn; the notice is therefore set on the next
-      // one, so it lands after the panel has settled rather than being wiped by the
-      // invalidation it describes.
+      // Set after the reload, which itself advances the generation for a group
+      // change — so a guard keyed on the pre-change generation refuses it, and a
+      // person who had just handed over a group was told nothing had happened
+      // (completion review 13, V13-01). The mutation committed and this panel
+      // issued it, so the notice follows the panel's own lifetime rather than a
+      // continuation the invalidation has just superseded.
       if (alive && request.account === workspace.user?.id) {
         await tick();
+        noticePending = true;
         notice = success;
       }
       return true;
