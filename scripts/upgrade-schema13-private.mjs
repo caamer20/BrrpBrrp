@@ -16,8 +16,9 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 const option = (flag, fallback) => {
@@ -68,7 +69,7 @@ console.log(`1. The seed really is schema 13`);
 const before = read(work, 'SELECT version FROM schema_migrations ORDER BY version');
 const versions = before.map((row) => row.version);
 check('the seed has 13 applied migrations', versions.at(-1) === 13, `highest is ${versions.at(-1)}`);
-check('migration 14 has not been applied', !versions.includes(14));
+check('the seed is still the schema-13 snapshot', versions.at(-1) === 13, `highest is ${versions.at(-1)}`);
 // Proof that the column does not exist yet: querying it raises, so the schema
 // itself is inspected rather than the rows. This is the state migration 14 exists
 // to change, and the P10 rehearsal skipped it by upgrading from schema 12.
@@ -85,13 +86,42 @@ check(
 );
 
 console.log('\n2. Migrate with the current binary');
+// The registry this build carries, read from the source rather than assumed. A tool
+// that hard-codes "one more migration" stops describing the product the moment a
+// second one exists, and then rejects a healthy upgrade.
+function registryVersions() {
+  // The registry sits beside this script, so it is located from the script rather
+  // than from the working directory, which the harness changes.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const source = readFileSync(join(repoRoot, 'internal', 'db', 'migrations.go'), 'utf8');
+  return [...source.matchAll(/\{Version: (\d+),/g)]
+    .map((match) => Number(match[1]))
+    .sort((a, b) => a - b);
+}
+
 const migrated = run(work, 'migrate');
 console.log(`  ${migrated.trim().split('\n').at(-1)}`);
 const verified = run(work, 'verify');
 console.log(`  ${verified.trim()}`);
 const after = read(work, 'SELECT version FROM schema_migrations ORDER BY version').map((row) => row.version);
-check('migration 14 is now applied', after.includes(14), `${after.length} migrations`);
-check('no earlier migration was re-applied', after.length === versions.length + 1);
+// The pending set is whatever the source registry says it is, not a single migration.
+// The tool was written when exactly one was outstanding and rejected every valid
+// result after that, which made a healthy upgrade look like a broken one
+// (completion review 13, V13-10).
+const expected = registryVersions().filter((version) => version > versions.at(-1));
+check(
+  'every migration this build carries has been applied',
+  expected.every((version) => after.includes(version)),
+  `expected ${expected.join(',') || 'none'} beyond ${versions.at(-1)}`
+);
+check(
+  'no migration was skipped',
+  after.length === versions.length + expected.length,
+  `${versions.length} -> ${after.length}`
+);
+check('no earlier migration was re-applied or reordered',
+  after.filter((version) => version <= versions.at(-1)).join(',') === versions.join(','),
+  after.join(','));
 
 console.log('\n3. Every preserved value is identical, not merely present');
 for (const [name, sql] of Object.entries(PRESERVED)) {

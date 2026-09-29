@@ -447,7 +447,7 @@ async function main() {
         "p10-rehearsal-reviewers",
         "p10 rehearsal reviewers",
         20,
-        JSON.stringify(["report.review_private"]),
+        JSON.stringify(["report.review_private", "audit.read"]),
         seededAt,
         seededAt
       );
@@ -885,6 +885,10 @@ async function main() {
     const echoQueueRestored = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: echoRestored });
     check("the restored copy still reads the revoked reviewer grant as live", echoQueueRestored.status === 200,
       `HTTP ${echoQueueRestored.status}`);
+    // The restricted audit feed is gated on audit.read rather than on the evidence
+    // capability: a grant made to see submitted text is not a grant to read an audit
+    // trail (completion review 13, V13-02). The rehearsal's reviewer holds both, so
+    // the restored grant is still visible here.
     const echoAuditRestored = await api(restored.base, "GET", "/api/admin/private-reports/audit", { cookie: echoRestored });
     check("and it restores that access to the restricted audit feed as well", echoAuditRestored.status === 200,
       `HTTP ${echoAuditRestored.status}`);
