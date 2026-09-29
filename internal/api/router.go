@@ -315,6 +315,19 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/api/me/activity", routePolicy{Capability: capabilityForActivity(), Note: "the caller's own activity, filtered by current access; never another account's"}, s.listActivity},
 		{http.MethodPost, "/api/me/activity/acknowledge", routePolicy{Capability: capabilityForActivity(), Note: "monotonic acknowledgment of the caller's own activity; separate from reading so a failed read cannot consume it"}, s.acknowledgeActivity},
 		{http.MethodGet, "/api/me/notification-preferences", routePolicy{Note: "the caller's own private notification preferences, defaulting to the documented quiet defaults"}, s.privateNotificationPreference},
+		// Groups are the shared conversation model with kind='group' and membership,
+		// not a second message service. Listing is the caller's own groups; inviting
+		// and accepting are separate acts, and only the recipient may accept
+		// (ADR 0016).
+		{http.MethodGet, "/api/groups", routePolicy{Capability: capabilityForActivity(), Note: "groups the caller has accepted; a group they were only invited to is not listed"}, s.listGroups},
+		{http.MethodPost, "/api/groups", routePolicy{Capability: capabilityForActivity(), Note: "open a group; the creator is its owner and first member"}, s.createGroup},
+		{http.MethodPost, "/api/groups/{id}/invite", routePolicy{Capability: capabilityForActivity(), Note: "invite one person to a group; owner only, and the invitation names the history rule"}, s.inviteToGroup},
+		{http.MethodPost, "/api/groups/{id}/leave", routePolicy{Capability: capabilityForActivity(), Note: "leave a group; an owner must transfer or name a successor in the same act"}, s.leaveGroup},
+		{http.MethodPost, "/api/groups/{id}/members/{user}/remove", routePolicy{Capability: capabilityForActivity(), Note: "remove a member; owner only, and what they read before stays theirs"}, s.removeGroupMember},
+		{http.MethodPost, "/api/groups/{id}/transfer", routePolicy{Capability: capabilityForActivity(), Note: "move group ownership atomically to an accepted member"}, s.transferGroupOwnership},
+		{http.MethodGet, "/api/group-invitations", routePolicy{Capability: capabilityForActivity(), Note: "invitations addressed to the caller, plus the ones their own groups have sent"}, s.listGroupInvitations},
+		{http.MethodPost, "/api/group-invitations/{id}/accept", routePolicy{Capability: capabilityForActivity(), Note: "the recipient's act alone; the inviter cannot accept for them"}, s.acceptGroupInvitation},
+		{http.MethodPost, "/api/group-invitations/{id}/reject", routePolicy{Capability: capabilityForActivity(), Note: "the recipient declining; recorded rather than deleted"}, s.rejectGroupInvitation},
 		{http.MethodPut, "/api/me/notification-preferences", routePolicy{Note: "interruption preferences only; grants no access and changes no history"}, s.setPrivateNotificationPreference},
 		{http.MethodGet, "/api/admin/request-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "submitted request-introduction evidence only; the conversation is omitted and cannot be opened"}, s.listRequestEvidence},
 		{http.MethodPatch, "/api/admin/request-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "nonpunitive triage of one request evidence record"}, s.reviewRequestEvidence},

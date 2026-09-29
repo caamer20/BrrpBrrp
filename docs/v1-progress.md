@@ -2,7 +2,7 @@
 
 **Last updated:** 28 September 2026 (P10 tranche; review 11)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.7** (schema **15**, backup format **2**)
+**Candidate:** **0.4.0-alpha.7** (schema **17**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
 **Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
 **Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
@@ -24,6 +24,46 @@ the evidence level of each claim and the acceptance test that pins it, is in
 ## Current private-message tranche
 
 Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canonical direct requests, consent, durable contact limits, blocking, shared message/file/reply/search/read behavior and an opt-in inbox. ADR 0013 and 0014 add selected private-message evidence reporting and recipient-only request evidence, with `report.review_private` as a distinct delegated capability. This is partial progress in WP-09–11, not completed private messaging or v1 acceptance: push/activity, groups, calls, screen sharing and independent review remain. Private conversations default off.
+
+### Review 13 — M1 activity and M2 groups
+
+#### Consenting groups
+
+ADR 0016 and migrations 16–17 add groups on the shared conversation model. A group
+is a `conversations` row with `kind='group'` and members in `conversation_members` —
+not a second message store. The schema has said `group` since migration 6 and every
+access check was written against membership rather than against "is this a direct
+pair", so the work was generalizing one existing check rather than adding a parallel
+system.
+
+Three contracts are decided in the ADR rather than in whichever handler was written
+first. **History**: an accepted member reads the group's earlier history, stated before
+acceptance. **Blocking**: a block does *not* hide a group conversation — there is no
+per-pair view of a shared room to hide — and the product does not offer an affordance
+promising otherwise; membership is the protection and the block governs direct
+contact. **Ownership**: one owner, atomic transfer, an owner cannot leave a group that
+still has members, and the last member leaving removes the group rather than demanding
+a successor who does not exist.
+
+Two defects were found by existing tests rather than by new ones, and both are the
+kind a group introduction causes. Generalizing the membership check first required
+the partner to still be *usable*, which broke two load-bearing contracts: an erased
+peer's history must stay readable under the Deleted member identity, and a deactivated
+peer's must too — "blocking is not erasure". The partner check now asks only whether
+the peer is still a *member*; usability is a question for the write branch, which is
+where it belongs.
+
+#### Durable activity
+
+ADR 0015 and migration 15 add durable account activity and private notification
+preferences. Unread and the outstanding request badge stay derived; the missing piece
+was a durable record that survives being offline. Push destinations are typed, so a
+notice with no destination is refused rather than treated as unchecked — the previous
+shape read an empty channel id as "no check needed", which is exactly how a private
+notice would have arrived.
+
+Verified: go vet clean, the full Go suite green, 132 frontend tests, svelte-check 0/0
+over 135 files, both browser modes (13 default-off, 21 private-enabled).
 
 ### Review 13 and the M1 activity foundation
 

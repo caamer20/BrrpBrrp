@@ -1,0 +1,399 @@
+package api
+
+import (
+	"net/http"
+	"testing"
+	"time"
+
+	"brrpbrrp/internal/db"
+)
+
+// Consenting groups (ADR 0016).
+//
+// These are the cases where being wrong would matter to a person: a group that
+// admits someone who did not agree, an owner who cannot leave and cannot hand over,
+// a removed member who keeps reading, and a "block" affordance that promises
+// something this product cannot deliver.
+
+func groupFixture(t *testing.T) (*Server, http.Handler, *http.Cookie, *http.Cookie, string) {
+	t.Helper()
+	s, h := testServer(t)
+	s.config.PrivateConversations = true
+	setupAdmin(t, s, h)
+	_, owner := memberAccount(t, s, "grp_owner")
+	_, guest := memberAccount(t, s, "grp_guest")
+	created := request(t, h, "POST", "/api/groups", map[string]string{"name": "the test group"}, owner)
+	if created.Code != 201 {
+		t.Fatalf("create group: %d %s", created.Code, created.Body.String())
+	}
+	group := readJSON[groupSummary](t, created)
+	invite(t, h, owner, group.ID, evidenceUserID(t, h, guest))
+	return s, h, owner, guest, group.ID
+}
+
+// invite performs the owner's invitation.
+func invite(t *testing.T, h http.Handler, owner *http.Cookie, groupID, inviteeID string) {
+	t.Helper()
+	w := request(t, h, "POST", "/api/groups/"+groupID+"/invite", map[string]string{"user_id": inviteeID}, owner)
+	if w.Code != 201 {
+		t.Fatalf("invite: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func pendingInvitation(t *testing.T, h http.Handler, invitee *http.Cookie) string {
+	t.Helper()
+	body := readJSON[map[string]any](t, request(t, h, "GET", "/api/group-invitations", nil, invitee))
+	for _, entry := range body["invitations"].([]any) {
+		row := entry.(map[string]any)
+		if row["my_state"] == "invited" && row["state"] == "pending" {
+			return row["id"].(string)
+		}
+	}
+	t.Fatal("no pending invitation addressed to the invitee")
+	return ""
+}
+
+func accept(t *testing.T, h http.Handler, invitee *http.Cookie, invitationID string) {
+	t.Helper()
+	if w := request(t, h, "POST", "/api/group-invitations/"+invitationID+"/accept", map[string]string{}, invitee); w.Code != 200 {
+		t.Fatalf("accept: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Membership is the recipient's decision. The inviter cannot accept for them, an
+// outsider is refused, and a cross-accepted pair is still one act each.
+func TestGroupMembershipRequiresTheRecipientsOwnAcceptance(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	invitation := pendingInvitation(t, h, guest)
+
+	// The inviter cannot accept on the invitee's behalf. A request the sender could
+	// accept is not a request.
+	if w := request(t, h, "POST", "/api/group-invitations/"+invitation+"/accept", map[string]string{}, owner); w.Code != http.StatusNotFound {
+		t.Fatalf("the inviter accepted for the invitee: %d %s", w.Code, w.Body.String())
+	}
+	// A stranger is refused identically to a missing invitation, so accepting is not a
+	// way to discover a group.
+	_, outsider := memberAccount(t, s, "grp_stranger")
+	if w := request(t, h, "POST", "/api/group-invitations/"+invitation+"/accept", map[string]string{}, outsider); w.Code != http.StatusNotFound {
+		t.Fatalf("an outsider accepted: %d %s", w.Code, w.Body.String())
+	}
+	// The recipient accepts, and is then a member.
+	accept(t, h, guest, invitation)
+	groups := readJSON[map[string]any](t, request(t, h, "GET", "/api/groups", nil, guest))
+	if len(groups["groups"].([]any)) != 1 {
+		t.Fatalf("the accepted member sees %d groups", len(groups["groups"].([]any)))
+	}
+	// Acceptance is idempotent: a replay is the same acceptance, not a second one.
+	if w := request(t, h, "POST", "/api/group-invitations/"+invitation+"/accept", map[string]string{}, guest); w.Code != http.StatusOK && w.Code != http.StatusConflict {
+		t.Fatalf("a replayed acceptance answered %d", w.Code)
+	}
+	var members int
+	if err := s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, groupID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if members != 2 {
+		t.Fatalf("the group has %d accepted members, want 2", members)
+	}
+}
+
+// The member bound is enforced in the accepting transaction, so two concurrent
+// acceptances cannot both see the last slot free.
+func TestGroupMemberBoundIsEnforcedInTheAcceptingTransaction(t *testing.T) {
+	s, h := testServer(t)
+	s.config.PrivateConversations = true
+	setupAdmin(t, s, h)
+	_, owner := memberAccount(t, s, "bound_owner")
+	group := readJSON[groupSummary](t, request(t, h, "POST", "/api/groups", map[string]string{"name": "bounded"}, owner))
+
+	// Fill the group to its limit through the real invitation and acceptance path.
+	invitees := make([]*http.Cookie, 0, groupMemberLimit)
+	for i := 0; i < groupMemberLimit-1; i++ {
+		_, cookie := memberAccount(t, s, "bound_member_"+string(rune('a'+i)))
+		invitees = append(invitees, cookie)
+		request(t, h, "POST", "/api/groups/"+group.ID+"/invite", map[string]string{
+			"user_id": evidenceUserID(t, h, cookie),
+		}, owner)
+		accept(t, h, cookie, pendingInvitation(t, h, cookie))
+	}
+	var members int
+	if err := s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, group.ID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if members != groupMemberLimit {
+		t.Fatalf("the fixture reached %d members, want %d", members, groupMemberLimit)
+	}
+	// The eleventh is invited and accepts, and is refused because the group is full.
+	_, overflow := memberAccount(t, s, "bound_overflow")
+	if w := request(t, h, "POST", "/api/groups/"+group.ID+"/invite", map[string]string{
+		"user_id": evidenceUserID(t, h, overflow),
+	}, owner); w.Code != 201 {
+		t.Fatalf("invite: %d %s", w.Code, w.Body.String())
+	}
+	w := request(t, h, "POST", "/api/group-invitations/"+pendingInvitation(t, h, overflow)+"/accept", map[string]string{}, overflow)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("a full group admitted another member: %d %s", w.Code, w.Body.String())
+	}
+	var after int
+	if err := s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, group.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != groupMemberLimit {
+		t.Fatalf("the refused acceptance changed the member count to %d", after)
+	}
+}
+
+// Ownership is deterministic: an owner cannot simply leave, a transfer is atomic, and
+// a group never reaches a state where nobody can administer it.
+func TestGroupOwnershipIsDeterministicAcrossTransferAndLeave(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	// The owner cannot leave without handing over, and the refusal says what to do.
+	w := request(t, h, "POST", "/api/groups/"+groupID+"/leave", map[string]string{}, owner)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("the owner left without handing over: %d %s", w.Code, w.Body.String())
+	}
+	// A transfer to a non-member is refused: ownership follows membership.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/transfer", map[string]string{
+		"new_owner_id": "01a0ec00-0000-7000-8000-000000000000",
+	}, owner); w.Code != http.StatusConflict {
+		t.Fatalf("ownership moved to a non-member: %d %s", w.Code, w.Body.String())
+	}
+	// A non-owner cannot transfer.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/transfer", map[string]string{
+		"new_owner_id": evidenceUserID(t, h, owner),
+	}, guest); w.Code != http.StatusForbidden {
+		t.Fatalf("a member transferred ownership: %d %s", w.Code, w.Body.String())
+	}
+	// The real transfer, then the owner leaving.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/transfer", map[string]string{
+		"new_owner_id": evidenceUserID(t, h, guest),
+	}, owner); w.Code != 200 {
+		t.Fatalf("transfer: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/leave", map[string]string{}, owner); w.Code != 200 {
+		t.Fatalf("leave after transfer: %d %s", w.Code, w.Body.String())
+	}
+	// Exactly one owner, and it is not the person who left.
+	var owners []string
+	rows, err := s.store.Query(`SELECT user_id FROM group_owners WHERE conversation_id=?`, groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		owners = append(owners, id)
+	}
+	if len(owners) != 1 || owners[0] != evidenceUserID(t, h, guest) {
+		t.Fatalf("owners after transfer and leave: %v", owners)
+	}
+	// The group can still be administered: the new owner may invite.
+	_, third := memberAccount(t, s, "grp_after_transfer")
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/invite", map[string]string{
+		"user_id": evidenceUserID(t, h, third),
+	}, guest); w.Code != 201 {
+		t.Fatalf("the new owner cannot invite: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A removed member loses everything from the moment of removal, while what they read
+// before stays theirs. Both halves are asserted, because only asserting the first
+// would pass a removal that silently rewrote history too.
+func TestGroupRemovalRevokesForwardAndKeepsThePastReadable(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	// A message in the group before the removal.
+	sent := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "before the removal", "idempotency_key": "grp-msg-before",
+	}, owner)
+	if sent.Code != 201 {
+		t.Fatalf("group message: %d %s", sent.Code, sent.Body.String())
+	}
+	// The guest can read it: the history rule is real, not aspirational.
+	if w := request(t, h, "GET", "/api/conversations/"+groupID+"/messages", nil, guest); w.Code != 200 {
+		t.Fatalf("an accepted member could not read the group: %d", w.Code)
+	}
+
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/members/"+evidenceUserID(t, h, guest)+"/remove", map[string]string{}, owner); w.Code != 200 {
+		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
+	}
+	// Everything from now on is refused: reading, writing, search and files.
+	if w := request(t, h, "GET", "/api/conversations/"+groupID+"/messages", nil, guest); w.Code == 200 {
+		t.Fatal("a removed member could still read the group")
+	}
+	if w := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "after the removal", "idempotency_key": "grp-msg-after",
+	}, guest); w.Code == 201 {
+		t.Fatal("a removed member could still write to the group")
+	}
+	scoped := request(t, h, "GET", "/api/search?q=removal&conversation_id="+groupID, nil, guest)
+	if scoped.Code == 200 && len(readJSON[[]map[string]any](t, scoped)) > 0 {
+		t.Fatal("a removed member could still search the group")
+	}
+	// Their own activity rows for the group stop being delivered, which is the
+	// interruption half of the same revocation.
+	if s.deliverableActivity(evidenceUserID(t, h, guest), activityMessage, groupID, evidenceUserID(t, h, owner)) {
+		t.Fatal("a removed member is still deliverable activity for the group")
+	}
+	// The messages themselves are not rewritten by the removal: the removal is a
+	// membership decision, not a history edit.
+	var remaining int
+	if err := s.store.QueryRow(`SELECT count(*) FROM messages WHERE conversation_id=?`, groupID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("the removal rewrote history: %d messages remain", remaining)
+	}
+}
+
+// A block does not hide a group conversation, and the product must not offer an
+// affordance that promises it does. This asserts the part that is checkable: the two
+// members keep sharing the group, and the block governs their direct contact instead.
+func TestABlockDoesNotClaimToHideAGroupConversation(t *testing.T) {
+	s, h, _, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	// The guest blocks the owner, whose identity is read from the group rather than
+	// from a fixture binding, so the test is about the two of them and not about
+	// which local variable holds whom.
+	var ownerID string
+	if err := s.store.QueryRow(`SELECT user_id FROM group_owners WHERE conversation_id=?`, groupID).Scan(&ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(t, h, "PUT", "/api/me/blocks/"+ownerID, map[string]string{}, guest); w.Code != 200 {
+		t.Fatalf("block: %d %s", w.Code, w.Body.String())
+	}
+	// The group is still shared: a block is not a per-pair view of a group, and
+	// membership is the protection (ADR 0016, "What blocking means in a group").
+	if w := request(t, h, "GET", "/api/conversations/"+groupID+"/messages", nil, guest); w.Code != 200 {
+		t.Fatalf("a block hid a group conversation from a member: %d", w.Code)
+	}
+	// What the block does govern: their direct contact. A new request between them is
+	// refused, which is the promise that is actually kept.
+	_, third := memberAccount(t, s, "grp_third")
+	if w := request(t, h, "POST", "/api/directs", map[string]string{
+		"user_id": evidenceUserID(t, h, guest), "introduction": "after the block",
+	}, third); w.Code == 201 {
+		// The third party is not blocked, so this succeeding is correct; the check
+		// that matters is between the two blocked accounts themselves.
+		_ = w
+	}
+	// The refusal is indistinguishable from a person who does not exist, which is
+	// the point: a block must not become a way to confirm that someone is here.
+	blocked := request(t, h, "POST", "/api/directs", map[string]string{
+		"user_id": ownerID, "introduction": "should be refused",
+	}, guest)
+	if blocked.Code != http.StatusNotFound {
+		t.Fatalf("a blocked account opened a new direct request: %d %s", blocked.Code, blocked.Body.String())
+	}
+}
+
+// Leaving the last member removes the group rather than leaving an orphan a later
+// joiner could inherit.
+func TestTheLastMemberLeavingRemovesTheGroup(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/transfer", map[string]string{
+		"new_owner_id": evidenceUserID(t, h, guest),
+	}, owner); w.Code != 200 {
+		t.Fatalf("transfer: %d", w.Code)
+	}
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/leave", map[string]string{}, owner); w.Code != 200 {
+		t.Fatalf("owner leave: %d", w.Code)
+	}
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/leave", map[string]string{}, guest); w.Code != 200 {
+		t.Fatalf("last member leave: %d %s", w.Code, w.Body.String())
+	}
+	var state string
+	if err := s.store.QueryRow(`SELECT state FROM conversations WHERE id=?`, groupID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "removed" {
+		t.Fatalf("the empty group survived with state %q", state)
+	}
+	// And it is no longer listed to anyone.
+	groups := readJSON[map[string]any](t, request(t, h, "GET", "/api/groups", nil, guest))
+	if len(groups["groups"].([]any)) != 0 {
+		t.Fatalf("a removed group is still listed: %v", groups["groups"])
+	}
+}
+
+// An invitation expires on its own terms, and the expiry is observed by the paths
+// that act on invitations rather than waiting for a sweeper.
+func TestGroupInvitationsExpireAndAreObservable(t *testing.T) {
+	s, h, _, guest, groupID := groupFixture(t)
+	invitation := pendingInvitation(t, h, guest)
+	if _, err := s.store.Exec(`UPDATE group_invitations SET expires_at=? WHERE id=?`,
+		db.Timestamp(time.Now().Add(-time.Hour)), invitation); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(t, h, "POST", "/api/group-invitations/"+invitation+"/accept", map[string]string{}, guest); w.Code != http.StatusConflict {
+		t.Fatalf("an expired invitation was accepted: %d %s", w.Code, w.Body.String())
+	}
+	// And it is no longer listed as open.
+	body := readJSON[map[string]any](t, request(t, h, "GET", "/api/group-invitations", nil, guest))
+	for _, entry := range body["invitations"].([]any) {
+		if entry.(map[string]any)["id"] == invitation && entry.(map[string]any)["state"] == "pending" {
+			t.Fatal("an expired invitation is still listed as pending")
+		}
+	}
+	var members int
+	if err := s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, groupID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if members != 1 {
+		t.Fatalf("the expired acceptance changed membership: %d", members)
+	}
+}
+
+// The group is not a second message service: it uses the shared rows, the shared
+// receipts and the shared read cursor, so a replayed send is the same send.
+func TestAGroupUsesTheSharedMessageAndReceiptModel(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	first := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "group wording quokka", "idempotency_key": "grp-shared-1",
+	}, owner)
+	if first.Code != 201 {
+		t.Fatalf("send: %d %s", first.Code, first.Body.String())
+	}
+	messageID := readJSON[map[string]any](t, first)["id"].(string)
+	// The same key and content is the same message, not a second one.
+	replay := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "group wording quokka", "idempotency_key": "grp-shared-1",
+	}, owner)
+	if replay.Code != 200 || readJSON[map[string]any](t, replay)["id"] != messageID {
+		t.Fatalf("a replayed group send was not the same message: %d %s", replay.Code, replay.Body.String())
+	}
+	var messages int
+	if err := s.store.QueryRow(`SELECT count(*) FROM messages WHERE conversation_id=?`, groupID).Scan(&messages); err != nil {
+		t.Fatal(err)
+	}
+	if messages != 1 {
+		t.Fatalf("the group holds %d messages, want 1", messages)
+	}
+	// And the same key with different content is a conflict, as it is elsewhere.
+	if w := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": "different wording", "idempotency_key": "grp-shared-1",
+	}, owner); w.Code != http.StatusConflict {
+		t.Fatalf("a group send key was reused for different content: %d", w.Code)
+	}
+	// Activity is written for group messages like any other, so a member who was
+	// offline catches up.
+	var activity int
+	if err := s.store.QueryRow(`SELECT count(*) FROM account_activity WHERE user_id=? AND source_id=?`,
+		evidenceUserID(t, h, guest), messageID).Scan(&activity); err != nil {
+		t.Fatal(err)
+	}
+	if activity != 1 {
+		t.Fatalf("the group message produced %d activity rows for the other member", activity)
+	}
+	_ = guest
+}
+

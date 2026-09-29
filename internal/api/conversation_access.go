@@ -51,28 +51,88 @@ func (s *Server) conversationAccess(ctx context.Context, q db.Queryer, principal
 		scope.Channel = channel
 		return scope, nil
 	}
-	if !s.config.PrivateConversations || scope.Kind != "direct" || state != "active" || principal.Inactive {
+	// A private conversation is a direct pair or a group, and the only thing that
+	// distinguishes them for access is the shape of the membership: a direct pair
+	// holds exactly two accepted members, a group holds up to ten. Membership is
+	// checked once for both, rather than the direct case being written out and the
+	// group case added beside it — a second copy of this check is exactly how the
+	// two would come to disagree about who may read what (ADR 0016).
+	if !s.config.PrivateConversations || (scope.Kind != "direct" && scope.Kind != "group") || state != "active" || principal.Inactive {
 		return scope, authz.ErrUnavailable
 	}
 	var member bool
-	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members m JOIN users u ON u.id=m.user_id JOIN direct_pairs p ON p.conversation_id=m.conversation_id WHERE m.conversation_id=? AND m.user_id=? AND m.state='accepted' AND u.is_deleted=0 AND u.is_banned=0 AND u.is_deactivated=0 AND (p.user_low=m.user_id OR p.user_high=m.user_id))`, id, principal.UserID).Scan(&member)
+	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members m JOIN users u ON u.id=m.user_id
+		WHERE m.conversation_id=? AND m.user_id=? AND m.state='accepted' AND u.is_deleted=0 AND u.is_banned=0 AND u.is_deactivated=0)`, id, principal.UserID).Scan(&member)
 	if err != nil {
 		return scope, err
 	}
 	if !member {
 		return scope, authz.ErrUnavailable
 	}
+	// A direct pair additionally needs a partner who is still usable, so a
+	// conversation cannot keep accepting messages for one person while the other is
+	// deactivated. A group does not: its membership is the consent, and a member who
+	// is deactivated simply stops being counted.
+	// A direct pair needs its other half to still be a member, and only a member:
+	// erasure cascades the membership row away, so the erased peer is represented by
+	// the conversation's surviving half plus the tombstone the read path renders.
+	//
+	// The check does not ask whether that member is *usable*. Blocking is not
+	// erasure, and deactivation retains history, so requiring usability here would
+	// undo ADR 0011 and the deactivation contract. The cases where an unusable peer
+	// should stop a *write* are handled in the write branch below, where they belong.
+	if scope.Kind == "direct" {
+		var partner int
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members m
+			WHERE m.conversation_id=? AND m.user_id<>? AND m.state='accepted' AND m.user_id IN (
+				SELECT CASE WHEN user_low=? THEN user_high ELSE user_low END FROM direct_pairs WHERE conversation_id=?))`,
+			id, principal.UserID, principal.UserID, id).Scan(&partner); err != nil {
+			return scope, err
+		}
+		if partner != 1 {
+			// The peer is gone, which is a state this product has: a conversation
+			// whose other account was erased keeps its history for the survivor, so
+			// the read proceeds and the write branch refuses.
+			var survivor int
+			if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM direct_pairs p WHERE p.conversation_id=? AND (p.user_low=? OR p.user_high=?))`,
+				id, principal.UserID, principal.UserID).Scan(&survivor); err != nil {
+				return scope, err
+			}
+			if survivor != 1 {
+				return scope, authz.ErrUnavailable
+			}
+		}
+	}
 	if write {
 		if !principal.Allowed(authz.MessageSend) {
 			return scope, authz.ErrForbidden
 		}
-		var permitted bool
-		err = q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conversation_id=p.conversation_id AND m.state='accepted' AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0 AND m.user_id IN(p.user_low,p.user_high))=2 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=p.user_low AND b.blocked_id=p.user_high) OR (b.blocker_id=p.user_high AND b.blocked_id=p.user_low)) FROM direct_pairs p WHERE p.conversation_id=?`, id).Scan(&permitted)
-		if err != nil {
-			return scope, err
-		}
-		if !permitted {
-			return scope, refuse(403, "This conversation is read-only. Contact is blocked or the other account is unavailable.")
+		// The write check is per kind, and the reason differs. A direct pair is
+		// read-only when the two are blocked or one is unavailable. A group is not a
+		// pair, so there is no two-person relationship to read as blocked: a member
+		// who blocked another member still writes into the group, because a block
+		// governs their contact and not a shared room (ADR 0016). What a group does
+		// require is at least one other usable member, or it is a room with nobody in
+		// it that still accepts messages.
+		if scope.Kind == "direct" {
+			var permitted bool
+			err = q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM conversation_members m JOIN users u ON u.id=m.user_id WHERE m.conversation_id=p.conversation_id AND m.state='accepted' AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0 AND m.user_id IN(p.user_low,p.user_high))=2 AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=p.user_low AND b.blocked_id=p.user_high) OR (b.blocker_id=p.user_high AND b.blocked_id=p.user_low)) FROM direct_pairs p WHERE p.conversation_id=?`, id).Scan(&permitted)
+			if err != nil {
+				return scope, err
+			}
+			if !permitted {
+				return scope, refuse(403, "This conversation is read-only. Contact is blocked or the other account is unavailable.")
+			}
+		} else {
+			var usable int
+			if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members m JOIN users u ON u.id=m.user_id
+				WHERE m.conversation_id=? AND m.user_id<>? AND m.state='accepted' AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0)`,
+				id, principal.UserID).Scan(&usable); err != nil {
+				return scope, err
+			}
+			if usable != 1 {
+				return scope, refuse(403, "This group has nobody else in it to talk to.")
+			}
 		}
 	}
 	return scope, nil

@@ -51,14 +51,20 @@ const (
 const (
 	activityMessage = "message"
 	activityRequest = "request"
+	// activityGroupMessage is a message inside a consenting group. It is its own
+	// kind rather than a flag on a message, so a group activity row is
+	// distinguishable from a direct one without inferring it from the conversation
+	// (ADR 0016).
+	activityGroupMessage = "group_message"
 )
 
 // privateActivityKinds maps an activity kind to the private notification
 // preference that governs interrupting it. A kind with no entry is not a private
 // kind and is not gated by these preferences.
 var privateActivityKinds = map[string]string{
-	activityMessage: "direct_message",
-	activityRequest: "incoming_request",
+	activityMessage:      "direct_message",
+	activityGroupMessage: "group_message",
+	activityRequest:      "incoming_request",
 }
 
 // recordActivity writes one activity row for one recipient, inside the caller's
@@ -619,22 +625,43 @@ func capabilityForActivity() authz.Capability { return authz.MessageSend }
 // — this is the private half of the contract, and duplicating the channel one would
 // give the two different answers to the same question.
 func (s *Server) recordDirectMessageActivity(ctx context.Context, tx *sql.Tx, scope messageScope, senderID, messageID string, now time.Time) error {
-	if scope.Kind != "direct" {
+	if scope.Kind != "direct" && scope.Kind != "group" {
 		return nil
 	}
-	var recipientID string
-	// Current membership, not the conversation's members list as a whole: a settled or
-	// removed member is not addressed by a message sent afterwards.
-	err := tx.QueryRowContext(ctx, `SELECT m.user_id FROM conversation_members m JOIN users u ON u.id=m.user_id
-		WHERE m.conversation_id=? AND m.user_id<>? AND m.state='accepted' AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0
-		LIMIT 1`, scope.ID, senderID).Scan(&recipientID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	// Every other accepted, usable member is addressed, not one of them. A direct
+	// pair has exactly one; a group has up to nine, and a member who was offline is
+	// the very person a durable row exists for.
+	rows, err := tx.QueryContext(ctx, `SELECT m.user_id FROM conversation_members m JOIN users u ON u.id=m.user_id
+		WHERE m.conversation_id=? AND m.user_id<>? AND m.state='accepted' AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0`,
+		scope.ID, senderID)
 	if err != nil {
 		return err
 	}
-	return s.recordActivity(ctx, tx, recipientID, activityMessage, messageID, scope.ID, senderID, now)
+	defer rows.Close()
+	recipients := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		recipients = append(recipients, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// The group is addressed with a kind of its own, so its activity is
+	// distinguishable from a direct message's without inferring it from the
+	// conversation.
+	kind := activityMessage
+	if scope.Kind == "group" {
+		kind = activityGroupMessage
+	}
+	for _, recipientID := range recipients {
+		if err := s.recordActivity(ctx, tx, recipientID, kind, messageID, scope.ID, senderID, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // recordRequestActivity addresses a newly created pending request to its recipient.

@@ -61,6 +61,12 @@ var migration14 string
 //go:embed migration15.sql
 var migration15 string
 
+//go:embed migration16.sql
+var migration16 string
+
+//go:embed migration17.sql
+var migration17 string
+
 // Durability levels accepted for the SQLite synchronous pragma. The production
 // baseline is FULL so that a committed transaction survives an operating-system
 // crash or power loss on honest storage; NORMAL is available for disposable or

@@ -43,6 +43,8 @@ var Migrations = []Migration{
 	{Version: 13, Name: "private message evidence and durable submission limits", SQL: migration13},
 	{Version: 14, Name: "request attempt identity, request evidence and command receipts", SQL: migration14},
 	{Version: 15, Name: "durable account activity and private notification preferences", SQL: migration15},
+	{Version: 16, Name: "consenting groups on the shared conversation model", SQL: migration16},
+	{Version: 17, Name: "group activity kind", SQL: migration17, RebuildsReferences: true},
 }
 
 // SchemaVersion is the newest schema this binary writes and understands.
