@@ -11,10 +11,43 @@
     "modified": false
   },
   "archives": {
-    "native_darwin_amd64": {
-      "path": "dist/releases/brrpbrrp-0.4.0-alpha.7-darwin-amd64.zip",
-      "sha256": "0d4e87f81a3a13c77c94d0dc8c088d6bcf63b02c083e3c21804a7e5a800521bf",
-      "extracted_binary_sha256": "4dc6e2494f847124f4945ee624e9ae5815fb5a0c8d311aad32364e7c48d12d1d"
+    "native": {
+      "darwin-amd64": {
+        "archive": "dist/releases/brrpbrrp-0.4.0-alpha.7-darwin-amd64.zip",
+        "archive_sha256": "0d4e87f81a3a13c77c94d0dc8c088d6bcf63b02c083e3c21804a7e5a800521bf",
+        "extracted_executable": "brrpbrrp",
+        "extracted_executable_sha256": "4dc6e2494f847124f4945ee624e9ae5815fb5a0c8d311aad32364e7c48d12d1d"
+      },
+      "darwin-arm64": {
+        "archive": "dist/releases/brrpbrrp-0.4.0-alpha.7-darwin-arm64.zip",
+        "archive_sha256": "cd2c1dfe50a4e81efcb0aec027484af63937694555b3d2c2da88d0822dc15d00",
+        "extracted_executable": "brrpbrrp",
+        "extracted_executable_sha256": "69916e38bc8d81b368bd3010f25d18a61673592d3d6bfbd2e723e48454d85f8f"
+      },
+      "linux-amd64": {
+        "archive": "dist/releases/brrpbrrp-0.4.0-alpha.7-linux-amd64.zip",
+        "archive_sha256": "a60a4a48e0d439c886d98cabc0573bea826a3265eeaec3a45638477e7d004caa",
+        "extracted_executable": "brrpbrrp",
+        "extracted_executable_sha256": "250193da43a4f9decc545415c3f9b7df77c82511a003e06c20917f52dd115e3e"
+      },
+      "linux-arm64": {
+        "archive": "dist/releases/brrpbrrp-0.4.0-alpha.7-linux-arm64.zip",
+        "archive_sha256": "c940a84c918d0cf288127a2519df6d9910b77391031527d3d18f5ef0f7a6e244",
+        "extracted_executable": "brrpbrrp",
+        "extracted_executable_sha256": "9ee0976fb9cc8f216d867df1f0d636dc5ea84d30536bab384b3f44638d22840b"
+      },
+      "windows-amd64": {
+        "archive": "dist/releases/brrpbrrp-0.4.0-alpha.7-windows-amd64.zip",
+        "archive_sha256": "d644e013f6b474adad7127a0ae1a74224816442b6d04cc464b9d2f2d97dd84fd",
+        "extracted_executable": "brrpbrrp.exe",
+        "extracted_executable_sha256": "84b27f341db11ea3892185b1c5bf4f852dd878149f8c134505d7f4a0d09c6fcb"
+      },
+      "windows-arm64": {
+        "archive": "dist/releases/brrpbrrp-0.4.0-alpha.7-windows-arm64.zip",
+        "archive_sha256": "10c22d08e1c0b9583cd5246cc1aa7bda5d211b5a998b2f566cc8e294af1c2347",
+        "extracted_executable": "brrpbrrp.exe",
+        "extracted_executable_sha256": "ff5601b394916a8dbd56b1f767b4ca63099f8602ad8cbbe923740020e4c3f9eb"
+      }
     },
     "source": {
       "path": "dist/brrpbrrp-docker-source-0.4.0-alpha.7.zip",
@@ -39,5 +72,6 @@
       "report": "rollback.json",
       "compatibility": "0.4.0-alpha.6 (schema 12, backup format 2) -> 0.4.0-alpha.7 (schema 14, backup format 2)"
     }
-  }
+  },
+  "archive_inventory_note": "All six native archives are listed with the hash of the executable extracted from each, so a consumer can confirm it is holding the bytes this record describes. Only darwin/amd64 was executed here: the others are cross-compiled, and a hash proves identity, not that the binary runs on that platform, installs as a service, or passes any host qualification. The source archive builds and passes its consumer independently."
 }

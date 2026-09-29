@@ -1,7 +1,7 @@
 # ADR 0014 — Pending-request evidence, request-attempt identity and command receipts
 
 **Date:** 28 September 2026  
-**Status:** decided for an opt-in alpha.8 slice; independent privacy acceptance remains open  
+**Status:** implemented in the alpha.7 slice (migration 14); independent privacy acceptance remains open  
 **Schema:** 14; backup format 2 (unchanged — a schema 14 database is still format 2)
 
 This records the contract for recipient-only pending-request reporting, immutable

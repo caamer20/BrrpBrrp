@@ -26,6 +26,16 @@ borrowed as proof of an untested package's identity. Digests are in `manifest.js
 | `upgrade-rollback.mjs` | extracted binary + real alpha.6 archive | **PASS: 57 checks, 0 failed.** alpha.6 (schema 12) → alpha.7 (schema 14), format 2 unchanged. |
 | `check-source-package.mjs` | working tree | Passed: 388 files, 43 native package documents, every documented local link resolved in both sets. |
 | `check-package.mjs` on the source archive's own build | freshly extracted source | Passed. The extracted source installs, builds the frontend and links a working executable independently. |
+| `upgrade-rollback.mjs --old-binary` | real schema-13 executable under `dist/` | **PASS: 57 checks.** 0.4.0-alpha.7 (schema 13) → 0.4.0-alpha.7 (schema 14), format 2. |
+| `seed-schema13-private.mjs` + `upgrade-schema13-private.mjs` | real schema-13 executable, seeded through its own API | Every preserved value identical; distinct attempt identities; backup format unchanged. |
+| `upgrade-recovery-private.mjs` | extracted binary, with reviewer-grant reconciliation | **PASS: 113 checks, 0 failed.** |
+
+All six native archives carry the same embedded stamp — `vcs.revision=9763661…` and
+`vcs.modified=false` — verified by reading `go version -m` against the executable
+extracted from each. A hash proves which bytes a consumer is holding; it does not
+prove the binary runs on that platform. Only darwin/amd64 was executed in this
+checkpoint, and no Windows or Linux host, service install, Tailscale path or Docker
+runtime was exercised, so none of the other five is qualified in any sense.
 
 The source archive's binary carries no VCS stamp. That is a property of a tarball rather than a git
 checkout, not a dirty build, and it is recorded as such in the manifest rather than glossed.
