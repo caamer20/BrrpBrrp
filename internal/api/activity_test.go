@@ -661,3 +661,123 @@ func cut9(value string) string {
 	}
 	return value
 }
+
+// V13-06. The activity backlog is a catch-up affordance, so it is bounded — and the
+// bound has to be a real one.
+//
+// Two promises were not kept. The documented 2,000-row cap was not applied on
+// insertion: seeding exactly 2,000 unacknowledged rows and then posting a real
+// message produced 2,001. And an unacknowledged row 31 days old survived maintenance
+// unless the account was *also* over the cap, so a member who was simply away came
+// back to a backlog nothing had ever reclaimed.
+func TestActivityIsBoundedOnInsertionAndExpiredOnItsOwnClock(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	guestID := evidenceUserID(t, h, guest)
+	ownerID := evidenceUserID(t, h, owner)
+
+	seed := func(n int) {
+		t.Helper()
+		tx, err := s.store.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			if _, err := tx.Exec(`INSERT INTO account_activity(id,user_id,source_kind,source_id,conversation_id,actor_id,created_at,acknowledged_at,interruptible)
+				VALUES(?,?,'group_message',?,?,?,'','',0)`, db.ID(), guestID, "bound-"+db.ID(), groupID, ownerID, db.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func() int {
+		var n int
+		if err := s.store.QueryRow(`SELECT count(*) FROM account_activity WHERE user_id=?`, guestID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	seed(activityUnacknowledgedLimit)
+	if got := count(); got != activityUnacknowledgedLimit {
+		t.Fatalf("the fixture holds %d rows, want %d", got, activityUnacknowledgedLimit)
+	}
+	// The bound is a property of the write, not of a later sweep: a member who is
+	// away must not have a backlog that grows for as long as they stay away.
+	sendDirectGroup(t, h, owner, groupID, "past the bound", "act-bound-0001")
+	if got := count(); got > activityUnacknowledgedLimit {
+		t.Fatalf("the backlog grew past its bound: %d rows, limit %d", got, activityUnacknowledgedLimit)
+	}
+	// The message itself is durable regardless: the bound is on catch-up activity,
+	// never on whether a message was stored.
+	var stored int
+	if err := s.store.QueryRow(`SELECT count(*) FROM messages WHERE conversation_id=?`, groupID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != 1 {
+		t.Fatalf("the bound cost the message itself: %d stored", stored)
+	}
+
+	// And the age rule is independent of the cap: an unacknowledged row 31 days old
+	// goes whether or not the account is over the bound.
+	seed(3)
+	if _, err := s.store.Exec(`UPDATE account_activity SET created_at=? WHERE user_id=? AND acknowledged_at=''`,
+		db.Timestamp(time.Now().AddDate(0, 0, -31)), guestID); err != nil {
+		t.Fatal(err)
+	}
+	// Maintenance is bounded per pass, so a large backlog is drained over several
+	// passes rather than in one — which is the point of the bound, and is asserted
+	// here so the test does not claim a single sweep clears an installation's whole
+	// history.
+	for pass := 0; pass < 10; pass++ {
+		if err := s.maintain(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		var aged int
+		if err := s.store.QueryRow(`SELECT count(*) FROM account_activity WHERE user_id=? AND acknowledged_at='' AND created_at<?`,
+			guestID, db.Timestamp(time.Now().AddDate(0, 0, -activityRetentionDays))).Scan(&aged); err != nil {
+			t.Fatal(err)
+		}
+		if aged == 0 {
+			break
+		}
+		if pass == 9 {
+			t.Fatalf("%d unacknowledged rows survived past the %d-day retention", aged, activityRetentionDays)
+		}
+	}
+}
+
+// The bound has to hold under concurrency, not only when a test inserts rows one at
+// a time: two sends racing for the last slot must not both take it.
+func TestTheActivityBoundHoldsUnderConcurrentSends(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	guestID := evidenceUserID(t, h, guest)
+	ownerID := evidenceUserID(t, h, owner)
+
+	tx, err := s.store.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < activityUnacknowledgedLimit-2; i++ {
+		if _, err := tx.Exec(`INSERT INTO account_activity(id,user_id,source_kind,source_id,conversation_id,actor_id,created_at,acknowledged_at,interruptible)
+			VALUES(?,?,'group_message',?,?,?,'','',0)`, db.ID(), guestID, "race-"+db.ID(), groupID, ownerID, db.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		sendDirectGroup(t, h, owner, groupID, "racing for the last slots", "act-race-"+strconv.Itoa(i))
+	}
+	var n int
+	if err := s.store.QueryRow(`SELECT count(*) FROM account_activity WHERE user_id=?`, guestID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n > activityUnacknowledgedLimit {
+		t.Fatalf("two sends past the bound produced %d rows, limit %d", n, activityUnacknowledgedLimit)
+	}
+}

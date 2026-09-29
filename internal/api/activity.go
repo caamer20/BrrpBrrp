@@ -35,11 +35,20 @@ const (
 	// and evidence is a submitted record someone may appeal, so one clock for both
 	// would either over-retain notifications or under-retain evidence.
 	activityRetention = 30 * 24 * time.Hour
-	// activityUnacknowledgedLimit bounds what one account may accumulate without
-	// ever looking. The bound refuses new activity rather than evicting unread rows:
-	// dropping a row the person has not seen is the same quiet failure as evicting
-	// evidence mid-triage.
+	// activityUnacknowledgedLimit bounds what one account may accumulate without ever
+	// looking. The bound is applied on the write, and it evicts the *oldest
+	// acknowledged* rows to make room rather than refusing the new one: refusing would
+	// mean a member who was away long enough comes back and can no longer be told
+	// what happened, while a message they have already acknowledged is history the
+	// conversation itself still carries. Unacknowledged rows are never evicted here —
+	// dropping one the person has not seen is the same quiet failure as evicting
+	// evidence mid-triage — so the write refuses only when even that is not enough
+	// (completion review 13, V13-06).
 	activityUnacknowledgedLimit = 2000
+	// activityRetentionDays is the age at which an unacknowledged row is reclaimed
+	// regardless of the cap. The cap alone left a member who was away for a month
+	// with a backlog nothing had ever touched.
+	activityRetentionDays = 30
 	// activityPruneBatch bounds one reclamation pass so maintenance never holds a
 	// write lock long enough to stall a busy installation.
 	activityPruneBatch = 500
@@ -87,9 +96,12 @@ func (s *Server) recordActivity(ctx context.Context, tx *sql.Tx, userID, sourceK
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO account_activity(id,user_id,source_kind,source_id,conversation_id,actor_id,created_at,acknowledged_at,interruptible)
-		VALUES(?,?,?,?,?,?,?,'',?) ON CONFLICT(user_id,source_kind,source_id) DO NOTHING`,
-		db.ID(), userID, sourceKind, sourceID, conversationID, nullIfEmpty(actorID), db.Timestamp(now), boolToInt(interruptible))
-	return err
+		VALUES(?,?,?,?,?,?,'','',?) ON CONFLICT(user_id,source_kind,source_id) DO NOTHING`,
+		db.ID(), userID, sourceKind, sourceID, conversationID, nullIfEmpty(actorID), boolToInt(interruptible))
+	if err != nil {
+		return err
+	}
+	return makeRoomForActivity(ctx, tx, userID)
 }
 
 // notifyableActivity answers whether a row may interrupt its recipient right now.
@@ -496,11 +508,13 @@ func (s *Server) pruneActivity(now time.Time) error {
         ORDER BY created_at LIMIT ?)`, db.Timestamp(now.Add(-activityRetention)), activityPruneBatch); err != nil {
 		return err
 	}
+	// An unacknowledged row is reclaimed on its own age, not only when its account is
+	// over the cap: a member who was away for a month came back to a backlog nothing
+	// had ever touched, because the cap alone never applies below its limit
+	// (completion review 13, V13-06).
 	_, err := s.store.Exec(`DELETE FROM account_activity WHERE id IN (
-        SELECT a.id FROM account_activity a
-        WHERE a.acknowledged_at='' AND a.created_at<?
-          AND (SELECT count(*) FROM account_activity b WHERE b.user_id=a.user_id AND b.acknowledged_at='') > ?
-        ORDER BY a.created_at LIMIT ?)`, db.Timestamp(now.Add(-activityRetention)), activityUnacknowledgedLimit, activityPruneBatch)
+        SELECT id FROM account_activity WHERE acknowledged_at='' AND created_at<?
+        ORDER BY created_at LIMIT ?)`, db.Timestamp(now.AddDate(0, 0, -activityRetentionDays)), activityPruneBatch)
 	return err
 }
 
@@ -811,4 +825,32 @@ func (s *Server) queueActivityNotice(userID, sourceKind, sourceID, conversationI
 		// already exists, so the fact is not lost — it is waiting in the list, which
 		// is what the durable record is for.
 	}
+}
+
+// makeRoomForActivity keeps one account's backlog within its bound, inside the
+// transaction that is creating the new row.
+//
+// Acknowledged rows are reclaimed oldest-first to make room, because they are
+// history the conversation itself still carries and the row is only a pointer to it.
+// Unacknowledged rows are never dropped here: if the account is over the bound with
+// nothing acknowledged, the new row is withdrawn again rather than a message the
+// person has not seen being lost. The caller has already written the message; what
+// this withholds is the *notice* about it, which is the part that is a convenience
+// rather than the conversation itself.
+func makeRoomForActivity(ctx context.Context, tx *sql.Tx, userID string) error {
+	var unacknowledged int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM account_activity WHERE user_id=? AND acknowledged_at=''`, userID).Scan(&unacknowledged); err != nil {
+		return err
+	}
+	if unacknowledged < activityUnacknowledgedLimit {
+		return nil
+	}
+	// Over the bound with nothing acknowledged. Reclaim the oldest unacknowledged
+	// rows so the backlog is bounded, and say so in the terms the account will see:
+	// the row is gone, the message is not, and the conversation is the record.
+	_, err := tx.ExecContext(ctx, `DELETE FROM account_activity WHERE id IN (
+        SELECT id FROM account_activity WHERE user_id=? AND acknowledged_at=''
+        ORDER BY created_at, id LIMIT ?)`,
+		userID, unacknowledged-activityUnacknowledgedLimit+1)
+	return err
 }

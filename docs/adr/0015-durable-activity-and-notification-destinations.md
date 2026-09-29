@@ -121,11 +121,29 @@ maintenance pass. Thirty days is deliberately shorter than the 90-day evidence w
 activity is a catch-up affordance, and evidence is a submitted record someone may appeal.
 Conflating them would either over-retain notifications or under-retain evidence.
 
-A per-account bound of 2,000 unacknowledged rows is enforced in the creating
-transaction, and the oldest acknowledged rows are reclaimed first. An account that never
-opens its activity list therefore cannot grow the table without bound. The bound refuses
-new activity rather than evicting unread history: dropping a row the person has not seen
-is the same quiet failure as evicting evidence mid-triage.
+A per-account bound of **2,000 unacknowledged rows** is applied **on the write**, and
+an unacknowledged row is reclaimed after **30 days on its own age**, independent of the
+cap. Both halves matter, and both were missed once:
+
+- The cap that is not applied on insertion is not a cap. Seeding exactly 2,000 rows
+  and then posting a real message produced 2,001, because the bound was only ever
+  consulted by a later sweep.
+- The cap that is only consulted above its own limit is not a retention rule either. A
+  member who was away a month came back to a backlog nothing had ever touched, because
+  they were under the limit the whole time.
+
+**What the bound reclaims, and what it never does.** The message is durable whatever
+the backlog is doing: the bound governs the *notice*, and the conversation remains the
+record. Where a member is over the bound, the oldest rows are reclaimed to make room —
+acknowledged ones first, because those are history the conversation still carries and
+the row is only a pointer to it. A member who is over the bound with nothing
+acknowledged has the oldest unacknowledged rows reclaimed rather than the new message
+being lost, so the backlog is bounded and the conversation is intact.
+
+The honest cost is that a member who is away long enough does not come back to a
+complete list of what happened. That is a real loss and is stated rather than hidden:
+the conversation is authoritative, the activity list is a bounded catch-up affordance,
+and a gap in the list is not a gap in the messages.
 
 ## Pagination is account-owned and monotonic
 
