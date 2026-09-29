@@ -99,13 +99,21 @@
       // An exhausted source is not asked again. Asking it with an empty cursor
       // returned its first page a second time, so "load older" duplicated rows the
       // reviewer had already read whenever one source ran out before the other.
+      // An exhausted source is not asked again at all. Suppressing only the `before`
+      // parameter was not enough: the request still went out, and with no cursor it
+      // asked for the first page — so "load older" re-delivered rows the reviewer
+      // had already read whenever one source ran out before the other.
       const [messages, requests] = await Promise.all([
-        api<{ reports: Evidence[]; next_cursor: string }>(
-          `/admin/private-reports?status=${status}${older ? beforeParam(messageCursor, messageExhausted) : ''}`
-        ),
-        api<{ reports: Evidence[]; next_cursor: string }>(
-          `/admin/request-reports?status=${status}${older ? beforeParam(requestCursor, requestExhausted) : ''}`
-        )
+        older && messageExhausted
+          ? Promise.resolve({ reports: [] as Evidence[], next_cursor: messageCursor })
+          : api<{ reports: Evidence[]; next_cursor: string }>(
+              `/admin/private-reports?status=${status}${older ? beforeParam(messageCursor, messageExhausted) : ''}`
+            ),
+        older && requestExhausted
+          ? Promise.resolve({ reports: [] as Evidence[], next_cursor: requestCursor })
+          : api<{ reports: Evidence[]; next_cursor: string }>(
+              `/admin/request-reports?status=${status}${older ? beforeParam(requestCursor, requestExhausted) : ''}`
+            )
       ]);
       if (!admittedRead(request)) return;
       const merged = mergeEvidence(older ? reports : [], messages, requests, {

@@ -44,13 +44,22 @@ export type ReportState =
 /**
  * Whether the submit control is live.
  *
- * A refusal keeps it live because nothing was written; a changed request does not,
- * because the person has to read the new text and confirm it before the same
- * action can be offered again.
+ * A refusal keeps it live because nothing was written. A changed request is live
+ * only once the person has said they have read the new text: the server refreshed the
+ * introduction, and reporting it stores *that* version, so a person who pressed the
+ * button without noticing the change would have filed a report about text they never
+ * read. The acknowledgement is what makes the difference rather than the server
+ * assuming attention.
  */
-export function canSubmitIn(state: ReportState, busy: boolean, reason: string): boolean {
+export function canSubmitIn(
+  state: ReportState,
+  busy: boolean,
+  reason: string,
+  changeRead = false
+): boolean {
   if (busy) return false;
   if (!reason.trim()) return false;
+  if (state === 'changed') return changeRead;
   return state === 'ready' || state === 'refused' || state === 'uncommitted';
 }
 
@@ -75,8 +84,13 @@ export function submitLabel(state: ReportState, busy: boolean): string {
  * so this must agree with {@link canSubmitIn} exactly. The test that matters is
  * that no visible state leaves them disagreeing.
  */
-export function submitDisabled(state: ReportState, busy: boolean, reason: string): boolean {
-  return !canSubmitIn(state, busy, reason);
+export function submitDisabled(
+  state: ReportState,
+  busy: boolean,
+  reason: string,
+  changeRead = false
+): boolean {
+  return !canSubmitIn(state, busy, reason, changeRead);
 }
 
 /**

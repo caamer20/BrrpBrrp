@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   canSubmitIn,
   keepsOperationKey,
@@ -120,4 +121,68 @@ test('an empty explanation blocks submission in every actionable state', () => {
     assert.equal(canSubmitIn(phase, false, '   '), false, `${phase} accepted a blank reason`);
     assert.equal(canSubmitIn(phase, false, 'why'), true, `${phase} refused a real reason`);
   }
+});
+
+// V13-08. A changed request and an unknown outcome are the two states where
+// pressing the wrong control does real harm: one files a report about text the
+// person never read, the other invites them to report the same request twice.
+test('a changed request is only reportable once the new text is acknowledged', () => {
+  assert.equal(canSubmitIn('changed', false, 'unwanted', false), false);
+  assert.equal(canSubmitIn('changed', false, 'unwanted', true), true);
+  // And the rendered control agrees, or it would look live and do nothing.
+  assert.equal(submitDisabled('changed', false, 'unwanted', false), true);
+  assert.equal(submitDisabled('changed', false, 'unwanted', true), false);
+  // The acknowledgement is still not a blank cheque: it needs a reason and it does
+  // not survive an in-flight submit.
+  assert.equal(canSubmitIn('changed', true, 'unwanted', true), false);
+  assert.equal(canSubmitIn('changed', false, '   ', true), false);
+});
+
+test('a refused request stays reportable, an unknown outcome does not', () => {
+  // A definite refusal wrote nothing, so the same action and the same key are still
+  // the right ones to try.
+  for (const reason of ['unwanted', 'x']) {
+    assert.equal(canSubmitIn('refused', false, reason), true);
+    assert.equal(canSubmitIn('uncommitted', false, reason), true);
+  }
+  // An uncertain outcome must not offer the button: the operation may already have
+  // committed, and a second press is a second report of the same request.
+  assert.equal(canSubmitIn('uncertain', false, 'unwanted'), false);
+  assert.equal(canSubmitIn('checking', false, 'unwanted'), false);
+  assert.equal(offersReconciliation('uncertain'), true);
+  assert.equal(offersReconciliation('checking'), true);
+  assert.equal(offersReconciliation('uncommitted'), true);
+});
+
+// The transport-failure transition is the one that is easy to get wrong and hard to
+// see: a network failure looks exactly like a refusal unless it is routed
+// deliberately, and the two demand opposite responses.
+test('a transport failure is an unknown outcome, not a refusal', () => {
+  const source = readFileSync(
+    new URL('../src/lib/components/ReportRequest.svelte', import.meta.url),
+    'utf8'
+  );
+  const handler = source.slice(
+    source.indexOf('} catch (failure) {'),
+    source.indexOf('} finally {')
+  );
+
+  // Only the two that provably did not commit are refusals.
+  assert.match(
+    handler,
+    /failure\.status === 400[\s\S]{0,80}429[\s\S]{0,400}phase = 'refused'/,
+    'a definite refusal is not recognised'
+  );
+  // Everything else, including a transport failure, is uncertain: the request may
+  // have committed and the response been lost.
+  assert.match(
+    handler,
+    /else \{[\s\S]{0,900}phase = 'uncertain'/,
+    'a transport failure is not routed to uncertain'
+  );
+  // And the uncertain branch says so in the terms the person reads.
+  assert.match(handler, /could not confirm whether that report went through/i);
+  // No branch may leave a transport failure sitting in a state that offers the
+  // report button again.
+  assert.doesNotMatch(handler, /status === 0[\s\S]{0,120}phase = 'refused'/);
 });

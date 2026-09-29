@@ -67,6 +67,11 @@
   // never cleared left the button looking enabled after a refusal while its handler
   // returned immediately, so the person could press it forever (R12-07).
   let phase = $state<ReportState>('loading');
+  // Set only by the person, never inferred: it is what makes a changed request
+  // reportable again. The server refreshed the introduction, and reporting it stores
+  // that version, so a press without noticing the change would file a report about
+  // text nobody read (ADR 0014, "Own-outcome reconciliation").
+  let changeRead = $state(false);
 
   // The admission rules live in request-report.ts so they can be tested directly:
   // they are a sequence of await boundaries, and the case that matters is what
@@ -100,7 +105,7 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!isAdmitted(admission()) || !canSubmitIn(phase, busy, reason)) return;
+    if (!isAdmitted(admission()) || !canSubmitIn(phase, busy, reason, changeRead)) return;
     // canSubmit proved the preview is present, but the guard cannot narrow it
     // across the call, so the value the request carries is captured explicitly
     // rather than read again from state that could have changed.
@@ -136,16 +141,30 @@
         if (refreshed.request) {
           preview = refreshed.request;
           phase = 'changed';
-          error = 'This request changed since you read it. Check the text above before reporting.';
+          changeRead = false;
+          error = 'This request changed since you read it. Read the new text above, then confirm.';
         } else {
           phase = 'refused';
           error = 'This request changed. Close and open it again to report it.';
         }
-      } else {
+      } else if (
+        failure instanceof APIError &&
+        (failure.status === 400 || failure.status === 429)
+      ) {
         // A definite refusal wrote nothing, so the same action stays available and
-        // the key is still the one this dialog started with.
+        // the key is still the one this dialog started with. These are the two that
+        // provably did not commit.
         phase = 'refused';
         error = errorMessage(failure);
+      } else {
+        // A transport failure is not a refusal. The request may well have committed
+        // and the response have been lost, and telling the person it failed would
+        // invite them to report it again — a second report of the same request. The
+        // outcome is unknown, so the only safe next step is reconciliation (ADR 0014,
+        // "Own-outcome reconciliation"; completion review 13, V13-08).
+        phase = 'uncertain';
+        error =
+          'We could not confirm whether that report went through. Check what happened before reporting again.';
       }
     } finally {
       if (alive) busy = false;
@@ -249,6 +268,16 @@
       <button class="secondary" onclick={close}>Close</button>
     </div>
   {:else if preview}
+    {#if phase === 'changed'}
+      <p role="alert">
+        This request changed after you read it. The text below is what it says now, and reporting it
+        stores this version.
+      </p>
+      <label class="toggle-row">
+        <span><strong>I have read the new text</strong></span>
+        <input type="checkbox" bind:checked={changeRead} />
+      </label>
+    {/if}
     <section aria-label="What will be saved">
       <h3>What will be saved</h3>
       <p>
@@ -288,7 +317,7 @@
       {#if error}<p role="alert">{error}</p>{/if}
       <div class="button-row">
         <button class="secondary" onclick={close}>Cancel</button><button
-          disabled={submitDisabled(phase, busy, reason)}
+          disabled={submitDisabled(phase, busy, reason, changeRead)}
           type="submit">{submitLabel(phase, busy)}</button
         >
       </div>
