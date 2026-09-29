@@ -3,6 +3,7 @@
   import { api, errorMessage } from '../../api';
   import { workspace } from '../../workspace.svelte';
   import Icon from '../Icon.svelte';
+  import { beforeParam, mergeEvidence } from '../../private-evidence-merge';
 
   // The private evidence queue (ADR 0013).
   //
@@ -41,7 +42,11 @@
 
   let status = $state<'open' | 'resolved'>('open');
   let reports = $state<Evidence[]>([]);
-  let cursor = $state('');
+  // Each source carries its own cursor and its own exhaustion, so one running
+  // out does not truncate or rewind the other (R12-08).
+  let messageExhausted = $state(false);
+  let requestExhausted = $state(false);
+  let done = $state(false);
   // Each source paginates on its own ids, so each carries its own cursor.
   let messageCursor = $state('');
   let requestCursor = $state('');
@@ -91,24 +96,31 @@
     try {
       // Both queues are read and merged so the reviewer sees one list. Each source
       // paginates on its own ids, so each keeps its own cursor.
+      // An exhausted source is not asked again. Asking it with an empty cursor
+      // returned its first page a second time, so "load older" duplicated rows the
+      // reviewer had already read whenever one source ran out before the other.
       const [messages, requests] = await Promise.all([
         api<{ reports: Evidence[]; next_cursor: string }>(
-          `/admin/private-reports?status=${status}${older && messageCursor ? `&before=${messageCursor}` : ''}`
+          `/admin/private-reports?status=${status}${older ? beforeParam(messageCursor, messageExhausted) : ''}`
         ),
         api<{ reports: Evidence[]; next_cursor: string }>(
-          `/admin/request-reports?status=${status}${older && requestCursor ? `&before=${requestCursor}` : ''}`
+          `/admin/request-reports?status=${status}${older ? beforeParam(requestCursor, requestExhausted) : ''}`
         )
       ]);
       if (!admittedRead(request)) return;
-      const combined = [...messages.reports, ...requests.reports].sort((a, b) =>
-        b.id.localeCompare(a.id)
-      );
-      reports = older ? [...reports, ...combined] : combined;
-      messageCursor = messages.next_cursor;
-      requestCursor = requests.next_cursor;
-      cursor = messageCursor || requestCursor;
+      const merged = mergeEvidence(older ? reports : [], messages, requests, {
+        message: messageCursor,
+        request: requestCursor
+      });
+      reports = merged.rows;
+      messageCursor = merged.messageCursor;
+      requestCursor = merged.requestCursor;
+      messageExhausted = merged.messageExhausted;
+      requestExhausted = merged.requestExhausted;
+      // The list is finished only when both sources are, not when one is.
+      done = merged.done;
       loadedFor = `${request.account}:${request.generation}:${status}`;
-      for (const report of combined) notes[report.id] ??= report.review_note;
+      for (const report of merged.rows) notes[report.id] ??= report.review_note;
     } catch (failure) {
       if (admittedRead(request)) error = errorMessage(failure);
     } finally {
@@ -258,7 +270,7 @@
     </article>
   {/each}
   <div class="button-row">
-    <button class="secondary" onclick={() => void load()}>Refresh</button>{#if cursor}<button
+    <button class="secondary" onclick={() => void load()}>Refresh</button>{#if !done}<button
         class="secondary"
         onclick={() => void load(true)}>Load older</button
       >{/if}

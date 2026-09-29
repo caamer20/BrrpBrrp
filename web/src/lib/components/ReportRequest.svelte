@@ -2,11 +2,15 @@
   import { onDestroy, untrack } from 'svelte';
   import { APIError, api, errorMessage } from '../api';
   import { workspace } from '../workspace.svelte';
+  import { admitted as isAdmitted, mayReportFailure } from '../request-report';
   import {
-    admitted as isAdmitted,
-    mayReportFailure,
-    maySubmit as canSubmit
-  } from '../request-report';
+    canSubmitIn,
+    keepsOperationKey,
+    offersReconciliation,
+    submitDisabled,
+    submitLabel,
+    type ReportState
+  } from '../report-dialog-state';
   import Modal from './Modal.svelte';
 
   // Reporting an unwanted request, and the block that goes with it (ADR 0014).
@@ -47,20 +51,22 @@
     reviewer_count: number;
   }
   let preview = $state<RequestPreview | null>(null);
-  let loading = $state(true);
   let loadError = $state('');
   let reason = $state('');
   let busy = $state(false);
   let error = $state('');
-  let sent = $state(false);
   // `uncertain` is its own state, not an error message: the operation may well
   // have committed, and the person is told to check rather than being told nothing
   // was sent (ADR 0014, "Own-outcome reconciliation").
-  let uncertain = $state(false);
   // The operation key identifies this attempt, so a retry is recognised as the
-  // same action rather than new work. It is generated once per dialog.
-  const operationKey = crypto.randomUUID();
-  let submitted = $state(false);
+  // same action rather than new work. It is generated once per dialog and held
+  // across every state that is still the same intent; a changed request rotates it,
+  // because the frozen version no longer describes what would be written.
+  let operationKey = crypto.randomUUID();
+  // Explicit rather than a "submitted" flag. A flag set before the request and
+  // never cleared left the button looking enabled after a refusal while its handler
+  // returned immediately, so the person could press it forever (R12-07).
+  let phase = $state<ReportState>('loading');
 
   // The admission rules live in request-report.ts so they can be tested directly:
   // they are a sequence of await boundaries, and the case that matters is what
@@ -77,23 +83,24 @@
   const admitted = () => isAdmitted(admission());
 
   async function load() {
-    loading = true;
+    phase = 'loading';
     loadError = '';
     try {
       const result = await api<RequestPreview>(`/directs/${conversationId}/report-preview`);
-      if (!admitted()) return;
+      if (!isAdmitted(admission())) return;
       preview = result;
+      phase = 'ready';
     } catch (failure) {
-      if (admitted()) loadError = errorMessage(failure);
-    } finally {
-      if (admitted()) loading = false;
+      if (!isAdmitted(admission())) return;
+      loadError = errorMessage(failure);
+      phase = 'load-failed';
     }
   }
   void load();
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!canSubmit({ ...admission(), busy, preview, reason, submitted })) return;
+    if (!isAdmitted(admission()) || !canSubmitIn(phase, busy, reason)) return;
     // canSubmit proved the preview is present, but the guard cannot narrow it
     // across the call, so the value the request carries is captured explicitly
     // rather than read again from state that could have changed.
@@ -101,8 +108,7 @@
     if (!confirmed) return;
     busy = true;
     error = '';
-    uncertain = false;
-    submitted = true;
+    phase = 'submitting';
     try {
       await api<{ outcome: string; duplicate: boolean }>(
         `/directs/${conversationId}/report-and-block`,
@@ -113,13 +119,13 @@
         // The operation's own authority invalidation can arrive before its
         // response. That is expected, not failure: the receipt will say what
         // happened, so the person is sent to the check rather than told it failed.
-        uncertain = true;
+        phase = 'uncertain';
         return;
       }
-      sent = true;
+      phase = 'committed';
     } catch (failure) {
-      if (!admitted()) {
-        uncertain = true;
+      if (!isAdmitted(admission())) {
+        phase = 'uncertain';
         return;
       }
       if (failure instanceof APIError && failure.status === 409) {
@@ -129,11 +135,16 @@
         const refreshed = (failure.detail ?? {}) as { request?: RequestPreview };
         if (refreshed.request) {
           preview = refreshed.request;
+          phase = 'changed';
           error = 'This request changed since you read it. Check the text above before reporting.';
         } else {
+          phase = 'refused';
           error = 'This request changed. Close and open it again to report it.';
         }
       } else {
+        // A definite refusal wrote nothing, so the same action stays available and
+        // the key is still the one this dialog started with.
+        phase = 'refused';
         error = errorMessage(failure);
       }
     } finally {
@@ -155,19 +166,38 @@
     if (busy || !alive || account !== workspace.user?.id) return;
     busy = true;
     error = '';
+    phase = 'checking';
     try {
       await api<{ outcome: string }>(
         `/me/report-receipt?operation_key=${encodeURIComponent(operationKey)}`
       );
       if (account !== workspace.user?.id) return;
-      sent = true;
-      uncertain = false;
+      phase = 'committed';
     } catch (failure) {
-      if (mayReportFailure(admission())) error = errorMessage(failure);
+      if (!mayReportFailure(admission())) return;
+      // A 404 means the key was never spent, so nothing was written and the same
+      // action is still available. Anything else — a transport failure, a disabled
+      // feature, a 410 for an aged-out receipt — is an error the person has to be
+      // able to read, which is why the uncertain view renders it (R12-07).
+      const status = failure instanceof APIError ? failure.status : 0;
+      if (status === 404) {
+        phase = 'uncommitted';
+        error = 'That report was never submitted. You can report it now.';
+      } else {
+        phase = 'uncertain';
+        error = errorMessage(failure);
+      }
     } finally {
       if (alive) busy = false;
     }
   }
+
+  // A changed request is different work, so the dialog takes a new key: the frozen
+  // one is bound to a version that no longer describes anything.
+  $effect(() => {
+    if (keepsOperationKey(phase)) return;
+    operationKey = crypto.randomUUID();
+  });
 </script>
 
 <Modal title="Report this request" {close} initialFocus="textarea">
@@ -175,31 +205,42 @@
        operation itself needed. Reporting that it worked is not a privilege
        decision, and hiding the answer behind the very change the person just made
        would leave them unable to tell whether it succeeded. -->
-  {#if sent}
+  {#if phase === 'committed'}
     <p role="status">
       The request was declined, its introduction saved as evidence and the sender blocked. That
       report is kept until it expires; blocking them stops new messages and requests. If you later
       unblock them, that choice stands — checking this again will not block them a second time.
     </p>
     <button onclick={close}>Done</button>
-  {:else if uncertain || !admitted()}
+  {:else if offersReconciliation(phase) || !admitted()}
     <p role="status">
-      {#if submitted}
+      {#if phase === 'uncommitted'}
+        That report was never submitted, so nothing was saved and the sender was not blocked. You
+        can report it now.
+      {:else if phase === 'checking'}
+        Checking what happened…
+      {:else}
         Your access changed while this was being sent, so the result is not shown here. Check what
         happened — this checks the same action and will not report it again.
-      {:else}
-        Your access changed. Nothing from this request has been sent.
       {/if}
     </p>
+    <!-- The check's own failure has to be visible here. It was stored and never
+         rendered, so a transport error or a disabled feature left the person
+         looking at a button that silently did nothing (R12-07). -->
+    {#if error}<p role="alert">{error}</p>{/if}
     <div class="button-row">
-      <button class="secondary" onclick={() => void check()}>Check what happened</button><button
-        class="secondary"
-        onclick={close}>Close</button
-      >
+      <button class="secondary" disabled={phase === 'checking'} onclick={() => void check()}
+        >Check what happened</button
+      ><button class="secondary" onclick={close}>Close</button>
     </div>
-  {:else if loading}
+    {#if phase === 'uncommitted'}
+      <div class="button-row">
+        <button onclick={close}>Back to the report</button>
+      </div>
+    {/if}
+  {:else if phase === 'loading'}
     <p role="status">Loading the exact request you would be reporting…</p>
-  {:else if loadError}
+  {:else if phase === 'load-failed'}
     <p role="alert">{loadError}</p>
     <p class="muted">
       This request can no longer be reported: it may have been accepted, withdrawn or cleared.
@@ -212,8 +253,13 @@
       <h3>What will be saved</h3>
       <p>
         This request from <strong>{preview.requester_name || requesterName}</strong>, and your
-        explanation for reporting it. Nobody else sees it: not the conversation it would have
-        opened, and not any message in it.
+        explanation for reporting it. The text above and your explanation are kept as evidence for
+        {preview.reviewer_count === 1
+          ? 'one reviewer'
+          : `up to ${preview.reviewer_count} reviewers`}
+        who hold the private-evidence role, and they see the introduction, who sent it, who reported it
+        and your explanation. They are not given this conversation, and cannot open it or read any message
+        in it.
       </p>
       <blockquote>
         {preview.has_introduction ? preview.introduction : 'This request has no introduction.'}
@@ -242,8 +288,8 @@
       {#if error}<p role="alert">{error}</p>{/if}
       <div class="button-row">
         <button class="secondary" onclick={close}>Cancel</button><button
-          disabled={busy || !reason.trim()}
-          type="submit">{busy ? 'Reporting…' : 'Report and block'}</button
+          disabled={submitDisabled(phase, busy, reason)}
+          type="submit">{submitLabel(phase, busy)}</button
         >
       </div>
     </form>

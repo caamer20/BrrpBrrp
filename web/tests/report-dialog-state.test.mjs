@@ -1,0 +1,123 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  canSubmitIn,
+  keepsOperationKey,
+  offersReconciliation,
+  submitDisabled,
+  submitLabel
+} from '../src/lib/report-dialog-state.ts';
+
+// A report commits an immutable snapshot, a rejection and a block in one
+// transaction. The dialog previously used a `submitted` flag set before the request
+// and never cleared, so a definite refusal — 400, 409, 429 — left the button
+// rendered enabled while its handler returned immediately. A person could press it
+// forever and nothing would happen (completion review 12, R12-07).
+
+/**
+ * @typedef {'loading'|'load-failed'|'ready'|'submitting'|'refused'|'changed'|'uncertain'|'checking'|'uncommitted'|'committed'} ReportState
+ */
+
+/** @type {ReportState[]} */
+const every = [
+  'loading',
+  'load-failed',
+  'ready',
+  'submitting',
+  'refused',
+  'changed',
+  'uncertain',
+  'checking',
+  'uncommitted',
+  'committed'
+];
+
+test('the rendered control and its handler never disagree', () => {
+  // This is the defect itself, stated as an invariant over every visible state.
+  for (const phase of every) {
+    for (const reason of ['', '   ', 'unwelcome request']) {
+      for (const busy of [false, true]) {
+        const live = canSubmitIn(phase, busy, reason);
+        const rendered = !submitDisabled(phase, busy, reason);
+        assert.equal(
+          live,
+          rendered,
+          `${phase} with reason=${JSON.stringify(reason)} busy=${busy}: handler ${live ? 'accepts' : 'ignores'} but the button renders ${rendered ? 'enabled' : 'disabled'}`
+        );
+      }
+    }
+  }
+});
+
+test('a definite refusal leaves the action available', () => {
+  // Nothing was written, so the person must be able to try again with the same
+  // intent and the same key. This is the state the sticky flag broke.
+  assert.equal(canSubmitIn('refused', false, 'unwelcome'), true);
+  assert.equal(submitLabel('refused', false), 'Try again');
+  // And the key is held: it is still the same operation, not a new one.
+  assert.equal(keepsOperationKey('refused'), true);
+
+  // A 429 is the same kind of refusal — a bound was reached, nothing was written.
+  assert.equal(canSubmitIn('refused', false, 'unwelcome'), true);
+});
+
+test('a changed request is not retryable until it is read again', () => {
+  // The frozen version no longer describes what would be written, so the same
+  // action cannot be offered — and the key rotates, because this is different work.
+  assert.equal(canSubmitIn('changed', false, 'unwelcome'), false);
+  assert.equal(keepsOperationKey('changed'), false);
+});
+
+test('an uncommitted outcome is retryable, an uncertain one is not', () => {
+  // Reconciliation proved nothing was written, so the action is available again.
+  assert.equal(canSubmitIn('uncommitted', false, 'unwelcome'), true);
+  assert.equal(submitLabel('uncommitted', false), 'Report again');
+  assert.equal(keepsOperationKey('uncommitted'), true);
+
+  // An uncertain outcome may well have committed, so the only offered action is
+  // reconciliation. Pressing report again would be a second operation.
+  assert.equal(canSubmitIn('uncertain', false, 'unwelcome'), false);
+  assert.equal(canSubmitIn('checking', false, 'unwelcome'), false);
+  assert.equal(keepsOperationKey('uncertain'), true);
+});
+
+test('reconciliation is offered only where the outcome is unknown', () => {
+  assert.equal(offersReconciliation('uncertain'), true);
+  assert.equal(offersReconciliation('checking'), true);
+  assert.equal(offersReconciliation('uncommitted'), true);
+  // Offering it after a definite refusal would invite someone to check for
+  // something that was never written.
+  for (const phase of /** @type {ReportState[]} */ ([
+    'ready',
+    'refused',
+    'changed',
+    'loading',
+    'committed',
+    'submitting'
+  ])) {
+    assert.equal(offersReconciliation(phase), false, `${phase} offered reconciliation`);
+  }
+});
+
+test('in-flight and terminal states are not actionable', () => {
+  // Loading has nothing to confirm, a failed load has nothing to report, a
+  // committed operation is finished, and an in-flight one must not be re-sent.
+  for (const phase of /** @type {ReportState[]} */ (['loading', 'load-failed', 'committed'])) {
+    assert.equal(canSubmitIn(phase, false, 'unwelcome'), false, `${phase} was actionable`);
+  }
+  assert.equal(
+    canSubmitIn('ready', true, 'unwelcome'),
+    false,
+    'a busy ready dialog was actionable'
+  );
+  assert.equal(submitLabel('submitting', false), 'Reporting…');
+  assert.equal(submitLabel('ready', true), 'Reporting…');
+});
+
+test('an empty explanation blocks submission in every actionable state', () => {
+  for (const phase of /** @type {ReportState[]} */ (['ready', 'refused', 'uncommitted'])) {
+    assert.equal(canSubmitIn(phase, false, ''), false, `${phase} accepted an empty reason`);
+    assert.equal(canSubmitIn(phase, false, '   '), false, `${phase} accepted a blank reason`);
+    assert.equal(canSubmitIn(phase, false, 'why'), true, `${phase} refused a real reason`);
+  }
+});
