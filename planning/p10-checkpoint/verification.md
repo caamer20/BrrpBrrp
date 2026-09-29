@@ -35,7 +35,8 @@ checkout, not a dirty build, and it is recorded as such in the manifest rather t
 | Check | Result |
 | --- | --- |
 | `go vet ./...` | Clean. |
-| `go test -race -count=1 -timeout 20m ./...` | Green across all ten packages; `internal/api` 1110.594s. |
+| `go test -race -count=1 ./...` | Green across all ten packages; `internal/api` 1201.909s. |
+| `go test -race -count=1 -timeout 20m ./internal/api/` | **The 20-minute budget is too tight for this suite.** It completes in ~1201s, so the deadline and the runtime are within a second of each other and the run intermittently dies with `panic: test timed out` rather than a test failure. Three runs at 20m produced two timeouts and one pass; a run at 40m passed. This is a CI budget defect, not a product defect, and the job's timeout should be raised before it makes a real failure look like a hang. |
 | Restricted review audit retention regression | Fails against the previous single statement ("restricted review audit was reclaimed with the evidence it describes"), passes after. |
 | Frontend units | 118/118 passed. |
 | `svelte-check` | 133 files, 0 errors, 0 warnings. |
