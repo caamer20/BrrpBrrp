@@ -129,6 +129,18 @@
       version++;
       directs = [];
       blocked = [];
+      // Group metadata is private and every one of these arrays was rendered without
+      // an admitted projection, so leaving them populated across an authority
+      // change showed the previous account's group names, members and invitations
+      // until the next fetch replaced them — and indefinitely if the fetch failed
+      // (completion review 13, V13-03). Fetched private data is cleared here for the
+      // same reason the direct lists are.
+      groups = [];
+      groupInvitations = [];
+      groupMembers = [];
+      invitingGroup = '';
+      inviteUsername = '';
+      openGroup = '';
       scope = null;
       error = notice = '';
       loading = false;
@@ -184,7 +196,11 @@
     }
     try {
       const result = await api<{ members: GroupMember[] }>(`/groups/${groupId}/members`);
-      if (!admitted(request)) return;
+      // Every axis, not just the account: a membership change advances the
+      // generation, and a response that resolved after it describes a group this
+      // account may no longer be in.
+      if (!admitted(request) || openGroup === groupId || !groups.some((g) => g.id === groupId))
+        return;
       groupMembers = result.members;
       openGroup = groupId;
     } catch (failure) {
@@ -227,16 +243,23 @@
     if (!name) return;
     if (await act('/groups', 'POST', { name }, 'Group created.')) newGroupName = '';
   }
+  // A lifecycle change is captured before it is sent, so the member list refreshed
+  // afterwards is the one for the account and group that asked for it. Without the
+  // capture, a response that resolved after an account change or a membership
+  // change would populate the new account's panel with the old account's members
+  // (completion review 13, V13-03).
   async function groupLifecycle(path: string, body: unknown, success: string) {
+    const groupId = openGroup;
+    const request = identity();
     if (!(await act(path, 'POST', body, success))) return;
-    if (openGroup) {
-      try {
-        const result = await api<{ members: GroupMember[] }>(`/groups/${openGroup}/members`);
-        groupMembers = result.members;
-      } catch {
-        // The lifecycle succeeded; a member list that cannot be re-read is left as it
-        // is rather than shown as empty, which would read as "nobody is here".
-      }
+    if (!groupId) return;
+    try {
+      const result = await api<{ members: GroupMember[] }>(`/groups/${groupId}/members`);
+      if (!admitted(request) || openGroup !== groupId) return;
+      groupMembers = result.members;
+    } catch {
+      // The lifecycle succeeded; a member list that cannot be re-read is left as it
+      // is rather than shown as empty, which would read as "nobody is here".
     }
   }
 

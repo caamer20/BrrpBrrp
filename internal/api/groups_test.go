@@ -587,3 +587,137 @@ func TestGroupLifecycleEventsAreNotReadableThroughOrdinaryAudit(t *testing.T) {
 	}
 	_ = groupID
 }
+
+// V13-03. A group change is an authority change. A plain commit leaves the
+// authorization revision where it was, leaves an open response running, and tells
+// nobody their view changed — which for a removal means a former member keeps
+// streaming a file they no longer have the right to read.
+func TestGroupMembershipChangeEndsTheRemovedAccountsResponses(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	before, err := s.store.AuthorizationRevision(t.Context(), s.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A response the removed member already has open. `begin` is what every real
+	// stream registers through, so this exercises the production path rather than a
+	// stand-in for it.
+	streamCtx, release := s.deliveries.begin(groupID, evidenceUserID(t, h, guest), "session-hash")
+	defer release()
+	registered := len(s.deliveries.snapshot())
+	if registered == 0 {
+		t.Fatal("the stream registry accepted nothing, so the revocation test would pass for the wrong reason")
+	}
+
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/members/"+evidenceUserID(t, h, guest)+"/remove", map[string]string{}, owner); w.Code != 200 {
+		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
+	}
+	after, err := s.store.AuthorizationRevision(t.Context(), s.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after <= before {
+		t.Fatalf("the authorization revision did not advance across a removal: %d -> %d", before, after)
+	}
+	// The removed account's open response is ended, which is the revocation a
+	// revision bump alone would not perform. The context the response reads through
+	// is cancelled, so a slow client stops mid-copy rather than after the whole file.
+	if streamCtx.Err() == nil {
+		t.Fatal("the removed member's open response was not ended")
+	}
+
+	// The permitted control: the owner, who kept access, still works.
+	if w := request(t, h, "GET", "/api/groups/"+groupID+"/members", nil, owner); w.Code != 200 {
+		t.Fatalf("the remaining member lost access: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// V13-04. Accepting an invitation must be able to fail, and the failure has to be a
+// refusal rather than a success into a group that no longer exists.
+//
+// The reproduced sequence was: the sole owner leaves with an invitation pending,
+// the group is emptied and marked removed, the invitee accepts and receives 200 —
+// and then reading the group returns 404. A 200 that is followed by a 404 is the
+// worst of both answers, because the person is told they joined something they
+// cannot read.
+func TestAcceptingIntoAGroupThatHasEndedIsRefused(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	invitation := pendingInvitation(t, h, guest)
+
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/leave", map[string]string{}, owner); w.Code != 200 {
+		t.Fatalf("the last member leaves: %d %s", w.Code, w.Body.String())
+	}
+	var state string
+	if err := s.store.QueryRow(`SELECT state FROM conversations WHERE id=?`, groupID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "removed" {
+		t.Fatalf("the emptied group was not marked removed: %q", state)
+	}
+
+	w := request(t, h, "POST", "/api/group-invitations/"+invitation+"/accept", map[string]string{}, guest)
+	if w.Code == 200 {
+		t.Fatal("an invitation into a group that has ended was accepted")
+	}
+	// Either defined refusal is correct, and which one depends on whether the
+	// invitation was closed with its group or merely outlived it: 410 says the group
+	// it named is gone, 409 says the invitation is no longer open. What is not
+	// acceptable is a 200 that is followed by a 404 on the conversation.
+	if w.Code != http.StatusGone && w.Code != http.StatusConflict {
+		t.Fatalf("an ended group's acceptance answered %d rather than a defined refusal: %s", w.Code, w.Body.String())
+	}
+	// And it did not admit anyone: no membership, and the invitation is closed rather
+	// than left open against a group that will never exist.
+	var members int
+	if err := s.store.QueryRow(`SELECT count(*) FROM conversation_members WHERE conversation_id=? AND state='accepted'`, groupID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if members != 0 {
+		t.Fatalf("the refused acceptance admitted %d members", members)
+	}
+	var invitationState string
+	if err := s.store.QueryRow(`SELECT state FROM group_invitations WHERE id=?`, invitation).Scan(&invitationState); err != nil {
+		t.Fatal(err)
+	}
+	if invitationState == "pending" {
+		t.Fatal("the invitation stayed open against a group that has ended")
+	}
+}
+
+// An invitation is offered to somebody the recipient has blocked, or who has blocked
+// them. Contact policy that governs direct requests has to govern invitations too, or
+// a block is trivially bypassed by starting a group.
+func TestBlockingStopsGroupInvitations(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	guestID := evidenceUserID(t, h, guest)
+
+	// The recipient blocks the inviter.
+	if w := request(t, h, "PUT", "/api/me/blocks/"+evidenceUserID(t, h, owner), map[string]string{}, guest); w.Code != 200 {
+		t.Fatalf("block: %d %s", w.Code, w.Body.String())
+	}
+	// No invitation is created, and the refusal does not confirm the group exists.
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/invite", map[string]string{
+		"user_id": guestID,
+	}, owner); w.Code != http.StatusConflict && w.Code != http.StatusNotFound {
+		t.Fatalf("an invitation was offered to somebody who blocked the inviter: %d %s", w.Code, w.Body.String())
+	}
+	// The fixture already holds one invitation, created before the block. The point
+	// is that the blocked attempt added none.
+	var before, after int
+	if err := s.store.QueryRow(`SELECT count(*) FROM group_invitations WHERE invitee_id=?`, guestID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(t, h, "POST", "/api/groups/"+groupID+"/invite", map[string]string{
+		"user_id": guestID,
+	}, owner); w.Code != http.StatusConflict && w.Code != http.StatusNotFound {
+		t.Fatalf("a second invitation was offered to somebody who blocked the inviter: %d %s", w.Code, w.Body.String())
+	}
+	if err := s.store.QueryRow(`SELECT count(*) FROM group_invitations WHERE invitee_id=?`, guestID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("the refused invitation added %d records", after-before)
+	}
+	_ = guest
+}

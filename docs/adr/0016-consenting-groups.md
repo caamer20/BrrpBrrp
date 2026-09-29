@@ -55,6 +55,30 @@ where the product decision it defers to is made. An owner who wants the opposite
 for their installation is making a different product, and that is their call to make
 explicitly rather than something an implementation should decide silently.
 
+## What a group that has ended means
+
+When the last member leaves, the group is **marked removed** and the invitations
+open against it are **closed in the same transaction**, along with its owner row. A
+group with members and no owner is not a state this product has, and it is exactly
+what a later physical erasure left behind.
+
+Marking a group removed is **not** erasure. Its messages, files and activity stay,
+under the same retention as any other conversation, and are reclaimed by the ordinary
+bounded maintenance passes on their own clocks. The interface says the group has
+ended and stops offering it; it does not claim the content is gone.
+
+An invitation can never re-admit anybody into a group that has ended:
+
+- **Acceptance checks the group is still active**, inside the transaction that would
+  grant membership. An invitation that outlived its group is a standing offer to join
+  nothing, and answering it with success was the worst of both answers: 200 on accept
+  and 404 on the conversation.
+- **Acceptance checks current block state**, in the same transaction. A block in
+  either direction closes the invitation rather than leaving it open, so a later
+  unblock cannot surface a stale offer.
+- **Acceptance is idempotent** per (group, account), so a replay is the same
+  acceptance rather than a second membership.
+
 ## What blocking means in a group, stated accurately
 
 **A block does not hide a group conversation.** A group conversation is shared
@@ -62,6 +86,10 @@ among its members; there is no per-pair view of it to hide. A block between two
 members of the same group suppresses *their* direct contact — the blocker's
 conversations, the blocked account's messages to them privately, and any future
 request between them — and nothing else.
+
+Blocking also governs **future contact**: a block in either direction stops an
+invitation being offered, and stops one that was already offered being accepted. That
+is the part a block is actually for — not being approached again.
 
 Saying otherwise would be a false promise in the one place it matters most, so the
 interface does not offer a "hide their messages in this group" affordance it cannot

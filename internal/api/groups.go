@@ -249,6 +249,37 @@ func (s *Server) inviteToGroup(w http.ResponseWriter, r *http.Request, user db.U
 		hidden(w)
 		return
 	}
+	// Contact policy, checked before anything is written so a refusal leaves no
+	// record at all. A block governs whether a person may be approached; it does not
+	// hide a group's existing history, which is stated separately (ADR 0016).
+	var blocked int
+	if err := tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM user_blocks
+		WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?))`,
+		principal.UserID, input.UserID, input.UserID, principal.UserID).Scan(&blocked); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if blocked == 1 {
+		problem(w, http.StatusConflict, "That person cannot be invited while contact is blocked.")
+		return
+	}
+	// The invitee's own contact preference governs whether they may be approached
+	// at all, which is the same rule a direct request honours.
+	// An absent preference row is the documented default, which is "accepting"; only a
+	// row that exists and says otherwise refuses.
+	var acceptsRequests int
+	switch err := tx.QueryRowContext(r.Context(), `SELECT allow_requests FROM contact_preferences WHERE user_id=?`, input.UserID).Scan(&acceptsRequests); {
+	case err == nil:
+		if acceptsRequests == 0 {
+			problem(w, http.StatusConflict, "That person is not accepting new contact.")
+			return
+		}
+	case errors.Is(err, sql.ErrNoRows):
+		// The default accepts, so nothing to refuse.
+	default:
+		s.failed(w, err)
+		return
+	}
 	var already int
 	if err := tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM conversation_members WHERE conversation_id=? AND user_id=? AND state='accepted')`, groupID, input.UserID).Scan(&already); err != nil {
 		s.failed(w, err)
@@ -369,6 +400,49 @@ func (s *Server) acceptGroupInvitation(w http.ResponseWriter, r *http.Request, u
 		problem(w, http.StatusConflict, "That invitation is no longer open.")
 		return
 	}
+	// The group has to still be one. It is emptied by its last member leaving, and an
+	// invitation can outlive that; accepting into a group marked removed used to
+	// answer 200 and then 404 on the conversation, which is the worst of both
+	// answers (completion review 13, V13-04).
+	var groupState string
+	if err := tx.QueryRowContext(r.Context(), `SELECT state FROM conversations WHERE id=? AND kind='group'`, groupID).Scan(&groupState); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusGone, "That group no longer exists.")
+			return
+		}
+		s.failed(w, err)
+		return
+	}
+	if groupState != "active" {
+		problem(w, http.StatusGone, "That group has ended, so the invitation cannot be accepted.")
+		return
+	}
+	// A block in either direction ends the invitation's usefulness: contact policy that
+	// governs direct requests has to govern an invitation, or a block is bypassed by
+	// starting a group. The group's existing history is not hidden — that is a
+	// separate promise this product does not make (ADR 0016).
+	var blocked int
+	if err := tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM user_blocks
+		WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?))`,
+		inviteeID, principal.UserID, principal.UserID, inviteeID).Scan(&blocked); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if blocked == 1 {
+		// Close the invitation rather than leaving it open against a block, so a later
+		// unblock cannot surface a stale offer.
+		if _, err := tx.ExecContext(r.Context(), `UPDATE group_invitations SET state='revoked',responded_at=?
+			WHERE id=? AND state='pending'`, db.Timestamp(now), invitationID); err != nil {
+			s.failed(w, err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			s.failed(w, err)
+			return
+		}
+		problem(w, http.StatusConflict, "That invitation cannot be accepted while contact is blocked.")
+		return
+	}
 	if expiresAt <= db.Timestamp(now) {
 		problem(w, http.StatusConflict, "That invitation has expired. Ask for another one.")
 		return
@@ -403,10 +477,15 @@ func (s *Server) acceptGroupInvitation(w http.ResponseWriter, r *http.Request, u
 		s.failed(w, err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	// Acceptance grants access to a private conversation, so it is an authority
+	// change: the revision advances, the participants' open responses are ended, and
+	// they are told their view changed.
+	participants := s.groupParticipants(r.Context(), tx, groupID)
+	if err := s.commitGroupChange(r.Context(), tx, "Your group membership changed.", participants...); err != nil {
 		s.failed(w, err)
 		return
 	}
+	s.afterGroupChange(participants...)
 	summary, err := s.groupSummary(r.Context(), principal.UserID, groupID)
 	if err != nil {
 		s.failed(w, err)
@@ -524,10 +603,12 @@ func (s *Server) leaveGroup(w http.ResponseWriter, r *http.Request, user db.User
 		s.failed(w, err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	participants := append(s.groupParticipants(r.Context(), tx, groupID), principal.UserID)
+	if err := s.commitGroupChange(r.Context(), tx, "Your group membership changed.", participants...); err != nil {
 		s.failed(w, err)
 		return
 	}
+	s.afterGroupChange(participants...)
 	respond(w, http.StatusOK, map[string]any{"left": true})
 }
 
@@ -597,10 +678,14 @@ func (s *Server) removeGroupMember(w http.ResponseWriter, r *http.Request, user 
 		s.failed(w, err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	// A removal withdraws access to a private conversation, so the removed account's
+	// open responses end and the remaining members are told the membership changed.
+	participants := append(s.groupParticipants(r.Context(), tx, groupID), targetID)
+	if err := s.commitGroupChange(r.Context(), tx, "Your group membership changed.", participants...); err != nil {
 		s.failed(w, err)
 		return
 	}
+	s.afterGroupChange(participants...)
 	respond(w, http.StatusOK, map[string]any{"removed": true})
 }
 
@@ -646,10 +731,14 @@ func (s *Server) transferGroupOwnership(w http.ResponseWriter, r *http.Request, 
 		s.failed(w, err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	// Ownership governs who may invite and who may remove, so a transfer moves
+	// authority and both accounts' open responses end.
+	participants := []string{principal.UserID, input.NewOwnerID}
+	if err := s.commitGroupChange(r.Context(), tx, "Your group role changed.", participants...); err != nil {
 		s.failed(w, err)
 		return
 	}
+	s.afterGroupChange(participants...)
 	respond(w, http.StatusOK, map[string]any{"owner_id": input.NewOwnerID})
 }
 
@@ -703,6 +792,20 @@ func (s *Server) discardGroupIfEmpty(ctx context.Context, tx *sql.Tx, groupID st
 	}
 	if remaining > 0 {
 		return nil
+	}
+	// The invitations close with the group, in the same transaction. An invitation
+	// left open against a group that will never exist is a standing offer to join
+	// nothing, and it is exactly what the accepting path then had to refuse after
+	// answering 200 (completion review 13, V13-04).
+	if _, err := tx.ExecContext(ctx, `UPDATE group_invitations SET state='revoked',responded_at=?
+		WHERE conversation_id=? AND state='pending'`, db.Timestamp(now), groupID); err != nil {
+		return err
+	}
+	// The owner row goes too. Leaving it behind is what made the groups list fail
+	// after a physical erasure cascaded the owner's user row away: a group with
+	// members and no owner is a state this product does not have.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM group_owners WHERE conversation_id=?`, groupID); err != nil {
+		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE conversations SET state='removed',updated_at=? WHERE id=? AND kind='group'`, db.Timestamp(now), groupID)
 	return err
@@ -860,4 +963,62 @@ func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, user d
 		return
 	}
 	respond(w, http.StatusOK, map[string]any{"members": out})
+}
+
+// commitGroupChange is the one commit path for a group mutation, and it is the
+// direct-conversation protocol applied to a group.
+//
+// A group change is an authority change: membership, ownership and the ability to
+// read a private conversation all move together, so a plain tx.Commit leaves the
+// authorization revision where it was, no open response is ended, and no invalidation
+// reaches the accounts whose view just changed. That was reproduced: removing an
+// accepted member returned 200 with the revision unchanged and a registered
+// attachment stream still running (completion review 13, V13-03).
+//
+// The order is fixed and is the same one every other authority mutation uses: take
+// the write lock, read the revision from the transaction that is about to commit,
+// fence the affected sockets' sessions through that same transaction, commit, and
+// only then end streams and publish. Nothing is published for a commit that failed.
+func (s *Server) commitGroupChange(ctx context.Context, tx *sql.Tx, reason string, accounts ...string) error {
+	if _, err := db.BumpAuthorizationRevision(ctx, tx); err != nil {
+		return err
+	}
+	return s.commitAuthorityChange(ctx, tx, reason, accounts...)
+}
+
+// afterGroupChange is the post-commit side: streams the affected accounts had open
+// are ended, and the accounts themselves are told their view changed.
+//
+// It is separate from the commit because it must not run for a transaction that
+// rolled back, and because cancelling a response before the commit that authorises
+// the cancellation would drop a legitimate download on a failed write.
+func (s *Server) afterGroupChange(accounts ...string) {
+	for _, accountID := range accounts {
+		if accountID == "" {
+			continue
+		}
+		s.deliveries.revokeAccount(accountID)
+		s.leaveVoice(accountID, "")
+	}
+}
+
+// groupParticipants reads the accounts a group mutation affects: the members who
+// remain and the one who is being removed. It is read inside the transaction so the
+// revocation set is the membership as of the change rather than as of before it.
+func (s *Server) groupParticipants(ctx context.Context, q db.Queryer, groupID string) []string {
+	rows, err := q.QueryContext(ctx, `SELECT m.user_id FROM conversation_members m
+		WHERE m.conversation_id=? AND m.state IN ('accepted','pending')`, groupID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return ids
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
