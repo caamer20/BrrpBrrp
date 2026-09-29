@@ -141,13 +141,20 @@ func (s *Server) deliverableActivity(userID, sourceKind, conversationID, actorID
 	if !private {
 		return true
 	}
+	// An absent row is the documented default, which is "not muted" — the same
+	// reading the write-time path gives it. A row that exists and says muted is a
+	// suppression. Only a read that *fails* is a refusal, because failing open would
+	// mean a broken preference lookup produces an interruption.
 	var muted int
-	if err := s.store.QueryRow(`SELECT muted FROM private_notification_preferences WHERE user_id=? AND kind=?`, userID, preferenceKind).Scan(&muted); err != nil {
-		// An unknown preference is a refusal, not a permission. Failing open here
-		// would mean a preference read that fails produces an interruption.
+	switch err := s.store.QueryRow(`SELECT muted FROM private_notification_preferences WHERE user_id=? AND kind=?`, userID, preferenceKind).Scan(&muted); {
+	case err == nil:
+		return muted == 0
+	case errors.Is(err, sql.ErrNoRows):
+		return true
+	default:
+		s.log.Warn("private notification preference lookup failed", "error", err)
 		return false
 	}
-	return muted == 0
 }
 
 // accountCanBeNotified is the account-usable check. A banned, deactivated or erased
@@ -641,4 +648,109 @@ func (s *Server) recordRequestActivity(ctx context.Context, tx *sql.Tx, conversa
 		return nil
 	}
 	return s.recordActivity(ctx, tx, recipientID, activityRequest, attemptID, conversationID, requesterID, now)
+}
+
+// deliverableDestination is the dispatch-time authorization check, and it is
+// exhaustive by construction: every kind is named, and a kind this build does not
+// recognise is refused rather than treated as unchecked. That is the whole point of
+// typing the destination — the previous shape read an empty channel as "no check
+// needed", which is precisely the case a private notice would arrive in.
+func (s *Server) deliverableDestination(job pushJob) bool {
+	destination := job.destination
+	switch destination.kind {
+	case "channel":
+		if destination.conversationID == "" {
+			return false
+		}
+		return s.mayNotifyChannel(s.ctx, job.userID, destination.conversationID)
+	case activityMessage, activityRequest:
+		// A direct conversation is delivered under the message rule and a pending
+		// request under the request rule; both re-check current access at dispatch
+		// rather than trusting what was true when the notice was queued.
+		return s.deliverableActivity(job.userID, destination.kind, destination.conversationID, destination.actorID)
+	default:
+		return false
+	}
+}
+
+// payloadForJob builds the body actually sent. A private payload is content-free by
+// construction: it says that something happened and, only if the recipient asked for
+// it, who did it. A lock-screen preview is the one place private text most easily
+// leaks, so the quieter shape is the default and the payload cannot be made to
+// carry a message or an introduction (ADR 0015).
+func (s *Server) payloadForJob(job pushJob) map[string]string {
+	if job.destination.kind == "channel" {
+		return job.payload
+	}
+	payload := map[string]string{
+		"url":    "/messages",
+		"title":  "BrrpBrrp",
+		"body":   "You have new activity",
+		// The tag is the client-side de-duplication key and it travels in the push
+		// body, so it is built from the source kind and the sender's identity rather
+		// than from the conversation: a lock screen can read this string, and a
+		// conversation id would tell a bystander which private conversation exists.
+		"tag":  job.destination.activityID,
+		"kind": job.destination.kind,
+	}
+	if s.senderMayBeNamed(s.ctx, job.userID, job.destination.kind) {
+		if name, ok := s.usernameFor(s.ctx, job.destination.actorID); ok {
+			payload["body"] = name + " sent you something"
+		}
+	}
+	return payload
+}
+
+// senderMayBeNamed reads the recipient's own preference. An unreadable preference is
+// a refusal: a failed read must not widen what a notification says.
+func (s *Server) senderMayBeNamed(ctx context.Context, userID, sourceKind string) bool {
+	preferenceKind, private := privateActivityKinds[sourceKind]
+	if !private {
+		return true
+	}
+	var show int
+	if err := s.store.QueryRowContext(ctx, `SELECT show_sender FROM private_notification_preferences WHERE user_id=? AND kind=?`, userID, preferenceKind).Scan(&show); err != nil {
+		// No row and an unreadable row are the same case: the documented default is
+		// the quiet one, so a lookup that cannot answer does not widen the payload.
+		return false
+	}
+	return show == 1
+}
+
+func (s *Server) usernameFor(ctx context.Context, userID string) (string, bool) {
+	if userID == "" {
+		return "", false
+	}
+	var username string
+	if err := s.store.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, userID).Scan(&username); err != nil {
+		return "", false
+	}
+	return username, true
+}
+
+// queueActivityNotice queues an interruption for an activity row that was just
+// created. It is a no-op when the row is not interruptible, so a muted account
+// produces no queued work at all rather than work that is dropped at dispatch.
+func (s *Server) queueActivityNotice(userID, sourceKind, sourceID, conversationID, actorID string) {
+	var interruptible int
+	var activityID string
+	if err := s.store.QueryRow(`SELECT interruptible,id FROM account_activity WHERE user_id=? AND source_kind=? AND source_id=?`, userID, sourceKind, sourceID).Scan(&interruptible, &activityID); err != nil || interruptible == 0 {
+		return
+	}
+	select {
+	case s.pushJobs <- pushJob{
+		userID: userID,
+		destination: pushDestination{
+			kind:           sourceKind,
+			conversationID: conversationID,
+			actorID:        actorID,
+			activityID:     activityID,
+		},
+		payload: map[string]string{},
+	}:
+	default:
+		// A full queue drops the notice rather than blocking the sender. The row
+		// already exists, so the fact is not lost — it is waiting in the list, which
+		// is what the durable record is for.
+	}
 }

@@ -18,11 +18,39 @@ import (
 
 type pushJob struct {
 	userID string
-	// channelID is the conversation the notice refers to. Dispatch re-checks it,
-	// so a queued job cannot disclose activity the recipient lost access to
-	// while it waited in the backlog.
-	channelID string
-	payload   map[string]string
+	// The destination is typed rather than a bare channel id. A bare id cannot
+	// express a direct conversation, and an empty one reads as "no check needed" —
+	// which is exactly how a private notice would be dispatched with no
+	// authorization check at all (ADR 0015, "Push destinations are typed").
+	destination pushDestination
+	payload      map[string]string
+}
+
+// pushDestination is where a queued notice points. It is never optional: there is
+// no "no destination" case, because a notice that cannot be checked against current
+// access must not be sent.
+type pushDestination struct {
+	// kind is "channel", "direct" or "request".
+	kind string
+	// conversationID is the conversation the notice refers to. It is provenance for
+	// the eligibility check, never a value the payload carries.
+	conversationID string
+	// actorID is who did the thing, so a block between the two ends of the pair is
+	// re-checked at dispatch rather than trusted from enqueue time.
+	actorID string
+	// sourceKind is the activity kind, which selects the preference that governs
+	// interruption.
+	sourceKind string
+	// activityID is the opaque identity of the row this notice refers to. It is the
+	// de-duplication key the client already holds, so the payload carries it rather
+	// than an identifier derived from the conversation or the accounts.
+	activityID string
+}
+
+// channelJob keeps the existing community path, where the audience and mute
+// decision is the channel's own.
+func channelJob(userID, channelID string, payload map[string]string) pushJob {
+	return pushJob{userID: userID, destination: pushDestination{kind: "channel", conversationID: channelID}, payload: payload}
 }
 
 func (s *Server) pushDevices(w http.ResponseWriter, r *http.Request, user db.User) {
@@ -174,24 +202,26 @@ func (s *Server) pushWorker() {
 				continue
 			}
 			// A queued notice cannot disclose activity the recipient lost access to
-			// while it waited in the backlog: the decision is made here, at dispatch.
-			if job.channelID != "" && !s.mayNotifyChannel(s.ctx, job.userID, job.channelID) {
+			// while it waited in the backlog: the decision is made here, at dispatch,
+			// and it is a typed check rather than an absent one.
+			if !s.deliverableDestination(job) {
 				continue
 			}
+			payload := s.payloadForJob(job)
 			client := s.pushHTTP
 			subscriptions, err := s.pushSubscriptions(job.userID)
 			if err != nil {
 				continue
 			}
-			payload, _ := json.Marshal(job.payload)
+			encoded, _ := json.Marshal(payload)
 			for _, subscription := range subscriptions {
 				// A slow device must not let a later device reuse the access or mute
 				// decision made before that request. Already admitted network writes
 				// cannot be recalled; every new device dispatch checks current state.
-				if job.channelID != "" && !s.mayNotifyChannel(s.ctx, job.userID, job.channelID) {
+				if !s.deliverableDestination(job) {
 					break
 				}
-				response, err := webpush.SendNotificationWithContext(s.ctx, payload, &subscription, &webpush.Options{HTTPClient: client, Subscriber: s.config.BaseURL, VAPIDPublicKey: s.vapidPublic, VAPIDPrivateKey: s.vapidPrivate, TTL: 300, Urgency: webpush.UrgencyNormal})
+				response, err := webpush.SendNotificationWithContext(s.ctx, encoded, &subscription, &webpush.Options{HTTPClient: client, Subscriber: s.config.BaseURL, VAPIDPublicKey: s.vapidPublic, VAPIDPrivateKey: s.vapidPrivate, TTL: 300, Urgency: webpush.UrgencyNormal})
 				if err != nil {
 					continue
 				}

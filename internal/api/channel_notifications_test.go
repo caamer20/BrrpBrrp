@@ -289,14 +289,17 @@ func TestChannelMuteSuppressesAlreadyQueuedPushAndUnmuteRestoresIt(t *testing.T)
 		}
 	})
 	s.pushHTTP = &http.Client{Transport: recorder}
-	s.pushJobs <- pushJob{userID: waitingID, payload: map[string]string{"body": "block"}}
+	s.pushJobs <- channelJob(waitingID, channel.ID, map[string]string{"body": "block"})
 	select {
 	case <-recorder.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("push worker did not start")
 	}
-	s.pushJobs <- pushJob{userID: memberID, channelID: channel.ID, payload: map[string]string{"body": "already queued"}}
-	s.pushJobs <- pushJob{userID: waitingID, payload: map[string]string{"body": "barrier"}}
+	s.pushJobs <- channelJob(memberID, channel.ID, map[string]string{"body": "already queued"})
+	// The barrier job is addressed like any other: an untyped or destination-less
+	// notice is refused at dispatch, so the queue is a real queue rather than a path
+	// that skips the authorization check.
+	s.pushJobs <- channelJob(waitingID, channel.ID, map[string]string{"body": "barrier"})
 	setChannelMute(t, handler, member, channel.ID, true)
 	close(recorder.release)
 	waitPushCount(t, recorder, "waiting.example.invalid", 2)
@@ -304,7 +307,7 @@ func TestChannelMuteSuppressesAlreadyQueuedPushAndUnmuteRestoresIt(t *testing.T)
 		t.Fatalf("muting did not suppress the queued push: %d", count)
 	}
 	setChannelMute(t, handler, member, channel.ID, false)
-	s.pushJobs <- pushJob{userID: memberID, channelID: channel.ID, payload: map[string]string{"body": "unmuted"}}
+	s.pushJobs <- channelJob(memberID, channel.ID, map[string]string{"body": "unmuted"})
 	waitPushCount(t, recorder, "muted.example.invalid", 1)
 }
 
@@ -326,14 +329,14 @@ func TestChannelMuteIsRecheckedBetweenPushDevices(t *testing.T) {
 		}
 	})
 	s.pushHTTP = &http.Client{Transport: recorder}
-	s.pushJobs <- pushJob{userID: memberID, channelID: channel.ID, payload: map[string]string{"body": "two devices"}}
+	s.pushJobs <- channelJob(memberID, channel.ID, map[string]string{"body": "two devices"})
 	select {
 	case <-recorder.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("push worker did not start")
 	}
 	setChannelMute(t, handler, member, channel.ID, true)
-	s.pushJobs <- pushJob{userID: waitingID, payload: map[string]string{"body": "barrier"}}
+	s.pushJobs <- channelJob(waitingID, channel.ID, map[string]string{"body": "barrier"})
 	close(recorder.release)
 	waitPushCount(t, recorder, "waiting.example.invalid", 1)
 	if sent := recorder.sent("first.example.invalid") + recorder.sent("second.example.invalid"); sent != 1 {

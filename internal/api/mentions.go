@@ -107,7 +107,7 @@ func (s *Server) notifyMentions(message db.Message, actor db.User, targets []str
 		s.hub.BroadcastToRevision([]string{target}, revision, "notification.mention", payload)
 		if !s.hub.Online(target) && s.Settings().Push {
 			select {
-			case s.pushJobs <- pushJob{userID: target, channelID: message.ChannelID, payload: payload}:
+			case s.pushJobs <- channelJob(target, message.ChannelID, payload):
 			default:
 				s.log.Warn("push queue is full")
 			}

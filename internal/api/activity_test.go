@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -455,3 +457,87 @@ func TestUnacknowledgedActivityIsBoundedWithoutLosingUnseenRows(t *testing.T) {
 }
 
 
+
+// The typed destination exists because of one specific bypass: the previous shape
+// read an empty channel id as "no check needed", and a direct conversation has no
+// channel, so a private notice would have been dispatched with no authorization
+// check whatsoever. A notice that names no destination, or one this build does not
+// recognise, is refused rather than treated as unchecked.
+func TestAnUntypedPushDestinationIsRefused(t *testing.T) {
+	s, h, ann, ben, _, conversation := activityFixture(t)
+	sendDirect(t, h, ben, conversation, "a private message", "act-dest-1")
+
+	// No destination at all.
+	if s.deliverableDestination(pushJob{userID: evidenceUserID(t, h, ann)}) {
+		t.Fatal("a notice with no destination was treated as deliverable")
+	}
+	// A destination kind this build does not recognise.
+	if s.deliverableDestination(pushJob{userID: evidenceUserID(t, h, ann), destination: pushDestination{
+		kind: "something_new", conversationID: conversation, activityID: "x",
+	}}) {
+		t.Fatal("an unrecognised destination kind was treated as deliverable")
+	}
+	// A channel kind with no channel is equally refused.
+	if s.deliverableDestination(pushJob{userID: evidenceUserID(t, h, ann), destination: pushDestination{kind: "channel"}}) {
+		t.Fatal("a channel destination with no channel was treated as deliverable")
+	}
+	// The genuine one is deliverable, so the refusals above are the check working
+	// rather than the path being broken.
+	if !s.deliverableDestination(pushJob{userID: evidenceUserID(t, h, ann), destination: pushDestination{
+		kind: activityMessage, conversationID: conversation, actorID: evidenceUserID(t, h, ben), activityID: "x",
+	}}) {
+		t.Fatal("a genuine direct-message notice was refused")
+	}
+	_ = s
+}
+
+// A private payload must not carry the message or the introduction. A lock-screen
+// preview is the one place private text most easily leaks, so the body is content-free
+// unless the recipient has asked for the sender's name.
+func TestPrivatePushPayloadCarriesNoPrivateContent(t *testing.T) {
+	s, h, ann, ben, _, conversation := activityFixture(t)
+	messageID := sendDirect(t, h, ben, conversation, "a secret in the message body", "act-payload-1")
+
+	var activityID string
+	if err := s.store.QueryRow(`SELECT id FROM account_activity WHERE source_id=?`, messageID).Scan(&activityID); err != nil {
+		t.Fatal(err)
+	}
+	job := pushJob{userID: evidenceUserID(t, h, ann), destination: pushDestination{
+		kind: activityMessage, conversationID: conversation, actorID: evidenceUserID(t, h, ben), activityID: activityID,
+	}, payload: map[string]string{"body": "a secret in the message body", "title": "secret title"}}
+	payload := s.payloadForJob(job)
+	serialized := fmt.Sprint(payload)
+	if strings.Contains(serialized, "a secret in the message body") {
+		t.Fatalf("the payload carried the message: %v", payload)
+	}
+	if strings.Contains(serialized, "secret title") {
+		t.Fatalf("the payload carried the channel-shaped title: %v", payload)
+	}
+	// It says something happened, without saying what.
+	if payload["body"] == "" {
+		t.Fatal("the payload says nothing at all")
+	}
+	// The sender's name is not included unless the recipient asked for it, and the
+	// default is the quiet one.
+	if strings.Contains(payload["body"], "act_ben") {
+		t.Fatalf("the payload named the sender without being asked: %v", payload)
+	}
+	if w := request(t, h, "PUT", "/api/me/notification-preferences", map[string]any{
+		"kind": "direct_message", "show_sender": true,
+	}, ann); w.Code != 200 {
+		t.Fatalf("preference: %d %s", w.Code, w.Body.String())
+	}
+	payload = s.payloadForJob(job)
+	if !strings.Contains(payload["body"], "act_ben") {
+		t.Fatalf("an account that asked for the sender was not given it: %v", payload)
+	}
+	// And the conversation identifier is provenance for the check, never a value the
+	// payload carries: a push body is readable on a lock screen, and an id that
+	// discloses which private conversation exists is exactly what must not be there.
+	if strings.Contains(fmt.Sprint(payload), conversation) {
+		t.Fatalf("the payload carried the conversation: %v", payload)
+	}
+	if strings.Contains(fmt.Sprint(payload), evidenceUserID(t, h, ben)) {
+		t.Fatalf("the payload carried an account identifier rather than a name: %v", payload)
+	}
+}

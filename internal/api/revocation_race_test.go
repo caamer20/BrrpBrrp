@@ -184,15 +184,23 @@ func TestQueuedNotificationCannotOutliveAccess(t *testing.T) {
 	recorder := newPushRecorder()
 	s.pushHTTP = &http.Client{Transport: recorder}
 
-	// Hold the worker on the first notice, so the next two wait in the backlog.
-	s.pushJobs <- pushJob{userID: waitingID, payload: map[string]string{"body": "first"}}
+	// Hold the worker on the first notice, so the next two wait in the backlog. The
+	// hold is a deliverable notice for `waiting` in a channel it can read, because
+	// the recorder counts a request before it blocks: holding on a `revoked` notice
+	// would leave that account's counter non-zero for the wrong reason, and the leak
+	// assertion below could not tell the hold from a real leak. A destination-less
+	// notice would not hold the worker at all, since dispatch refuses one by design.
+	general := textChannelID(t, s)
+	s.pushJobs <- channelJob(waitingID, general, map[string]string{"body": "first"})
 	select {
 	case <-recorder.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the push worker never dispatched the first notice")
 	}
-	s.pushJobs <- pushJob{userID: revokedID, channelID: text.ID, payload: map[string]string{"body": "restricted"}}
-	s.pushJobs <- pushJob{userID: waitingID, payload: map[string]string{"body": "last"}}
+	s.pushJobs <- channelJob(revokedID, text.ID, map[string]string{"body": "restricted"})
+	// The trailing notice is a deliverable one in an unrestricted channel: it proves
+	// the worker drained past the restricted notice rather than stalling on it.
+	s.pushJobs <- channelJob(waitingID, general, map[string]string{"body": "last"})
 
 	// The grant is withdrawn while the notice sits in the backlog.
 	if w := request(t, handler, "PUT", "/api/channels/"+text.ID+"/access", map[string]any{"visibility": "private"}, admin); w.Code != 200 {
@@ -200,7 +208,9 @@ func TestQueuedNotificationCannotOutliveAccess(t *testing.T) {
 	}
 	close(recorder.release)
 
-	// The trailing notice proves the backlog was drained past the restricted one.
+	// The trailing notice proves the backlog was drained past the restricted one. It
+	// is the only notice addressed to `waiting`, so one delivery is the whole point:
+	// the worker got past the notice it had to refuse.
 	deadline := time.Now().Add(5 * time.Second)
 	for recorder.sent("waiting.example.invalid") < 2 {
 		if time.Now().After(deadline) {
@@ -217,7 +227,7 @@ func TestQueuedNotificationCannotOutliveAccess(t *testing.T) {
 	if w := request(t, handler, "PUT", "/api/channels/"+text.ID+"/access", grant, admin); w.Code != 200 {
 		t.Fatalf("restore: %d %s", w.Code, w.Body.String())
 	}
-	s.pushJobs <- pushJob{userID: revokedID, channelID: text.ID, payload: map[string]string{"body": "allowed"}}
+	s.pushJobs <- channelJob(revokedID, text.ID, map[string]string{"body": "allowed"})
 	deadline = time.Now().Add(5 * time.Second)
 	for recorder.sent("revoked.example.invalid") < 1 {
 		if time.Now().After(deadline) {

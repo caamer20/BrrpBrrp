@@ -2,7 +2,7 @@
 
 **Last updated:** 28 September 2026 (P10 tranche; review 11)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.7** (schema **14**, backup format **2**)
+**Candidate:** **0.4.0-alpha.7** (schema **15**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
 **Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
 **Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
@@ -24,6 +24,32 @@ the evidence level of each claim and the acceptance test that pins it, is in
 ## Current private-message tranche
 
 Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canonical direct requests, consent, durable contact limits, blocking, shared message/file/reply/search/read behavior and an opt-in inbox. ADR 0013 and 0014 add selected private-message evidence reporting and recipient-only request evidence, with `report.review_private` as a distinct delegated capability. This is partial progress in WP-09–11, not completed private messaging or v1 acceptance: push/activity, groups, calls, screen sharing and independent review remain. Private conversations default off.
+
+### Review 13 and the M1 activity foundation
+
+ADR 0015 and migration 15 add durable account activity and private notification
+preferences. The missing piece was not a UI: unread and the outstanding request badge
+are both derived and stay derived, and the only stored notification state was
+channel-scoped, while push dispatch carried a single `channelID` — a value a direct
+conversation does not have. An activity row is created inside the transaction that
+creates the thing it describes and carries identifiers, a kind and a timestamp, never
+a second copy of private text.
+
+Identity is `(source_kind, source_id)` with a unique index, and a request is identified
+by its attempt rather than by the pair, so a renewed introduction is a new event.
+Acknowledgment is durable, per account and monotonic; delivery stays a device fact.
+Preferences are account-level per kind, the ordering is fixed in the ADR, and an
+unreadable preference is a refusal rather than a permission.
+
+Push destinations are now typed. A notice with no destination, or one naming a kind
+this build does not recognise, is refused at dispatch — which closes the bypass where
+an empty channel id read as "no check needed". A private payload is content-free: it
+carries the activity's own opaque id as its de-duplication tag, not the conversation,
+because a lock screen can read the body.
+
+Verified: go vet clean, the full Go suite green, 132 frontend tests, svelte-check 0/0
+over 135 files, both browser modes (13 default-off, 21 private-enabled), and 23
+community plus 113 private recovery checks at schema 15.
 
 ### Review 11 and the P10 tranche
 
