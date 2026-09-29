@@ -24,10 +24,9 @@ const (
 	restrictedAuditLogRetention = 400 * 24 * time.Hour
 )
 
-// restrictedAuditActions are the audit actions written for private evidence review
-// and for recipient request evidence. They are matched by prefix because the
-// status and the source kind are part of the action name.
-var restrictedAuditActions = []string{"private_report.", "request_evidence."}
+// Which audit events are restricted, and therefore which clock reclaims them, is
+// decided in audit_classification.go. Keeping a second list here is exactly how the
+// writer, the two readers and this pass came to disagree about `private_request.*`.
 
 func (s *Server) purgeChannel(w http.ResponseWriter, r *http.Request, user db.User) {
 	channel, err := s.channel(r.PathValue("id"))
@@ -107,10 +106,10 @@ func (s *Server) maintain(now time.Time) error {
 	// accountability and outlives the evidence it describes; ordinary community
 	// audit entries do not. Reclaiming both on the same clock would delete the only
 	// record that a private review ever happened (ADR 0014).
-	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND action NOT LIKE 'private_report.%' AND action NOT LIKE 'request_evidence.%'`, db.Timestamp(now.Add(-auditLogRetention))); err != nil {
+	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND `+restrictedAuditNotLike("action"), db.Timestamp(now.Add(-auditLogRetention))); err != nil {
 		return err
 	}
-	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND (action LIKE 'private_report.%' OR action LIKE 'request_evidence.%')`, db.Timestamp(now.Add(-restrictedAuditLogRetention))); err != nil {
+	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND `+restrictedAuditLike("action"), db.Timestamp(now.Add(-restrictedAuditLogRetention))); err != nil {
 		return err
 	}
 	// Compact old deleted receipts in bounded batches, retaining a minimal spent key

@@ -562,3 +562,146 @@ func TestExpiredRequestEvidenceAndReceiptAreNotReplayed(t *testing.T) {
 }
 
 var _ = sql.ErrNoRows
+
+// R12-01. A request review is the same disclosure as a message review: it names the
+// reviewer, the evidence and the time to anyone who can read the community audit
+// log, which is exactly what the evidence policy exists to prevent. The writer emits
+// `private_request.*` while both audit readers recognised only `private_report.*`, so
+// a request review fell into the community feed and was reclaimed on the ordinary
+// 90-day clock instead of the declared restricted one.
+//
+// This drives a real review, then reads both feeds as differently authorized
+// accounts. It deliberately does not seed a prefix: only an event a handler actually
+// emits can prove the classification.
+func TestRequestReviewAuditIsClassifiedAsRestricted(t *testing.T) {
+	s, h, recipient, _, conversation, _, admin := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome request", "version": preview.Version, "operation_key": "op-audit-class",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	_, reviewer := evidenceRole(t, s, h, admin, "request audit reviewer", string(authz.ReportReviewPrivate))
+	queue := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/request-reports", nil, reviewer))
+	reportID := queue["reports"].([]any)[0].(map[string]any)["id"].(string)
+	if w := request(t, h, "PATCH", "/api/admin/request-reports/"+reportID, map[string]string{
+		"status": "resolved", "note": "audited",
+	}, reviewer); w.Code != 200 {
+		t.Fatalf("review: %d %s", w.Code, w.Body.String())
+	}
+
+	// An account holding only the community audit capability is the one the policy
+	// is written for. It must not learn that a request was reviewed, by whom, or when.
+	_, auditor := evidenceRole(t, s, h, admin, "community audit only", string(authz.AuditRead))
+	general := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/admin/audit-logs", nil, auditor))
+	for _, entry := range general {
+		action, _ := entry["action"].(string)
+		if strings.HasPrefix(action, "private_request.") {
+			t.Fatalf("a request review leaked into the community audit feed: %q", action)
+		}
+	}
+
+	// The same event is readable under the evidence policy, by the reviewer who did
+	// it, and it names that reviewer: this is the accountable record.
+	restricted := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer))
+	found := false
+	for _, entry := range restricted {
+		if action, _ := entry["action"].(string); strings.HasPrefix(action, "private_request.") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the request review is absent from the restricted audit feed")
+	}
+	// And it is not readable without the capability.
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
+		t.Fatalf("a community auditor read the restricted audit feed: %d", w.Code)
+	}
+}
+
+// The same classification decides reclamation, so a request review keeps the
+// restricted 400-day lifetime and is not reclaimed with the community feed's
+// 90-day entries. Asserted against a real event at both boundaries rather than a
+// seeded prefix, because a maintenance pass that never sees a real prefix would
+// pass this test while still reclaiming the wrong rows in production.
+func TestRequestReviewAuditKeepsTheRestrictedRetention(t *testing.T) {
+	s, h, recipient, _, conversation, _, admin := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "retention check", "version": preview.Version, "operation_key": "op-retention",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	_, reviewer := evidenceRole(t, s, h, admin, "retention reviewer", string(authz.ReportReviewPrivate))
+	queue := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/request-reports", nil, reviewer))
+	reportID := queue["reports"].([]any)[0].(map[string]any)["id"].(string)
+	if w := request(t, h, "PATCH", "/api/admin/request-reports/"+reportID, map[string]string{
+		"status": "resolved", "note": "retention",
+	}, reviewer); w.Code != 200 {
+		t.Fatalf("review: %d", w.Code)
+	}
+	var reviewID string
+	if err := s.store.QueryRow(`SELECT id FROM audit_logs WHERE action LIKE 'private_request.%'`).Scan(&reviewID); err != nil {
+		t.Fatalf("no real request-review event was written: %v", err)
+	}
+
+	// A community event written at the same instant, so the two are only
+	// distinguishable by classification and not by age.
+	communityID, now := db.ID(), db.Now()
+	t.Logf("reviewID=%s communityID=%s", reviewID, communityID)
+	if _, err := s.store.Exec(`INSERT INTO audit_logs(id,action,target_id,created_at) VALUES(?,'channel.purged','',?)`, communityID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// Past the community age and short of the restricted one: the request review
+	// must survive and the community event must not.
+	past := func(id string, days int) {
+		if _, err := s.store.Exec(`UPDATE audit_logs SET created_at=? WHERE id=?`,
+			db.Timestamp(time.Now().AddDate(0, 0, -days)), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past(reviewID, 200)
+	past(communityID, 200)
+	{
+		// Reproduce maintain's own comparison for this exact row.
+		var a, c string
+		_ = s.store.QueryRow(`SELECT action,created_at FROM audit_logs WHERE id=?`, reviewID).Scan(&a, &c)
+		t.Logf("target action=%q created=%s", a, c)
+		t.Logf("community cutoff=%s restricted cutoff=%s",
+			db.Timestamp(time.Now().Add(-auditLogRetention)),
+			db.Timestamp(time.Now().Add(-restrictedAuditLogRetention)))
+		var viaCommunity, viaRestricted int
+		_ = s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE id=? AND created_at<? AND `+restrictedAuditNotLike("action"), reviewID, db.Timestamp(time.Now().Add(-auditLogRetention))).Scan(&viaCommunity)
+		_ = s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE id=? AND created_at<? AND `+restrictedAuditLike("action"), reviewID, db.Timestamp(time.Now().Add(-auditLogRetention))).Scan(&viaRestricted)
+		t.Logf("target matched by community predicate: %d, by restricted predicate: %d", viaCommunity, viaRestricted)
+	}
+	if err := s.maintain(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE id=?`, reviewID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 1 {
+		t.Fatal("the request review was reclaimed on the community clock")
+	}
+	if err := s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE id=?`, communityID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatal("the community event outlived its retention")
+	}
+
+	// Past the restricted age as well, it is reclaimed.
+	past(reviewID, 500)
+	if err := s.maintain(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE id=?`, reviewID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatal("the request review outlived its restricted retention")
+	}
+}

@@ -722,13 +722,6 @@ func (s *Server) auditTx(ctx context.Context, tx *sql.Tx, actor, action, target 
 	return err
 }
 
-// privateEvidenceAuditActions are the audit records that describe private evidence
-// review. They are excluded from the community audit feed and readable only by an
-// account holding report.review_private, because naming the reviewer, the report
-// and the time would otherwise disclose that a specific person reported a specific
-// private message to a reader who cannot see the message (ADR 0013).
-const privateEvidenceAuditPrefix = "private_report."
-
 func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request, user db.User) {
 	before := r.URL.Query().Get("before")
 	if before == "" {
@@ -744,7 +737,7 @@ func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request, user db.User)
              ELSE COALESCE(u.username,'former member') END,
         a.action,a.target_id,a.created_at
         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-        WHERE a.id<? AND a.action NOT LIKE 'private_report.%' ORDER BY a.id DESC LIMIT 50`, before)
+        WHERE a.id<? AND `+restrictedAuditNotLike("a.action")+` ORDER BY a.id DESC LIMIT 50`, before)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -797,7 +790,7 @@ func (s *Server) privateEvidenceAuditLogs(w http.ResponseWriter, r *http.Request
 	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,
         COALESCE(u.username,'former member'),a.action,a.target_id,a.created_at
         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-        WHERE a.id<? AND a.action LIKE 'private_report.%' ORDER BY a.id DESC LIMIT 50`, before)
+        WHERE a.id<? AND `+restrictedAuditLike("a.action")+` ORDER BY a.id DESC LIMIT 50`, before)
 	if err != nil {
 		s.failed(w, err)
 		return
