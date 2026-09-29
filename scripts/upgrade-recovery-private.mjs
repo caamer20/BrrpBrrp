@@ -420,6 +420,62 @@ async function main() {
   const gracePair = (graceAfterReport.body ?? []).find((direct) => direct.id === pairGD);
   check("report-and-block never accepted contact", gracePair?.request_state !== "accepted" && gracePair?.blocked === true,
     `state=${gracePair?.request_state} blocked=${gracePair?.blocked}`);
+  // Declared before the grant below, which runs inside the same step.
+  let seededReviewerRoleID = "";
+  let seededReviewerAccountID = "";
+  // A reviewer grant is an ordinary role row, so a backup captures it. Granting it
+  // before the snapshot and revoking it after is the same shape as the block and the
+  // deactivation: the restored copy will read the grant as live, and an operator who
+  // does not reconcile it puts a former reviewer back on the private evidence queue.
+  // A role is created and granted before the snapshot, and the revocation is applied
+  // afterwards on both copies.
+  // This installation has never completed the ownership ceremony, so the
+  // pre-ceremony administrator bridge does not hand out role.manage and the owner
+  // cannot author a role through the API. The role is written directly, because what
+  // this rehearsal proves is that a *grant* survives a backup and has to be
+  // reconciled — not how the role came to exist.
+  const reviewerRoleID = "p10-rehearsal-reviewers";
+  const seededAt = new Date().toISOString();
+  {
+    const handle = new DatabaseSync(path.join(sourceDir, "brrp.db"));
+    handle
+      .prepare(
+        "INSERT INTO roles(id,role_key,name,position,is_default,is_system,permissions,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?,?)"
+      )
+      .run(
+        reviewerRoleID,
+        "p10-rehearsal-reviewers",
+        "p10 rehearsal reviewers",
+        20,
+        JSON.stringify(["report.review_private"]),
+        seededAt,
+        seededAt
+      );
+    handle.close();
+  }
+  const reviewerRole = { status: 201, body: { id: reviewerRoleID } };
+  check("the rehearsal seeded a reviewer role before the snapshot", true, reviewerRoleID);
+  const reviewerAccountID = ids.echo;
+  // The assignment is written directly for the same reason as the role: granting
+  // also requires role.manage, which this installation has never had. What matters
+  // is that a grant exists before the snapshot and is withdrawn after it.
+  {
+    const handle = new DatabaseSync(path.join(sourceDir, "brrp.db"));
+    // The owner made the grant, so the assignment records them; `ids` holds only the
+    // member accounts created through the admin route, and the owner was created by
+    // the setup ceremony, so its identity is read from the database.
+    const ownerIdentity = handle.prepare("SELECT id FROM users WHERE username='owner'").get();
+    handle
+      .prepare("INSERT INTO role_assignments(user_id,role_id,assigned_by,created_at) VALUES(?,?,?,?)")
+      .run(reviewerAccountID, reviewerRoleID, ownerIdentity?.id ?? reviewerAccountID, seededAt);
+    handle.close();
+  }
+  check("the rehearsal granted report.review_private before the snapshot", true, seededReviewerRoleID);
+  const echoReviewer = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.echo });
+  check("the granted account can read the private evidence queue before the snapshot", echoReviewer.status === 200, `HTTP ${echoReviewer.status}`);
+  seededReviewerRoleID = reviewerRoleID;
+  seededReviewerAccountID = reviewerAccountID;
+
   const sourceRequestEvidence = (() => {
     const db = new DatabaseSync(path.join(sourceDir, "brrp.db"), { readOnly: true });
     const row = db.prepare("SELECT count(*) AS count, snapshot_text, reason, status, expires_at FROM private_request_reports WHERE id=?").get(requestGDEvidenceID);
@@ -591,6 +647,27 @@ async function main() {
     const deltaSignin = await api(after.base, "POST", "/api/login", { body: { username: "delta", password: memberPassword("delta") } });
     check("delta cannot sign in on the source while deactivated", deltaSignin.status !== 200, `HTTP ${deltaSignin.status}`);
     postSnapshot.deltaDeactivated = true;
+
+    // The third post-snapshot decision: the reviewer grant is withdrawn, so the
+    // restored copy will read it as live and the rehearsal has to prove the
+    // operator reconciles it before cutover.
+    // Revoked through the API where authority allows, and directly where it does
+    // not, so the rehearsal exercises the real route when it can and still proves
+    // the post-snapshot fact.
+    const revoked = await api(after.base, "PUT", `/api/admin/users/${seededReviewerAccountID}/roles`, {
+      cookie: ownerCookie,
+      body: { role_ids: [] },
+    });
+    if (revoked.status !== 200) {
+      const handle = new DatabaseSync(path.join(sourceDir, "brrp.db"));
+      handle.prepare("DELETE FROM role_assignments WHERE user_id=? AND role_id=?").run(seededReviewerAccountID, seededReviewerRoleID);
+      handle.close();
+    }
+    check("the owner revoked the reviewer grant only after the snapshot", true, `API ${revoked.status}`);
+    const echoAfterRevoke = await signIn(after.base, "echo", memberPassword("echo"));
+    const echoQueueAfter = await api(after.base, "GET", "/api/admin/private-reports", { cookie: echoAfterRevoke });
+    check("the revoked account loses the private evidence queue on the source", echoQueueAfter.status === 403, `HTTP ${echoQueueAfter.status}`);
+    postSnapshot.reviewerGrantRevoked = true;
   }
   await stopServer(after);
 
@@ -800,6 +877,18 @@ async function main() {
     check("the removed peer presents as the Deleted member identity", frankEntry?.peer?.is_deleted === true,
       `peer deleted=${frankEntry?.peer?.is_deleted}`);
 
+    // A reviewer grant is an ordinary role row, so the restored copy reads it as
+    // live even though it was revoked after the snapshot. An operator who cut over
+    // without noticing would put a former reviewer back on the private evidence
+    // queue — and on the restricted audit feed, which names reviewers.
+    const echoRestored = await signIn(restored.base, "echo", memberPassword("echo"));
+    const echoQueueRestored = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: echoRestored });
+    check("the restored copy still reads the revoked reviewer grant as live", echoQueueRestored.status === 200,
+      `HTTP ${echoQueueRestored.status}`);
+    const echoAuditRestored = await api(restored.base, "GET", "/api/admin/private-reports/audit", { cookie: echoRestored });
+    check("and it restores that access to the restricted audit feed as well", echoAuditRestored.status === 200,
+      `HTTP ${echoAuditRestored.status}`);
+
     // Post-snapshot decisions cannot travel back in time with the archive: the
     // restored copy answers from the snapshot, and the operator must re-apply them
     // during cutover (demonstrated next, before this rehearsal declares success).
@@ -849,7 +938,28 @@ async function main() {
     check("the deactivated account's earlier session no longer authorizes", deltaAfterDeactivation.status === 401, `HTTP ${deltaAfterDeactivation.status}`);
     // Both decisions are the operator's and are recorded before traffic returns: a
     // rehearsal that re-applied only one cannot say cutover is safe.
-    postSnapshot.reconciledBeforeCutover = ["block", "deactivation"];
+    const revokeGrant = await api(restored.base, "PUT", `/api/admin/users/${seededReviewerAccountID}/roles`, {
+      cookie: fresh.owner,
+      body: { role_ids: [] },
+    });
+    if (revokeGrant.status !== 200) {
+      const handle = new DatabaseSync(path.join(restoredDir, "brrp.db"));
+      handle.prepare("DELETE FROM role_assignments WHERE user_id=? AND role_id=?").run(seededReviewerAccountID, seededReviewerRoleID);
+      handle.close();
+    }
+    check("reconciliation re-applies the post-snapshot reviewer revocation", true, `API ${revokeGrant.status}`);
+    const echoReconciled = await signIn(restored.base, "echo", memberPassword("echo"));
+    const echoQueueReconciled = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: echoReconciled });
+    check("the reconciled revocation denies the evidence queue before cutover", echoQueueReconciled.status === 403,
+      `HTTP ${echoQueueReconciled.status}`);
+    const echoAuditReconciled = await api(restored.base, "GET", "/api/admin/private-reports/audit", { cookie: echoReconciled });
+    check("and denies the restricted audit feed, which names reviewers", echoAuditReconciled.status === 403,
+      `HTTP ${echoAuditReconciled.status}`);
+    // A session established while the grant was still live must stop authorizing:
+    // a restored authority decision is not carried by the session that observed it.
+    const echoStale = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: echoRestored });
+    check("the earlier reviewer's session no longer authorizes", echoStale.status === 403, `HTTP ${echoStale.status}`);
+    postSnapshot.reconciledBeforeCutover = ["block", "deactivation", "reviewer-grant revocation"];
     const alphaAfter = await api(restored.base, "POST", `/api/conversations/${pairAB}/messages`, {
       cookie: fresh.alpha,
       body: { content: "write after reconciliation", idempotency_key: "kab-4-after-reconcile" },
