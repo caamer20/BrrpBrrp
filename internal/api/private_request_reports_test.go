@@ -1103,3 +1103,110 @@ func TestAnExpiredReceiptIsDefinedAndItsKeyStaysSpent(t *testing.T) {
 		t.Fatal("the spent key was removed rather than compacted to a guard")
 	}
 }
+
+// R12-06. Report-and-block is one transaction, and the claim is only worth as much
+// as the points at which it can fail. Injecting a failure at the evidence write
+// alone proves the first statement's rollback and nothing about the rest of the
+// sequence — the block, the rejection, the receipt or the audit entry are written
+// after it, and each is a point where a partial commit would leave a person
+// blocked for a report that does not exist, or holding evidence with no
+// explanation of who reviewed it.
+func TestReportAndBlockRollsBackAtEveryWrite(t *testing.T) {
+	injections := []struct {
+		name   string
+		create string
+		drop   string
+	}{
+		{"evidence insert", `CREATE TRIGGER p10_fail_evidence BEFORE INSERT ON private_request_reports BEGIN SELECT RAISE(ABORT,'injected'); END`, `DROP TRIGGER p10_fail_evidence`},
+		{"block insert", `CREATE TRIGGER p10_fail_block BEFORE INSERT ON user_blocks BEGIN SELECT RAISE(ABORT,'injected'); END`, `DROP TRIGGER p10_fail_block`},
+		{"request rejection", `CREATE TRIGGER p10_fail_reject BEFORE UPDATE ON direct_requests WHEN NEW.state='rejected' BEGIN SELECT RAISE(ABORT,'injected'); END`, `DROP TRIGGER p10_fail_reject`},
+		{"receipt insert", `CREATE TRIGGER p10_fail_receipt BEFORE INSERT ON private_report_receipts BEGIN SELECT RAISE(ABORT,'injected'); END`, `DROP TRIGGER p10_fail_receipt`},
+		{"audit write", `CREATE TRIGGER p10_fail_audit BEFORE INSERT ON audit_logs WHEN NEW.action='private_report.reported_and_blocked' BEGIN SELECT RAISE(ABORT,'injected'); END`, `DROP TRIGGER p10_fail_audit`},
+	}
+	for _, inj := range injections {
+		t.Run(inj.name, func(t *testing.T) {
+			s, h, recipient, _, conversation, senderID, _ := requestFixture(t)
+			preview := previewRequest(t, h, recipient, conversation)
+			if _, err := s.store.Exec(inj.create); err != nil {
+				t.Fatal(err)
+			}
+			w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+				"reason": "unwelcome", "version": preview.Version, "operation_key": "op-inject",
+			}, recipient)
+			if w.Code == 201 {
+				t.Fatal("the operation reported success despite an injected failure")
+			}
+			// Nothing at all survives: no block, no receipt, no evidence, no audit
+			// entry, and the request is exactly as it was.
+			var blocks, receipts, evidence, audited int
+			_ = s.store.QueryRow(`SELECT count(*) FROM user_blocks WHERE blocker_id=? AND blocked_id=?`, evidenceUserID(t, h, recipient), senderID).Scan(&blocks)
+			_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+			_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+			_ = s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE action='private_report.reported_and_blocked'`).Scan(&audited)
+			if blocks != 0 || receipts != 0 || evidence != 0 || audited != 0 {
+				t.Fatalf("partial effects survived: %d blocks, %d receipts, %d evidence, %d audit", blocks, receipts, evidence, audited)
+			}
+			var state, introduction string
+			_ = s.store.QueryRow(`SELECT state,introduction FROM direct_requests WHERE conversation_id=?`, conversation).Scan(&state, &introduction)
+			if state != "pending" || introduction == "" {
+				t.Fatalf("the request was disturbed: state=%q introduction=%q", state, introduction)
+			}
+			// The permitted control: with the failure removed the same action works
+			// and leaves all four effects together.
+			if _, err := s.store.Exec(inj.drop); err != nil {
+				t.Fatal(err)
+			}
+			if ok := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+				"reason": "unwelcome", "version": preview.Version, "operation_key": "op-inject",
+			}, recipient); ok.Code != 201 {
+				t.Fatalf("the action did not work once the failure was removed: %d %s", ok.Code, ok.Body.String())
+			}
+			_ = s.store.QueryRow(`SELECT count(*) FROM user_blocks WHERE blocker_id=? AND blocked_id=?`, evidenceUserID(t, h, recipient), senderID).Scan(&blocks)
+			_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+			_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+			_ = s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE action='private_report.reported_and_blocked'`).Scan(&audited)
+			if blocks != 1 || receipts != 1 || evidence != 1 || audited != 1 {
+				t.Fatalf("the control did not commit all four: %d blocks, %d receipts, %d evidence, %d audit", blocks, receipts, evidence, audited)
+			}
+		})
+	}
+}
+
+// A refusal is not a failure to report, and the two must not be confused. An
+// account without the standing to report gets nothing: no block, no receipt, no
+// evidence, and no audit entry claiming a review happened.
+func TestReportRefusalLeavesNoTraceOfAnAttempt(t *testing.T) {
+	s, h, recipient, sender, conversation, senderID, _ := requestFixture(t)
+	// The sender is unauthorized from the start and always was; the recipient is
+	// unauthorized only because the attempt has been settled.
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-refuse-sender",
+	}, sender); w.Code != http.StatusNotFound {
+		t.Fatalf("the sender was not refused: %d %s", w.Code, w.Body.String())
+	}
+	// Settle the request by having the recipient reject it, so there is no longer a
+	// pending attempt for anyone.
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/reject", map[string]string{}, recipient); w.Code != 200 {
+		t.Fatalf("reject: %d %s", w.Code, w.Body.String())
+	}
+	// A later submission naming a key is refused, and refused identically whether
+	// the reason is a missing attempt, a wrong version or a wrong account: the
+	// response must not tell an outsider that a conversation exists.
+	for name, cookie := range map[string]*http.Cookie{"the recipient": recipient, "the sender": sender} {
+		w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+			"reason": "unwelcome", "version": preview.Version, "operation_key": "op-refuse-" + name,
+		}, cookie)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s received %d rather than an indistinguishable refusal: %s", name, w.Code, w.Body.String())
+		}
+	}
+	var blocks, receipts, evidence, audited int
+	_ = s.store.QueryRow(`SELECT count(*) FROM user_blocks WHERE blocked_id=?`, senderID).Scan(&blocks)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_report_receipts`).Scan(&receipts)
+	_ = s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence)
+	_ = s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE action LIKE 'private_report.%'`).Scan(&audited)
+	if blocks != 0 || receipts != 0 || evidence != 0 || audited != 0 {
+		t.Fatalf("a refused attempt left a trace: %d blocks, %d receipts, %d evidence, %d audit", blocks, receipts, evidence, audited)
+	}
+}
