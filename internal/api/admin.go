@@ -430,6 +430,14 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request, actor db.Use
 		s.failed(w, err)
 		return
 	}
+	// Physical erasure cascades the account row away, which would take the owner row
+	// with it and leave the group naming an account that does not exist. The
+	// ownership is dispositioned first, while the membership rows are still readable,
+	// so a surviving member becomes the owner instead (completion review 13, V13-09).
+	if err := disposeGroupOwnershipForDepartingAccount(r.Context(), tx, target.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
 	result, err := tx.Exec(`DELETE FROM users WHERE id=? AND is_owner=0`, target.ID)
 	if err != nil {
 		s.failed(w, err)

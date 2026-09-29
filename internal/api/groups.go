@@ -1090,3 +1090,73 @@ func (s *Server) groupConversations(ctx context.Context, user db.User) ([]groupC
 	}
 	return out, nil
 }
+
+// disposeGroupOwnershipForDepartingAccount moves or clears the group ownership held
+// by an account whose identity is ending.
+//
+// Ownership is the one piece of a group that is not about a person reading it: it is
+// about who can invite, who can remove and who can hand the group over. An identity can
+// end while the group survives — anonymization keeps the history and drops the
+// membership, and a physical erasure cascades the account row away — so leaving the
+// owner row pointing at that account produced a group its remaining members could
+// read and nobody could administer (completion review 13, V13-09).
+//
+// The disposition is deterministic and non-escalating:
+//
+//   - to the longest-standing remaining accepted member, so the group keeps a person
+//     who can actually run it and a group member is never handed to an administrator;
+//   - to nobody, when there is no remaining member, in which case the row is removed
+//     rather than left naming an account that cannot act.
+//
+// The membership rows are read in the caller's transaction, so this composes with
+// anonymization and erasure without a second transaction ordering to get right. It is
+// called *before* the membership rows are removed, so the departing account is not
+// itself a candidate.
+func disposeGroupOwnershipForDepartingAccount(ctx context.Context, q db.Queryer, userID string) error {
+	groups, err := q.QueryContext(ctx, `SELECT o.conversation_id FROM group_owners o WHERE o.user_id=?`, userID)
+	if err != nil {
+		return err
+	}
+	owned := []string{}
+	for groups.Next() {
+		var id string
+		if err := groups.Scan(&id); err != nil {
+			groups.Close()
+			return err
+		}
+		owned = append(owned, id)
+	}
+	if err := groups.Err(); err != nil {
+		groups.Close()
+		return err
+	}
+	groups.Close()
+	now := db.Now()
+	for _, groupID := range owned {
+		// The successor is the longest-standing remaining accepted member, so a
+		// founder hands the group to the person who was there first rather than to
+		// whoever most recently joined.
+		var successor string
+		err := q.QueryRowContext(ctx, `SELECT m.user_id FROM conversation_members m
+			JOIN users u ON u.id=m.user_id
+			WHERE m.conversation_id=? AND m.user_id<>? AND m.state='accepted'
+			  AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0
+			ORDER BY m.joined_at, m.user_id LIMIT 1`, groupID, userID).Scan(&successor)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Nobody is left to run it. The row is removed rather than left pointing at
+			// an account that can no longer act; the group and its history are
+			// untouched, because an account's departure is not a group's ending.
+			if _, err := q.ExecContext(ctx, `DELETE FROM group_owners WHERE conversation_id=?`, groupID); err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := q.ExecContext(ctx, `UPDATE group_owners SET user_id=?,updated_at=? WHERE conversation_id=?`, successor, now, groupID); err != nil {
+			return err
+		}
+	}
+	return nil
+}

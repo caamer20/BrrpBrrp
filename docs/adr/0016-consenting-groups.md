@@ -55,6 +55,32 @@ where the product decision it defers to is made. An owner who wants the opposite
 for their installation is making a different product, and that is their call to make
 explicitly rather than something an implementation should decide silently.
 
+## What happens to ownership when an owner's account ends
+
+An account's identity can end while its group survives. Anonymization keeps the
+authored history and removes the membership; a physical erasure cascades the account
+row away. Neither is the group ending, and neither leaves the group unreadable — but
+ownership is about who can **invite, remove and hand the group over**, so a group
+naming an account that can no longer act is a group its remaining members can read and
+nobody can administer.
+
+Ownership is therefore dispositioned **before** the membership rows go, in the same
+transaction as the account change, so the departing account is not a candidate for its
+own groups:
+
+- **To the longest-standing remaining accepted member.** A founder hands the group to
+  the person who was there first, not to whoever joined most recently, and never to an
+  administrator — handing a private group to staff would be an escalation, not a fix.
+- **To nobody, when no member remains.** The row is removed rather than left pointing
+  at an account that cannot act. The group and its history are untouched, because an
+  account's departure is not a group's ending; marking the group removed stays the
+  last-member path.
+
+Deactivation and a ban are deliberately *not* in this rule. Both are reversible, the
+account comes back, and moving a group's owner on a suspension would hand the group to
+somebody who did not ask to run it. An account that is merely unavailable is not an
+account that has ended.
+
 ## What a group that has ended means
 
 When the last member leaves, the group is **marked removed** and the invitations

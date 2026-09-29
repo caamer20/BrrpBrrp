@@ -65,6 +65,16 @@ func (s *Server) anonymizeUser(w http.ResponseWriter, r *http.Request, actor db.
 		s.failed(w, err)
 		return
 	}
+	// Group ownership is dispositioned while the membership rows still exist, so the
+	// departing account is not a candidate for its own groups and the successor is
+	// chosen from the members who are actually staying. Without this a group kept
+	// naming an account that can no longer invite, remove or hand it over, and its
+	// remaining members could read a group nobody could administer
+	// (completion review 13, V13-09).
+	if err := disposeGroupOwnershipForDepartingAccount(r.Context(), tx, target.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
 	for _, query := range []string{
 		`DELETE FROM sessions WHERE user_id=?`,
 		`DELETE FROM push_subscriptions WHERE user_id=?`,

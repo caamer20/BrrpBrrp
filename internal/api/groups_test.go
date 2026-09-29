@@ -859,3 +859,86 @@ func TestAGroupMessageReachesEveryAcceptedMember(t *testing.T) {
 		t.Log("the installation owner is not a member of this group, so its absence is expected")
 	}
 }
+
+// V13-09. A group needs somebody who can run it, and an account's identity can end
+// while its group survives: anonymization keeps the history and removes the
+// membership, and a physical erasure cascades the account row away entirely.
+//
+// Neither touched the owner row, so the group was left naming an account that can no
+// longer act — the remaining members could read it and nobody could invite, remove or
+// hand it over. Ownership has to move before the identity goes, and it has to move to
+// a member who is still there, which is a decision about the group rather than about
+// the account.
+func TestAGroupsOwnershipIsDispositionedWhenAnOwnerAccountEnds(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	ownerID := evidenceUserID(t, h, owner)
+	guestID := evidenceUserID(t, h, guest)
+
+	// The state that must not survive: an owner who is no longer a member.
+	if err := disposeGroupOwnershipForDepartingAccount(t.Context(), s.store, ownerID); err != nil {
+		t.Fatalf("dispose: %v", err)
+	}
+	if _, err := s.store.Exec(`DELETE FROM conversation_members WHERE user_id=?`, ownerID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The group survives — its history and its members are untouched — and it has an
+	// owner who is still in it.
+	var currentOwner string
+	if err := s.store.QueryRow(`SELECT user_id FROM group_owners WHERE conversation_id=?`, groupID).Scan(&currentOwner); err != nil {
+		t.Fatalf("the group lost its owner row entirely: %v", err)
+	}
+	if currentOwner == ownerID {
+		t.Fatal("the group still names an account that is no longer a member")
+	}
+	if currentOwner != guestID {
+		t.Fatalf("ownership did not move to the remaining member: %s", currentOwner)
+	}
+	var stillMember int
+	if err := s.store.QueryRow(`SELECT EXISTS(SELECT 1 FROM conversation_members WHERE conversation_id=? AND user_id=? AND state='accepted')`, groupID, currentOwner).Scan(&stillMember); err != nil {
+		t.Fatal(err)
+	}
+	if stillMember != 1 {
+		t.Fatal("ownership moved to somebody who is not an accepted member")
+	}
+
+	// And the new owner can actually administer it, which is the point.
+	summary, err := s.groupSummary(t.Context(), currentOwner, groupID)
+	if err != nil {
+		t.Fatalf("the new owner cannot read their own group: %v", err)
+	}
+	if !summary.CanInvite || !summary.CanTransfer {
+		t.Fatalf("the new owner cannot administer the group: %+v", summary)
+	}
+}
+
+// A group with nobody left to own it is not left claiming one. When the last member's
+// identity ends there is nobody to hand it to, so the row goes rather than pointing
+// at an account that can no longer act.
+func TestAGroupWithNoRemainingMemberLosesItsOwnerRow(t *testing.T) {
+	s, h, owner, _, groupID := groupFixture(t)
+	ownerID := evidenceUserID(t, h, owner)
+	if err := disposeGroupOwnershipForDepartingAccount(t.Context(), s.store, ownerID); err != nil {
+		t.Fatalf("dispose: %v", err)
+	}
+	if _, err := s.store.Exec(`DELETE FROM conversation_members WHERE user_id=?`, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	var owners int
+	if err := s.store.QueryRow(`SELECT count(*) FROM group_owners WHERE conversation_id=?`, groupID).Scan(&owners); err != nil {
+		t.Fatal(err)
+	}
+	if owners != 0 {
+		t.Fatalf("a group with no members still names %d owner(s)", owners)
+	}
+	// The group itself is left alone: its history belongs to whoever can still read
+	// it, and "marking it removed" is the terminal path, not an account's departure.
+	var state string
+	if err := s.store.QueryRow(`SELECT state FROM conversations WHERE id=?`, groupID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "active" {
+		t.Fatalf("an account's departure changed the group's state to %q", state)
+	}
+}
