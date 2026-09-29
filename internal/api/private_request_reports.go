@@ -100,12 +100,29 @@ func requestVersion(introduction, attemptID string) string {
 	return hex.EncodeToString(digest.Sum(nil))
 }
 
-// intentDigest binds an operation key to what was asked for. A replay under the same
-// key with different content is a conflict rather than a silent overwrite, and a
-// different key with the same content is ordinary new work.
-func intentDigest(action, reason, attemptID string) string {
+// intentDigest binds an operation key to one specific action on one specific
+// target. Four parts, and each is load-bearing:
+//
+//   - action, so a report can never acknowledge a different command;
+//   - the conversation, so a key aimed at one pair cannot be presented against
+//     another and answered with that other report's outcome;
+//   - the preview version, which is a digest of the introduction and the attempt
+//     it belonged to. Binding it transitively binds both the text the recipient
+//     confirmed and the attempt, so a renewed introduction on the same pair — same
+//     conversation, different text — is different work rather than a replay of the
+//     introduction before it. It is also the one value the caller still holds
+//     after the report has destroyed its own source, which is what makes a genuine
+//     retry recognisable at all;
+//   - the reason, which is the explanation stored with the evidence, so a key
+//     cannot be reused to file a second report under different words.
+//
+// The length prefixes make no two different field boundaries collide. A replay
+// under the same key with different content is a conflict rather than a silent
+// overwrite, and a different key with the same content is ordinary new work
+// (ADR 0014).
+func intentDigest(action, conversationID, version, reason string) string {
 	digest := sha256.New()
-	for _, part := range []string{action, reason, attemptID} {
+	for _, part := range []string{action, conversationID, version, reason} {
 		fmt.Fprintf(digest, "%d:", len(part))
 		io.WriteString(digest, part)
 	}
@@ -237,13 +254,28 @@ func (s *Server) reportRequestAndBlock(w http.ResponseWriter, r *http.Request, u
 	// A committed receipt is resolved before a still-pending source is required.
 	// Report-and-block destroys its own source, so demanding one first would make
 	// every retry fail on a request that has already been handled (ADR 0014).
-	receipt, found, err := s.committedReceipt(r.Context(), tx, principal.UserID, input.OperationKey)
+	receipt, state, err := s.committedReceipt(r.Context(), tx, principal.UserID, input.OperationKey)
 	if err != nil {
 		s.failed(w, err)
 		return
 	}
-	if found {
-		if receipt.IntentDigest != intentDigest("report_and_block", input.Reason, receipt.AttemptID) {
+	if state == receiptExpired {
+		// The key was spent and its replay window has closed. The operation is not
+		// run again and the key stays reserved, so an aged-out receipt cannot become
+		// new work; the answer says so rather than reporting a constraint failure
+		// from the unique index that outlives the row (ADR 0014).
+		problem(w, http.StatusGone, "That report was already submitted. Its receipt has expired, so this identifier can no longer be replayed or reused.")
+		return
+	}
+	if state == receiptLive {
+		// The comparison uses what the caller submitted and what the receipt
+		// recorded — the conversation it was aimed at and the attempt it acted on —
+		// rather than rebuilding the digest from the receipt's own fields alone. A
+		// key acknowledges one action on one target, so presenting it against a
+		// different conversation, or after the pair renewed and the attempt
+		// rotated, is different work and is refused (completion review 12, R12-04).
+		if receipt.SourceID != conversationID ||
+			receipt.IntentDigest != intentDigest("report_and_block", conversationID, input.Version, input.Reason) {
 			problem(w, http.StatusConflict, "That identifier was already used for a different report.")
 			return
 		}
@@ -331,7 +363,7 @@ func (s *Server) reportRequestAndBlock(w http.ResponseWriter, r *http.Request, u
 		s.failed(w, err)
 		return
 	}
-	if err := s.recordReceipt(r.Context(), tx, user.ID, input.OperationKey, evidence, requesterID, attemptID, "reported_and_blocked", now); err != nil {
+	if err := s.recordReceipt(r.Context(), tx, user.ID, input.OperationKey, evidence, requesterID, attemptID, input.Version, "reported_and_blocked", now); err != nil {
 		s.failed(w, err)
 		return
 	}
@@ -350,21 +382,29 @@ func (s *Server) reportRequestAndBlock(w http.ResponseWriter, r *http.Request, u
 	}
 	s.signalDirectChange(user.ID, requesterID)
 	respond(w, http.StatusCreated, requestOperationReceipt(requestReceipt{
-		EvidenceID:   evidence.ID,
-		Outcome:      "reported_and_blocked",
-		SubjectID:    requesterID,
-		AttemptID:    attemptID,
-		CreatedAt:    evidence.CreatedAt,
-		ExpiresAt:    evidence.ExpiresAt,
-		IntentDigest: intentDigest("report_and_block", input.Reason, attemptID),
+		EvidenceID:        evidence.ID,
+		Outcome:           "reported_and_blocked",
+		SubjectID:         requesterID,
+		AttemptID:         attemptID,
+		CreatedAt:         evidence.CreatedAt,
+		EvidenceExpiresAt: evidence.ExpiresAt,
+		ExpiresAt:         db.Timestamp(now.Add(privateReportReceiptLifetime)),
+		IntentDigest:      intentDigest("report_and_block", conversationID, input.Version, input.Reason),
 	}, false))
 }
 
 type requestReceipt struct {
-	EvidenceID   string
-	Outcome      string
-	SubjectID    string
-	AttemptID    string
+	EvidenceID string
+	Outcome    string
+	SubjectID  string
+	AttemptID  string
+	// SourceID is the conversation the operation was aimed at. A replay is only
+	// the same action if it names the same destination, so the key is bound to it
+	// rather than inferred from the evidence it produced.
+	SourceID string
+	// EvidenceExpiresAt is the evidence's own availability, which is the promise
+	// made to the reporter and is unaffected by how long the receipt lives.
+	EvidenceExpiresAt string
 	CreatedAt    string
 	ExpiresAt    string
 	IntentDigest string
@@ -374,12 +414,19 @@ type requestReceipt struct {
 // says the person is blocked *now*: a later deliberate unblock must stay effective
 // and a replay must not block again (ADR 0014).
 func requestOperationReceipt(receipt requestReceipt, duplicate bool) map[string]any {
+	// Two clocks, two names. `evidence_expires_at` is the 90 days the reporter was
+	// promised for the evidence itself; `receipt_expires_at` is the shorter window
+	// in which this operation key can still be recognised as the same one. They
+	// are different promises about different things, and reporting both under one
+	// name meant a person reading a 30-day value after being told 90 could not tell
+	// which they had been given (completion review 12, R12-05).
 	return map[string]any{
-		"id":         receipt.EvidenceID,
-		"outcome":    receipt.Outcome,
-		"created_at": receipt.CreatedAt,
-		"expires_at": receipt.ExpiresAt,
-		"duplicate":  duplicate,
+		"id":                  receipt.EvidenceID,
+		"outcome":             receipt.Outcome,
+		"created_at":          receipt.CreatedAt,
+		"evidence_expires_at": receipt.EvidenceExpiresAt,
+		"receipt_expires_at":  receipt.ExpiresAt,
+		"duplicate":           duplicate,
 	}
 }
 
@@ -399,25 +446,66 @@ func (s *Server) insertRequestEvidence(ctx context.Context, tx *sql.Tx, conversa
 // committedReceipt resolves a previously committed operation for this account. It is
 // checked after authentication and the feature policy but before any source
 // requirement, which is what makes a retry work after the source is gone.
-func (s *Server) committedReceipt(ctx context.Context, tx *sql.Tx, userID, operationKey string) (requestReceipt, bool, error) {
+//
+// committedReceipt resolves an account's own receipt for an operation key. The
+// boolean reports whether the receipt is still within its window. An expired but
+// still-present receipt is distinguished by a third state, so callers can answer
+// "this happened and I can no longer replay it" rather than "this never existed"
+// — see receiptState.
+func (s *Server) committedReceipt(ctx context.Context, tx *sql.Tx, userID, operationKey string) (requestReceipt, receiptState, error) {
 	var r requestReceipt
 	var createdAt, expiresAt string
-	err := tx.QueryRowContext(ctx, `SELECT evidence_id,outcome,subject_id,attempt_id,created_at,expires_at,intent_digest
+	err := tx.QueryRowContext(ctx, `SELECT evidence_id,outcome,subject_id,attempt_id,source_id,created_at,expires_at,intent_digest
 		FROM private_report_receipts WHERE user_id=? AND operation_key=? AND expires_at>?`,
-		userID, operationKey, db.Now()).Scan(&r.EvidenceID, &r.Outcome, &r.SubjectID, &r.AttemptID, &createdAt, &expiresAt, &r.IntentDigest)
+		userID, operationKey, db.Now()).Scan(&r.EvidenceID, &r.Outcome, &r.SubjectID, &r.AttemptID, &r.SourceID, &createdAt, &expiresAt, &r.IntentDigest)
 	if errors.Is(err, sql.ErrNoRows) {
-		return requestReceipt{}, false, nil
+		// A key that was spent and has aged out is a known outcome, not an unknown
+		// one. It is reported as expired rather than hidden, because "this never
+		// happened" and "this happened and I can no longer replay it" leave the
+		// person with completely different next steps.
+		var spent int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM private_report_receipts WHERE user_id=? AND operation_key=?`,
+			userID, operationKey).Scan(&spent); err != nil {
+			return requestReceipt{}, receiptAbsent, err
+		}
+		if spent > 0 {
+			return requestReceipt{}, receiptExpired, nil
+		}
+		return requestReceipt{}, receiptAbsent, nil
 	}
 	if err != nil {
-		return requestReceipt{}, false, err
+		return requestReceipt{}, receiptAbsent, err
 	}
+	// The evidence's own availability is read alongside the receipt's, because the
+	// caller is shown both and the two are different promises. The evidence may
+	// outlive the receipt, so it is read by id rather than assumed.
+	var evidenceExpiry string
+	if err := tx.QueryRowContext(ctx, `SELECT expires_at FROM private_request_reports WHERE id=?`, r.EvidenceID).Scan(&evidenceExpiry); err != nil {
+		// The evidence was reclaimed while its receipt is still live. The receipt
+		// still describes work that happened, so the outcome is reported without an
+		// availability claim rather than failing the lookup.
+		evidenceExpiry = ""
+	}
+	r.EvidenceExpiresAt = evidenceExpiry
 	r.CreatedAt, r.ExpiresAt = createdAt, expiresAt
-	return r, true, nil
+	return r, receiptLive, nil
 }
 
-func (s *Server) recordReceipt(ctx context.Context, tx *sql.Tx, userID, operationKey string, evidence requestEvidence, subjectID, attemptID, outcome string, now time.Time) error {
+// receiptState is the outcome of resolving an operation key. The three states are
+// genuinely different to the person holding the key: work that never happened, work
+// that happened and can still be replayed, and work that happened and whose replay
+// window has closed.
+type receiptState int
+
+const (
+	receiptAbsent receiptState = iota
+	receiptLive
+	receiptExpired
+)
+
+func (s *Server) recordReceipt(ctx context.Context, tx *sql.Tx, userID, operationKey string, evidence requestEvidence, subjectID, attemptID, version, outcome string, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO private_report_receipts(id,user_id,operation_key,intent_digest,source_kind,source_id,attempt_id,evidence_id,outcome,reporter_id,subject_id,created_at,expires_at) VALUES(?,?,?,?,'request',?,?,?,?,?,?,?,?)`,
-		db.ID(), userID, operationKey, intentDigest("report_and_block", evidence.Reason, attemptID),
+		db.ID(), userID, operationKey, intentDigest("report_and_block", evidence.Conversation, version, evidence.Reason),
 		evidence.Conversation, attemptID, evidence.ID, outcome, userID, subjectID,
 		db.Timestamp(now), db.Timestamp(now.Add(privateReportReceiptLifetime)))
 	return err
@@ -447,12 +535,27 @@ func (s *Server) ownReportReceipt(w http.ResponseWriter, r *http.Request, user d
 		s.authorityFailed(w, err)
 		return
 	}
-	receipt, found, err := s.committedReceipt(r.Context(), tx, principal.UserID, key)
+	receipt, state, err := s.committedReceipt(r.Context(), tx, principal.UserID, key)
 	if err != nil {
 		s.failed(w, err)
 		return
 	}
-	if !found {
+	switch state {
+	case receiptExpired:
+		// A defined terminal answer rather than a 404: the caller asked to reconcile
+		// a lost response, and "it happened, the window has closed" is the fact they
+		// need. It carries no evidence text and no statement about current state.
+		if err := tx.Commit(); err != nil {
+			s.failed(w, err)
+			return
+		}
+		respond(w, http.StatusGone, map[string]any{
+			"outcome":    "expired",
+			"expired":    true,
+			"created_at": receipt.CreatedAt,
+		})
+		return
+	case receiptAbsent:
 		// Not found and not disclosed: another account's key is indistinguishable
 		// from one that never existed.
 		hidden(w)

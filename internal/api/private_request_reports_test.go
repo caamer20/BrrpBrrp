@@ -535,15 +535,30 @@ func TestExpiredRequestEvidenceAndReceiptAreNotReplayed(t *testing.T) {
 	if _, err := s.store.Exec(`UPDATE private_report_receipts SET expires_at=?`, past); err != nil {
 		t.Fatal(err)
 	}
-	// The receipt is gone, so the retry is refused rather than re-executed.
-	if w := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-expire", nil, recipient); w.Code != http.StatusNotFound {
-		t.Fatalf("an expired receipt still resolved: %d", w.Code)
+	// An expired receipt is a defined terminal result, not an absence: the caller
+	// reconciling a lost response needs to know the work happened, and 404 told them
+	// it did not (completion review 12, R12-05).
+	expired := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-expire", nil, recipient)
+	if expired.Code != http.StatusGone {
+		t.Fatalf("an expired receipt answered %d, want 410: %s", expired.Code, expired.Body.String())
 	}
+	if !strings.Contains(expired.Body.String(), "expired") {
+		t.Fatalf("the expired result did not say so: %s", expired.Body.String())
+	}
+	// It is still not re-executed, and still not a server fault: the key stays spent.
 	retry := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
 		"reason": "unwelcome", "version": preview.Version, "operation_key": "op-expire",
 	}, recipient)
-	if retry.Code != http.StatusNotFound {
+	if retry.Code == 201 {
 		t.Fatalf("an expired operation was replayed as new work: %d %s", retry.Code, retry.Body.String())
+	}
+	if retry.Code >= 500 {
+		t.Fatalf("an expired operation produced a server fault rather than a defined answer: %d %s", retry.Code, retry.Body.String())
+	}
+	// A key that was never used is still simply absent, so the three states remain
+	// distinguishable by the person holding the key.
+	if w := request(t, h, "GET", "/api/me/report-receipt?operation_key=never-used", nil, recipient); w.Code != http.StatusNotFound {
+		t.Fatalf("an unused key answered %d, want 404", w.Code)
 	}
 	// With the expiry still in the past, the record is unreadable: the reviewer
 	// cannot distinguish expired evidence from evidence that never existed.
@@ -879,5 +894,212 @@ func TestRequestIntroductionLimitCountsCharactersNotBytes(t *testing.T) {
 				t.Fatal("the stored evidence is not the introduction that was confirmed")
 			}
 		})
+	}
+}
+
+// R12-04. An operation key acknowledges one specific action. The digest bound the
+// action, the reason and the attempt id taken from the receipt being replayed — not
+// the destination the caller named — so a key could be presented against a
+// different conversation and be answered with that other report's outcome. The key
+// must be bound to where it was aimed as well as what it said.
+func TestOperationKeyIsBoundToItsDestination(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	// A second genuine pending request, so there is a different conversation to aim
+	// the spent key at.
+	_, otherRequester := memberAccount(t, s, "other_requester")
+	otherID, _ := memberAccount(t, s, "other_recipient")
+	otherConversation := readJSON[directConversation](t, request(t, h, "POST", "/api/directs", map[string]string{
+		"user_id": otherID, "introduction": "a different introduction",
+	}, otherRequester)).ID
+
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "first report", "version": preview.Version, "operation_key": "op-dest-1",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("first report: %d %s", w.Code, w.Body.String())
+	}
+
+	// Same key, same reason, aimed at a different conversation. The recipient of
+	// that conversation is not this account, so the operation is not theirs; it must
+	// not be answered with the first report's receipt.
+	foreign := request(t, h, "POST", "/api/directs/"+otherConversation+"/report-and-block", map[string]string{
+		"reason": "first report", "version": "whatever", "operation_key": "op-dest-1",
+	}, recipient)
+	if foreign.Code == 200 {
+		t.Fatalf("a spent key answered for a different conversation: %d %s", foreign.Code, foreign.Body.String())
+	}
+	// And the other conversation must be untouched: no evidence, no block.
+	var otherEvidence int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_request_reports WHERE conversation_id=?`, otherConversation).Scan(&otherEvidence); err != nil {
+		t.Fatal(err)
+	}
+	if otherEvidence != 0 {
+		t.Fatal("the foreign key use created evidence on the other conversation")
+	}
+	var otherPending int
+	if err := s.store.QueryRow(`SELECT count(*) FROM direct_requests WHERE conversation_id=? AND state='pending'`, otherConversation).Scan(&otherPending); err != nil {
+		t.Fatal(err)
+	}
+	if otherPending != 1 {
+		t.Fatal("the foreign key use rejected the other conversation's request")
+	}
+}
+
+// A renewed attempt on the same pair is a different attempt, so it is different work
+// even though the conversation is the same. The key must distinguish them, or a
+// report of the first introduction would be replayed as if it covered the second.
+func TestARenewedAttemptIsDifferentWorkForTheSameKey(t *testing.T) {
+	s, h, recipient, sender, conversation, _, _ := requestFixture(t)
+	first := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "the first introduction", "version": first.Version, "operation_key": "op-renew",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("first report: %d %s", w.Code, w.Body.String())
+	}
+	// Deliberately unblock and renew, so a genuinely new attempt exists on the same
+	// pair. The recipient is the one who acts this time, which is the case the
+	// original test covered only from the unauthorized sender's side.
+	if w := request(t, h, "DELETE", "/api/me/blocks/"+mustID(t, s, "request_sender"), nil, recipient); w.Code != 200 {
+		t.Fatalf("unblock: %d %s", w.Code, w.Body.String())
+	}
+	// The rejection cooldown is bypassed deliberately: the attempt identity is what
+	// this test is about, and waiting 24 hours is not a thing a test can do.
+	if _, err := s.store.Exec(`UPDATE direct_requests SET retry_after='' WHERE conversation_id=?`, conversation); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(t, h, "POST", "/api/directs", map[string]string{
+		"user_id": evidenceUserID(t, h, recipient), "introduction": "a second introduction",
+	}, sender); w.Code != 201 && w.Code != 200 {
+		// 201 for a new pair, 200 when an existing pair reopens: both are success.
+		t.Fatalf("renew: %d %s", w.Code, w.Body.String())
+	}
+	second := previewRequest(t, h, recipient, conversation)
+	if second.Version == first.Version {
+		t.Fatal("the renewed attempt reused the first attempt's version")
+	}
+	// Same key against the new attempt: different work, so it is refused rather than
+	// answered with the previous report's outcome.
+	w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "the first introduction", "version": second.Version, "operation_key": "op-renew",
+	}, recipient)
+	if w.Code == 200 {
+		t.Fatalf("a spent key was accepted for a renewed attempt: %d %s", w.Code, w.Body.String())
+	}
+	var evidence int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_request_reports WHERE conversation_id=?`, conversation).Scan(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence != 1 {
+		t.Fatalf("the renewed attempt produced %d evidence rows, want 1", evidence)
+	}
+}
+
+func mustID(t *testing.T, s *Server, username string) string {
+	t.Helper()
+	var id string
+	if err := s.store.QueryRow(`SELECT id FROM users WHERE username=?`, username).Scan(&id); err != nil {
+		t.Fatalf("no account %q: %v", username, err)
+	}
+	return id
+}
+
+// R12-05. Two different clocks are involved and the response used one name for
+// both. The first answer carried the evidence's 90-day expiry; a replay or a lookup
+// carried the receipt's 30-day one, under the same field name. A person told their
+// report is available for 90 days would read a 30-day value on the retry and have
+// no way to know which promise they were reading.
+func TestReceiptDistinguishesEvidenceExpiryFromItsOwn(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	first := readJSON[map[string]any](t, request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "clock check", "version": preview.Version, "operation_key": "op-clock",
+	}, recipient))
+
+	var evidenceExpiry, receiptExpiry string
+	if err := s.store.QueryRow(`SELECT expires_at FROM private_request_reports WHERE id=?`, first["id"]).Scan(&evidenceExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.QueryRow(`SELECT expires_at FROM private_report_receipts WHERE operation_key='op-clock'`).Scan(&receiptExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if evidenceExpiry == receiptExpiry {
+		t.Fatal("the fixture cannot distinguish the two clocks")
+	}
+	// The first response states the evidence's availability, and says how long the
+	// receipt itself lives, without conflating them.
+	if first["evidence_expires_at"] != evidenceExpiry {
+		t.Fatalf("the first response did not state the evidence expiry: %v", first["evidence_expires_at"])
+	}
+	if first["receipt_expires_at"] != receiptExpiry {
+		t.Fatalf("the first response did not state the receipt expiry: %v", first["receipt_expires_at"])
+	}
+	// The ambiguous field is gone rather than kept alongside the honest ones.
+	if _, present := first["expires_at"]; present {
+		t.Fatal("the ambiguous expires_at field is still reported")
+	}
+
+	// A replay and the lookup must state the same two things, with the same values.
+	replay := readJSON[map[string]any](t, request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "clock check", "version": preview.Version, "operation_key": "op-clock",
+	}, recipient))
+	lookup := readJSON[map[string]any](t, request(t, h, "GET", "/api/me/report-receipt?operation_key=op-clock", nil, recipient))
+	for name, body := range map[string]map[string]any{"replay": replay, "lookup": lookup} {
+		if body["evidence_expires_at"] != evidenceExpiry {
+			t.Fatalf("%s stated evidence expiry %v, want %s", name, body["evidence_expires_at"], evidenceExpiry)
+		}
+		if body["receipt_expires_at"] != receiptExpiry {
+			t.Fatalf("%s stated receipt expiry %v, want %s", name, body["receipt_expires_at"], receiptExpiry)
+		}
+		if _, present := body["expires_at"]; present {
+			t.Fatalf("%s still reports the ambiguous expires_at", name)
+		}
+	}
+}
+
+// After the receipt's own window closes the operation is spent, and saying so is
+// different from pretending it never existed. The key must also stay reserved: the
+// unique index outlives the row, so simply hiding it turns a later attempt into a
+// late constraint failure instead of a defined answer.
+func TestAnExpiredReceiptIsDefinedAndItsKeyStaysSpent(t *testing.T) {
+	s, h, recipient, _, conversation, _, _ := requestFixture(t)
+	preview := previewRequest(t, h, recipient, conversation)
+	if w := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "expiry", "version": preview.Version, "operation_key": "op-expire",
+	}, recipient); w.Code != 201 {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	// The receipt passes its window; the evidence it names has not.
+	past := db.Timestamp(time.Now().Add(-time.Hour))
+	if _, err := s.store.Exec(`UPDATE private_report_receipts SET expires_at=? WHERE operation_key='op-expire'`, past); err != nil {
+		t.Fatal(err)
+	}
+	lookup := request(t, h, "GET", "/api/me/report-receipt?operation_key=op-expire", nil, recipient)
+	if lookup.Code == 404 {
+		t.Fatal("an expired receipt is reported as never having existed")
+	}
+	if lookup.Code != 410 {
+		t.Fatalf("an expired receipt answered %d, want 410: %s", lookup.Code, lookup.Body.String())
+	}
+	// The key stays reserved, so the same operation cannot be run again as new work.
+	replay := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "expiry", "version": preview.Version, "operation_key": "op-expire",
+	}, recipient)
+	if replay.Code == 201 {
+		t.Fatalf("an expired receipt's key admitted the operation again: %d %s", replay.Code, replay.Body.String())
+	}
+	if replay.Code >= 500 {
+		t.Fatalf("an expired receipt produced a server fault rather than a defined answer: %d %s", replay.Code, replay.Body.String())
+	}
+	// And it survives a restart of the process's own store, which is the whole point
+	// of keeping the guard.
+	if _, err := s.store.Exec(`UPDATE private_report_receipts SET expires_at=?`, past); err != nil {
+		t.Fatal(err)
+	}
+	var keys int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_report_receipts WHERE operation_key='op-expire'`).Scan(&keys); err != nil {
+		t.Fatal(err)
+	}
+	if keys != 1 {
+		t.Fatal("the spent key was removed rather than compacted to a guard")
 	}
 }
