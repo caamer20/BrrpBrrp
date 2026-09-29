@@ -186,9 +186,34 @@ func (s *Server) conversationAudienceIDs(ctx context.Context, q db.Queryer, id s
 	if kind == "channel" {
 		return s.channelAudienceIDs(ctx, q, id)
 	}
-	if !s.config.PrivateConversations || kind != "direct" {
+	// A group is the other kind of private conversation and its audience is its
+	// accepted, usable members. It was refused here, so a message sent into a group
+	// reached nobody's socket: the sender saw it locally and every other member saw
+	// nothing until they reloaded (completion review 13, V13-01).
+	if !s.config.PrivateConversations || (kind != "direct" && kind != "group") {
 		return nil, 0, authz.ErrUnavailable
 	}
+	if kind == "group" {
+		rows, err := q.QueryContext(ctx, `SELECT m.user_id FROM conversation_members m
+			JOIN conversations c ON c.id=m.conversation_id
+			JOIN users u ON u.id=m.user_id
+			WHERE c.id=? AND c.state='active' AND m.state='accepted'
+			  AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0`, id)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer rows.Close()
+		audience := []string{}
+		for rows.Next() {
+			var member string
+			if err := rows.Scan(&member); err != nil {
+				return nil, 0, err
+			}
+			audience = append(audience, member)
+		}
+		return audience, int64(len(audience)), rows.Err()
+	}
+	// A direct pair is two accounts, and the pair table is what says which two.
 	rows, err := q.QueryContext(ctx, `SELECT m.user_id FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id JOIN direct_pairs p ON p.conversation_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=? AND c.state='active' AND m.state='accepted' AND m.user_id IN(p.user_low,p.user_high) AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0`, id)
 	if err != nil {
 		return nil, 0, err

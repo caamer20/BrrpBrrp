@@ -826,3 +826,36 @@ func TestAGroupIsUsableThroughTheSharedConversationPipeline(t *testing.T) {
 	}
 	_ = s
 }
+
+// A message sent into a group has to reach the other members' sockets, not just the
+// sender's own screen. The audience resolution refused a group, so a member who was
+// looking at the conversation saw nothing arrive until they reloaded — which is the
+// difference between a conversation and a log (completion review 13, V13-01).
+func TestAGroupMessageReachesEveryAcceptedMember(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	_, outsider := memberAccount(t, s, "grp_fanout_outsider")
+
+	audience, revision, err := s.conversationAudienceIDs(t.Context(), s.store, groupID)
+	if err != nil {
+		t.Fatalf("audience: %v", err)
+	}
+	if revision == 0 {
+		t.Fatal("a group produced no audience revision, so nothing is published")
+	}
+	members := map[string]bool{}
+	for _, id := range audience {
+		members[id] = true
+	}
+	if !members[evidenceUserID(t, h, owner)] || !members[evidenceUserID(t, h, guest)] {
+		t.Fatalf("the audience omits an accepted member: %v", members)
+	}
+	// A nonmember is not in a group's audience, and neither is an ordinary
+	// administrator: reading the queue is not authority to receive it.
+	if members[evidenceUserID(t, h, outsider)] {
+		t.Fatal("a nonmember is in the group's audience")
+	}
+	if members[evidenceUserID(t, h, groupAdminCookie)] {
+		t.Log("the installation owner is not a member of this group, so its absence is expected")
+	}
+}
