@@ -541,3 +541,123 @@ func TestPrivatePushPayloadCarriesNoPrivateContent(t *testing.T) {
 		t.Fatalf("the payload carried an account identifier rather than a name: %v", payload)
 	}
 }
+
+// V13-05. Eligibility has to be decided before the page is cut, not after: a page
+// full of rows the account cannot use is a page of nothing, and the cursor that
+// should lead to the rest of the list is never issued because the loop never filled.
+//
+// The reproduced shape is 51 ineligible request rows above one valid message
+// activity, which returned zero entries, no next cursor, and a count of 52.
+func TestActivityEligibilityIsDecidedBeforeThePageIsCut(t *testing.T) {
+	s, h, owner, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+	guestID := evidenceUserID(t, h, guest)
+
+	// One real message the recipient can use.
+	sendDirectGroup(t, h, owner, groupID, "an ordinary group message", "act-page-1")
+
+	// Then a run of rows belonging to somebody else. A real member of a real but
+	// unrelated conversation: the rows are well-formed and the recipient simply is
+	// not their audience, which is what eligibility is for.
+	unrelated := unrelatedGroupFor(t, s, h, owner, "act_page_outsider")
+	_, outsider := memberAccount(t, s, "act_page_third")
+	ineligible := evidenceUserID(t, h, outsider)
+	_ = unrelated
+	// Every id is resolved before the transaction opens: the test server has a
+	// single connection, so an HTTP lookup made while a transaction is open waits
+	// for the very connection that transaction is holding.
+	ownerID := evidenceUserID(t, h, owner)
+	tx, err := s.store.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 51; i++ {
+		if _, err := tx.Exec(`INSERT INTO account_activity(id,user_id,source_kind,source_id,conversation_id,actor_id,created_at,acknowledged_at,interruptible)
+			VALUES(?,?,'group_message',?,?,?,'','',0)`, db.ID(), guestID, fmt.Sprintf("page-eligible-%03d", i), groupID, ownerID, db.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Rows for a conversation the recipient is not a member of: valid rows, wrong
+	// recipient membership, which is exactly what eligibility is for.
+	for i := 0; i < 51; i++ {
+		if _, err := tx.Exec(`INSERT INTO account_activity(id,user_id,source_kind,source_id,conversation_id,actor_id,created_at,acknowledged_at,interruptible)
+			VALUES(?,?,'group_message',?,?,?,'','',0)`, db.ID(), ineligible, fmt.Sprintf("page-notmine-%03d", i), unrelated, ownerID, db.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		query := "?kind=group_message"
+		if cursor != "" {
+			query += "&before=" + cursor
+		}
+		body := listActivity(t, h, guest, query)
+		rows := body["activity"].([]any)
+		pages++
+		if pages > 8 {
+			t.Fatal("the walk did not terminate")
+		}
+		for _, entry := range rows {
+			key := entry.(map[string]any)["source_id"].(string)
+			if strings.HasPrefix(key, "page-notmine-") {
+				t.Fatalf("an entry the recipient cannot use was returned: %s", key)
+			}
+			if seen[key] {
+				t.Fatalf("%s appeared on two pages", key)
+			}
+			seen[key] = true
+		}
+		next, _ := body["next_cursor"].(string)
+		if next == "" {
+			break
+		}
+		if next == cursor {
+			t.Fatalf("the cursor did not advance: %q", next)
+		}
+		cursor = next
+	}
+	// Every eligible row is reachable exactly once: the real message the send path
+	// wrote, and all 51 seeded rows above it. The 51 rows the recipient is *not* the
+	// audience for were never returned, and their presence is what the pre-limit bug
+	// turned into an empty page and a cursor that never advanced.
+	if len(seen) != 52 {
+		t.Fatalf("the walk reached %d of the 52 eligible rows", len(seen))
+	}
+}
+
+// unrelatedGroupFor creates a second group on the same server, so a test can name a
+// conversation the recipient was never a member of. Membership is what eligibility
+// turns on, so the conversation has to be real rather than invented.
+func unrelatedGroupFor(t *testing.T, s *Server, h http.Handler, owner *http.Cookie, username string) string {
+	t.Helper()
+	_, thirdCookie := memberAccount(t, s, username)
+	group := readJSON[groupSummary](t, request(t, h, "POST", "/api/groups", map[string]string{"name": "an unrelated group"}, owner))
+	invite(t, h, owner, group.ID, evidenceUserID(t, h, thirdCookie))
+	accept(t, h, thirdCookie, pendingInvitation(t, h, thirdCookie))
+	return group.ID
+}
+
+// sendDirectGroup posts one message into a group and returns its id.
+func sendDirectGroup(t *testing.T, h http.Handler, cookie *http.Cookie, groupID, content, key string) string {
+	t.Helper()
+	w := request(t, h, "POST", "/api/conversations/"+groupID+"/messages", map[string]string{
+		"content": content, "idempotency_key": key,
+	}, cookie)
+	if w.Code != 201 {
+		t.Fatalf("send %q: %d %s", content, w.Code, w.Body.String())
+	}
+	return readJSON[map[string]any](t, w)["id"].(string)
+}
+
+func cut9(value string) string {
+	if len(value) > 240 {
+		return value[:240]
+	}
+	return value
+}

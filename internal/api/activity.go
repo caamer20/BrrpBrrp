@@ -273,7 +273,13 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 		return
 	}
 	kind := r.URL.Query().Get("kind")
-	if kind != "" && kind != activityMessage && kind != activityRequest {
+	// A group message is its own kind (ADR 0016), so it has to be filterable: an
+	// account that wants only its request activity could not exclude group traffic
+	// without this, and a group that could not be filtered was a kind the interface
+	// had no way to ask about.
+	switch kind {
+	case "", activityMessage, activityRequest, activityGroupMessage:
+	default:
 		problem(w, http.StatusBadRequest, "Choose a known activity kind.")
 		return
 	}
@@ -294,19 +300,33 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 	// the account may no longer read is neither returned nor able to shift the
 	// cursor. The conversation is not returned: an activity list is not a way to
 	// learn the shape of a private inbox.
-	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,a.source_kind,a.source_id,u.username,a.created_at,a.acknowledged_at,
-        (CASE WHEN a.source_kind='request'
-              THEN EXISTS(SELECT 1 FROM direct_requests r JOIN users ru ON ru.id=r.requester_id
-                          WHERE r.conversation_id=a.conversation_id AND r.recipient_id=a.user_id AND r.state='pending'
-                            AND ru.is_deleted=0 AND ru.is_deactivated=0 AND ru.is_banned=0)
-              ELSE EXISTS(SELECT 1 FROM conversation_members m JOIN users cu ON cu.id=m.user_id
-                          WHERE m.conversation_id=a.conversation_id AND m.user_id=a.user_id AND m.state='accepted'
-                            AND cu.is_deleted=0 AND cu.is_deactivated=0 AND cu.is_banned=0)
-         END) AS member,
-        (SELECT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=a.user_id AND b.blocked_id=a.actor_id) OR (b.blocker_id=a.actor_id AND b.blocked_id=a.user_id)))
+	// Eligibility is decided in the query rather than in the loop, because a row the
+	// account cannot use must not occupy a page slot. Filtering after the limit meant a
+	// page of nothing: the reproduced shape was 51 request rows the recipient was not
+	// the audience for above one valid message activity, which returned zero entries,
+	// no next cursor, and a count of 52 — and a cursor-driven walk over it never
+	// terminated, because the cursor was never issued for the rows it skipped
+	// (completion review 13, V13-05).
+	//
+	// A request row is eligible while the request is still pending and addressed to
+	// this account; every other kind while the account is an accepted, usable member
+	// of the conversation. A block in either direction ends it, because a notice about
+	// somebody the recipient has barred is not something to surface.
+	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,a.source_kind,a.source_id,u.username,a.created_at,a.acknowledged_at
         FROM account_activity a LEFT JOIN users u ON u.id=a.actor_id
         WHERE a.user_id=? AND a.id<? AND a.conversation_id<>''
           AND (`+kindIs(kind)+`) AND (`+unacknowledgedIs(unacknowledgedOnly)+`)
+          AND NOT EXISTS(SELECT 1 FROM user_blocks b
+                        WHERE (b.blocker_id=a.user_id AND b.blocked_id=a.actor_id)
+                           OR (b.blocker_id=a.actor_id AND b.blocked_id=a.user_id))
+          AND (CASE WHEN a.source_kind='request'
+                    THEN EXISTS(SELECT 1 FROM direct_requests r JOIN users ru ON ru.id=r.requester_id
+                                WHERE r.conversation_id=a.conversation_id AND r.recipient_id=a.user_id AND r.state='pending'
+                                  AND ru.is_deleted=0 AND ru.is_deactivated=0 AND ru.is_banned=0)
+                    ELSE EXISTS(SELECT 1 FROM conversation_members m JOIN users cu ON cu.id=m.user_id
+                                WHERE m.conversation_id=a.conversation_id AND m.user_id=a.user_id AND m.state='accepted'
+                                  AND cu.is_deleted=0 AND cu.is_deactivated=0 AND cu.is_banned=0)
+               END)
         ORDER BY a.id DESC LIMIT ?`,
 		principal.UserID, before, activityPageLimit+1)
 	if err != nil {
@@ -317,29 +337,28 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 
 	type entry struct {
 		id, kind, sourceID, actor, createdAt, acknowledgedAt string
-		blocked                                               bool
 	}
 	items := make([]map[string]any, 0, activityPageLimit)
 	cursor := ""
 	more := false
+	// The row the extra fetch read and did not return. It is the cursor when the page
+	// came back short, because a walk that resumes from the last row it *returned*
+	// would re-read the rows it already skipped.
+	var withheld string
 	for rows.Next() {
 		var e entry
-		var member int
-		if err := rows.Scan(&e.id, &e.kind, &e.sourceID, &e.actor, &e.createdAt, &e.acknowledgedAt, &member, &e.blocked); err != nil {
+		// Every row here is already eligible: the query decided it, so a row the
+		// account cannot use is not here to be skipped.
+		if err := rows.Scan(&e.id, &e.kind, &e.sourceID, &e.actor, &e.createdAt, &e.acknowledgedAt); err != nil {
 			s.failed(w, err)
 			return
-		}
-		if member == 0 || e.blocked {
-			// Written before access was lost. It is not shown, and it is not able to
-			// occupy a page slot, so the cursor below is not moved by a row this
-			// account cannot use.
-			continue
 		}
 		if len(items) == activityPageLimit {
 			// The cursor is the last row *returned*, not the first one withheld.
 			// `before` is exclusive, so pointing it at the withheld row would skip
 			// that row entirely: with 51 rows and a limit of 50 the walk would stop at
 			// 50 and never deliver the fifty-first (completion review 13, R13-01).
+			withheld = e.id
 			more = true
 			break
 		}
@@ -361,8 +380,20 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 		s.failed(w, err)
 		return
 	}
-	if more && len(items) > 0 {
-		cursor, _ = items[len(items)-1]["id"].(string)
+	// A page can be entirely consumed by the extra row the limit fetches, leaving
+	// nothing to hand back a cursor from. Issuing the cursor of the row we *did*
+	// read and withhold — rather than of the last row returned — is what keeps a
+	// cursor walk moving when a page comes back empty.
+	// `before` is exclusive, so the cursor is the last row *returned*: pointing it at
+	// the withheld row would skip that row entirely. When the page came back short —
+	// which happens when the extra fetch was the only eligible row left — the withheld
+	// row is the last one read and is itself where the walk resumes.
+	if more {
+		if len(items) < activityPageLimit {
+			cursor = withheld
+		} else if len(items) > 0 {
+			cursor, _ = items[len(items)-1]["id"].(string)
+		}
 	}
 	counts := s.activityCounts(principal.UserID)
 	respond(w, http.StatusOK, map[string]any{
