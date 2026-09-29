@@ -618,9 +618,12 @@ func TestRequestReviewAuditIsClassifiedAsRestricted(t *testing.T) {
 		}
 	}
 
-	// The same event is readable under the evidence policy, by the reviewer who did
-	// it, and it names that reviewer: this is the accountable record.
-	restricted := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer))
+	// The same event is readable under the restricted audit policy, and it names the
+	// reviewer who did it: this is the accountable record. The policy is the audit
+	// capability rather than the evidence one, so a grant made to see submitted
+	// evidence is not also a grant to read an audit trail (V13-02).
+	_, auditReader := evidenceRole(t, s, h, admin, "restricted audit reader", string(authz.AuditRead))
+	restricted := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditReader))
 	found := false
 	for _, entry := range restricted {
 		if action, _ := entry["action"].(string); strings.HasPrefix(action, "private_request.") {
@@ -630,9 +633,10 @@ func TestRequestReviewAuditIsClassifiedAsRestricted(t *testing.T) {
 	if !found {
 		t.Fatal("the request review is absent from the restricted audit feed")
 	}
-	// And it is not readable without the capability.
-	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
-		t.Fatalf("a community auditor read the restricted audit feed: %d", w.Code)
+	// It is not readable without the audit capability, and specifically not by an
+	// account whose only grant is the evidence one (V13-02).
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code != http.StatusForbidden {
+		t.Fatalf("an evidence reviewer read the restricted audit feed: %d", w.Code)
 	}
 }
 

@@ -110,6 +110,27 @@ invite, who may remove, and who may transfer.
 - Invitation creation, expiry, rejection and revocation are all durable state rather
   than memory, so a restart cannot resurrect a revoked invitation.
 
+## Who may read the record that a group changed
+
+A group invitation and a membership change are administrative acts, so they are
+recorded in the audit log rather than dropped. They are also **private**: the event
+names an actor and a group identifier, which discloses that a private group exists
+and who is in it.
+
+They therefore live in the **restricted audit feed**, which the community audit feed
+excludes and maintenance reclaims on the restricted 400-day clock rather than the
+90-day one. They are not classified as report evidence: an account holding
+`report.review_private` is granted the evidence that was submitted and nothing
+else, and a group is not submitted evidence.
+
+The restricted feed is gated on **`audit.read`**, not on the evidence capability.
+This is deliberate and was the defect V13-02 recorded: gating it on
+`report.review_private` meant the only accounts able to read who had joined a group
+were evidence reviewers, so a grant made to see submitted text was in practice also
+a grant to browse group membership. An auditor now reads an audit trail; an evidence
+reviewer reads submitted evidence. Neither implies the other, and an ordinary member
+reads neither.
+
 ## Interaction with what already exists
 
 - **Activity.** A group message is activity, keyed by its message id like any other,

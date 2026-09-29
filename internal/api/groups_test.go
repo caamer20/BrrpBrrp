@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
 )
 
@@ -17,9 +18,14 @@ import (
 
 func groupFixture(t *testing.T) (*Server, http.Handler, *http.Cookie, *http.Cookie, string) {
 	t.Helper()
+	return groupFixtureWithAdmin(t, "")
+}
+
+func groupFixtureWithAdmin(t *testing.T, _ string) (*Server, http.Handler, *http.Cookie, *http.Cookie, string) {
+	t.Helper()
 	s, h := testServer(t)
 	s.config.PrivateConversations = true
-	setupAdmin(t, s, h)
+	admin := setupAdmin(t, s, h)
 	_, owner := memberAccount(t, s, "grp_owner")
 	_, guest := memberAccount(t, s, "grp_guest")
 	created := request(t, h, "POST", "/api/groups", map[string]string{"name": "the test group"}, owner)
@@ -28,8 +34,14 @@ func groupFixture(t *testing.T) (*Server, http.Handler, *http.Cookie, *http.Cook
 	}
 	group := readJSON[groupSummary](t, created)
 	invite(t, h, owner, group.ID, evidenceUserID(t, h, guest))
+	groupAdminCookie = admin
 	return s, h, owner, guest, group.ID
 }
+
+// groupAdminCookie holds the installation owner's session for the most recent
+// group fixture, so a test that needs the owner's authority does not have to
+// re-run the setup ceremony.
+var groupAdminCookie *http.Cookie
 
 // invite performs the owner's invitation.
 func invite(t *testing.T, h http.Handler, owner *http.Cookie, groupID, inviteeID string) {
@@ -489,4 +501,89 @@ func TestAGroupsOwnerCannotBeRemovedAndAnEmptyingRemovalTakesTheGroup(t *testing
 	if state != "removed" {
 		t.Fatalf("the emptied group survived with state %q", state)
 	}
+}
+
+// V13-02. A group's membership is private, and so is the fact that it exists: an
+// account holding only the community audit capability must not learn that a private
+// group was created, who invited whom, or who joined it. Naming the actor and the
+// group id in an event an unrelated auditor can read discloses both.
+//
+// The events exercised here are the ones the handlers actually write. Seeding a
+// prefix no handler emits would prove the filter but not the writers.
+func TestGroupLifecycleEventsAreNotReadableThroughOrdinaryAudit(t *testing.T) {
+	s, h, _, guest, groupID := groupFixture(t)
+	accept(t, h, guest, pendingInvitation(t, h, guest))
+
+	// The rows exist. A fix that stopped writing them would satisfy a reader-only
+	// test while losing the accountability record entirely.
+	var written int
+	if err := s.store.QueryRow(`SELECT count(*) FROM audit_logs WHERE action LIKE 'group.%'`).Scan(&written); err != nil {
+		t.Fatal(err)
+	}
+	if written == 0 {
+		t.Fatal("no group lifecycle event was written, so the reader test would prove nothing")
+	}
+
+	// An account holding only the community audit capability.
+	_, auditor := evidenceRole(t, s, h, groupAdminCookie, "community only auditor", string(authz.AuditRead))
+	general := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/admin/audit-logs", nil, auditor))
+	for _, entry := range general {
+		action, _ := entry["action"].(string)
+		if isRestrictedAuditAction(action) {
+			t.Fatalf("a private group event reached the community audit feed: %q", action)
+		}
+		if action == "group.invited" || action == "group.joined" {
+			t.Fatalf("a group lifecycle event reached the community audit feed: %q", action)
+		}
+	}
+
+	// The restricted feed is gated on its own capability, not on the evidence
+	// review grant. An account holding only report.review_private is refused here,
+	// so a grant that confers submitted evidence cannot be used to browse group
+	// metadata.
+	_, reviewer := evidenceRole(t, s, h, groupAdminCookie, "community moderator", string(authz.MessageDeleteAny))
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code == 200 {
+		t.Fatal("an account without the audit capability read the restricted audit feed")
+	}
+
+	// The restricted feed keeps them, and the group is what makes an account
+	// authorized to read it: a member, the owner, and the installation's operator.
+	// An ordinary member is refused: membership is not authority to read an audit
+	// trail, and a restricted feed any member could read would be a community feed
+	// with a filter on it. The operator holds the audit capability by role, and an
+	// explicit grant is the only other way in.
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, guest); w.Code != http.StatusForbidden {
+		t.Fatalf("an ordinary member read the restricted audit feed: %d", w.Code)
+	}
+	memberRole, memberAuditor := evidenceRole(t, s, h, groupAdminCookie, "member auditor", string(authz.AuditRead))
+	for name, cookie := range map[string]*http.Cookie{
+		"the operator":             groupAdminCookie,
+		"an account granted audit": memberAuditor,
+	} {
+		w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, cookie)
+		if w.Code != 200 {
+			t.Fatalf("%s could not read the restricted audit feed: %d %s", name, w.Code, w.Body.String())
+		}
+		entries := readJSON[[]map[string]any](t, w)
+		found := false
+		for _, entry := range entries {
+			if action, _ := entry["action"].(string); isRestrictedAuditAction(action) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s could not see the group lifecycle events they are entitled to", name)
+		}
+	}
+
+	// Revocation is read-time, not a filter that forgets: an account that loses the
+	// audit capability stops seeing it immediately.
+	revokeEvidenceRole(t, h, groupAdminCookie, memberRole)
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, memberAuditor); w.Code != http.StatusForbidden {
+		t.Fatalf("a revoked account still read the restricted audit feed: %d", w.Code)
+	}
+	if w := request(t, h, "GET", "/api/admin/audit-logs", nil, memberAuditor); w.Code != http.StatusForbidden {
+		t.Fatalf("a revoked account still read the community audit feed: %d", w.Code)
+	}
+	_ = groupID
 }

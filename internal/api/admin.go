@@ -759,12 +759,20 @@ func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request, user db.User)
 	respond(w, 200, entries)
 }
 
-// privateEvidenceAuditLogs returns the audit records for private evidence review
-// to an account that holds report.review_private and nothing else. The records are
-// not hidden from the audit altogether — a review is still an administrative act
-// and must be accountable — but they are readable only under the policy that
-// governs the evidence, so a community audit reader never learns that a named
-// person reported a specific private message.
+// privateEvidenceAuditLogs returns the restricted audit feed: the records for
+// private evidence review *and* for private group membership.
+//
+// The records are not hidden from audit altogether — a review and an invitation
+// are administrative acts and must be accountable — but they are kept out of the
+// community feed, so an ordinary audit reader never learns that a named person
+// reported a specific private message, or that a private group exists at all.
+//
+// The audience is the audit capability rather than report.review_private, and that
+// is the point of the split. Before this, the feed was gated on the evidence
+// capability, which meant the only accounts able to read who had joined a group
+// were evidence reviewers — a grant made to see submitted text, used to browse
+// group membership instead. An evidence reviewer and an auditor now read
+// different things (completion review 13, V13-02).
 func (s *Server) privateEvidenceAuditLogs(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !s.requirePrivateConversations(w) {
 		return
@@ -783,7 +791,10 @@ func (s *Server) privateEvidenceAuditLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer tx.Rollback()
-	if _, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.ReportReviewPrivate); err != nil {
+	// Read under the audit capability, checked inside the transaction like every
+	// other authority decision, so a grant revoked between the route guard and this
+	// point is refused rather than acted on.
+	if _, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.AuditRead); err != nil {
 		s.authorityFailed(w, err)
 		return
 	}

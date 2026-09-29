@@ -27,7 +27,16 @@ var restrictedAuditPrefixes = []string{
 	"private_request.", // pending-request evidence: submission and review
 	"request_evidence.", // retained for rows written before the `private_` prefixes
 	// were adopted; see the compatibility note in migration 14's documentation
+	"group.", // private group lifecycle: who invited, who joined, who left
 }
+
+// The restricted audit feed is readable by the installation's operator and by an
+// account holding an explicit audit capability, and it is the only place private
+// group membership is recorded. That is a deliberate widening relative to
+// `report.review_private`: a reviewer of submitted evidence is granted exactly the
+// evidence that was submitted and nothing else, and a group is not submitted
+// evidence. Granting one must not quietly grant the other (completion review 13,
+// V13-02).
 
 // restrictedAuditLike selects restricted rows.
 //

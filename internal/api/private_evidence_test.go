@@ -504,8 +504,11 @@ func TestPrivateReviewAuditIsRestrictedToTheEvidencePolicy(t *testing.T) {
 		}
 	}
 	// The review is still accountable: it is recorded and readable under the
-	// evidence policy rather than simply dropped.
-	restricted := readJSON[[]map[string]string](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer))
+	// restricted audit policy rather than simply dropped. That policy is the audit
+	// capability, not the evidence one — a reviewer is granted the evidence that was
+	// submitted, not an audit trail (completion review 13, V13-02).
+	_, auditReader := evidenceRole(t, s, h, admin, "restricted audit reader", string(authz.AuditRead))
+	restricted := readJSON[[]map[string]string](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditReader))
 	if len(restricted) == 0 {
 		t.Fatal("the private review was not recorded at all")
 	}
@@ -518,9 +521,15 @@ func TestPrivateReviewAuditIsRestrictedToTheEvidencePolicy(t *testing.T) {
 	if !found {
 		t.Errorf("the private review is not readable under the evidence policy: %+v", restricted)
 	}
-	// And the community audit reader cannot reach that feed either.
-	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
-		t.Fatalf("the audit-only reader reached the private audit feed: %d", w.Code)
+	// The community feed is the thing that excludes them, and an account with no
+	// audit capability at all is refused the restricted one too. The restricted feed
+	// is an audit surface, so holding audit.read is what opens it — that is the
+	// separation V13-02 introduced, and it is asserted rather than assumed.
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code != http.StatusForbidden {
+		t.Fatalf("an evidence reviewer reached the restricted audit feed without the audit capability: %d", w.Code)
+	}
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditReader); w.Code != 200 {
+		t.Fatalf("an account granted audit could not read the restricted feed: %d %s", w.Code, w.Body.String())
 	}
 }
 
