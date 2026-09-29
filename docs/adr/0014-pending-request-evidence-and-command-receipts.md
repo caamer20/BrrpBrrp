@@ -143,9 +143,16 @@ are genuinely different and conflating them would over-promise:
   outlives the evidence; deleting it with the evidence would erase the only record
   that a review happened. It is readable only under the evidence policy and is cleared
   when the acting account is physically erased, never on tombstoned removal.
-- **Command receipts**: retained for **30 days** from the operation. A retry after that
-  window is refused as expired rather than re-executed, so a long-expired key can
-  never become new work.
+- **Command receipts**: retained in full for **30 days** from the operation, then
+  **compacted to a spent guard**. The key stays reserved for the account's lifetime —
+  deleting the row would let a late retry become new work — but the payload is not kept
+  for that lifetime: the outcome, the evidence identity, the source, the attempt, the
+  reporter and the subject are cleared, and `outcome` becomes `spent`, which the replay
+  path reads as the defined expired result. A guard row is therefore a statement about
+  the *key* ("this was used"), never about the operation it performed.
+- **Request evidence** is reclaimed on the same 90-day window as message evidence. A
+  reader loses access to it long before the bytes go, and a submitted introduction
+  that outlives its stated window is a retention promise quietly not being kept.
 - **Backups**: outside all three. A backup retains whatever it captured; the operator's
   copy is not rewritten when a record expires, and the interface never implies
   otherwise.

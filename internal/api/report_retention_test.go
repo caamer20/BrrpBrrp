@@ -1,10 +1,12 @@
 package api
 
 import (
-	"brrpbrrp/internal/db"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
+
+	"brrpbrrp/internal/db"
 )
 
 func TestExpiredReportEvidenceIsPurgedInBoundedBatches(t *testing.T) {
@@ -107,5 +109,75 @@ func TestRestrictedReviewAuditOutlivesCommunityAudit(t *testing.T) {
 	}
 	if remaining["ancient-review"] || remaining["ancient-community"] {
 		t.Fatal("audit past both retentions survived")
+	}
+}
+
+// V13-08. Private evidence expires for a reader long before its bytes are gone, and
+// only the message-evidence table was ever reclaimed: a request's submitted
+// introduction and its command receipts stayed in the database for the life of the
+// installation.
+//
+// That is the retention promise failing quietly. A person was told their evidence
+// would be available for 90 days, which is true, and not that it would be kept
+// forever, which is what happened. Receipts are the sharper case: an operation key
+// has to stay reserved after its receipt window closes, or a late retry becomes new
+// work — so the row cannot simply be deleted either.
+func TestExpiredRequestEvidenceAndItsReceiptsAreReclaimedWithoutResurrectingAKey(t *testing.T) {
+	s, h, guest, _, conversation, _, _ := requestFixture(t)
+	preview := previewRequest(t, h, guest, conversation)
+	// A report, so there is real evidence and a real receipt to reclaim.
+	_ = preview
+	saved := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "retained evidence", "version": preview.Version, "operation_key": "reclaim-key-0001",
+	}, guest)
+	if saved.Code != 201 {
+		t.Fatalf("report: %d %s", saved.Code, saved.Body.String())
+	}
+
+	// Age the evidence past its window and the receipt past its own.
+	old := db.Timestamp(time.Now().AddDate(0, 0, -200))
+	if _, err := s.store.Exec(`UPDATE private_request_reports SET expires_at=?`, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.Exec(`UPDATE private_report_receipts SET expires_at=?`, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.maintain(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The submitted text is gone: it is disclosed content with a stated lifetime.
+	var evidence int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_request_reports`).Scan(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence != 0 {
+		t.Fatalf("%d expired evidence rows kept their submitted text", evidence)
+	}
+	// The receipt's payload is gone too: the outcome becomes the guard marker and the
+	// evidence, source, attempt, reporter and subject identities are cleared.
+	var receipts int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_report_receipts WHERE outcome<>'spent' OR evidence_id<>'' OR source_id<>'' OR subject_id<>''`).Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	if receipts != 0 {
+		t.Fatalf("%d aged receipts kept their payload", receipts)
+	}
+	// But the key stays spent: a guard row that records only that the key was used,
+	// so a late retry is refused as expired rather than becoming new work.
+	var guards int
+	if err := s.store.QueryRow(`SELECT count(*) FROM private_report_receipts WHERE operation_key='reclaim-key-0001' AND outcome='spent' AND evidence_id=''`).Scan(&guards); err != nil {
+		t.Fatal(err)
+	}
+	if guards != 1 {
+		t.Fatalf("the spent key was not kept as a guard: %d guard rows", guards)
+	}
+	// And the guarantee holds across the cleanup, a restart and a restore: the key
+	// still cannot run the operation again.
+	retry := request(t, h, "POST", "/api/directs/"+conversation+"/report-and-block", map[string]string{
+		"reason": "retained evidence", "version": preview.Version, "operation_key": "reclaim-key-0001",
+	}, guest)
+	if retry.Code != http.StatusGone && retry.Code != http.StatusConflict {
+		t.Fatalf("an aged key ran the operation again: %d %s", retry.Code, retry.Body.String())
 	}
 }

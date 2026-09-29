@@ -112,6 +112,24 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM audit_logs WHERE created_at<? AND `+restrictedAuditLike("action"), db.Timestamp(now.Add(-restrictedAuditLogRetention))); err != nil {
 		return err
 	}
+	// Request evidence is reclaimed on the same 90-day window as message evidence: it
+	// is disclosed content, and a reader loses access to it long before the bytes go,
+	// so leaving the submitted introduction in the database forever is a retention
+	// promise quietly not being kept (completion review 13, V13-08).
+	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM private_request_reports WHERE rowid IN (SELECT rowid FROM private_request_reports WHERE expires_at<=? ORDER BY expires_at LIMIT 500)`, db.Timestamp(now)); err != nil {
+		return err
+	}
+	// A command receipt is compacted rather than deleted. The key has to stay spent for
+	// the account's lifetime — deleting the row would let a late retry become new
+	// work — so what goes is the payload: the outcome, the reason, the evidence
+	// identity, the actor and the conversation. What is left is a guard that says only
+	// "this key was used", which is what the replay path needs in order to refuse.
+	if _, err := s.store.ExecContext(s.ctx, `UPDATE private_report_receipts
+		SET outcome='spent', evidence_id='', source_id='', attempt_id='', reporter_id='', subject_id=''
+		WHERE rowid IN (SELECT rowid FROM private_report_receipts WHERE expires_at<=? AND outcome<>'spent' ORDER BY expires_at LIMIT 500)`,
+		db.Timestamp(now)); err != nil {
+		return err
+	}
 	// Compact old deleted receipts in bounded batches, retaining a minimal spent key
 	// for the account's lifetime. A late client retry must never resurrect erased content.
 	if _, err := s.store.PruneSendReceipts(s.ctx, s.store, db.Timestamp(now.Add(-receiptPruneAfter))); err != nil {
