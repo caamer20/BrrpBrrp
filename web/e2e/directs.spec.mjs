@@ -1075,7 +1075,6 @@ test('a group is created, joined and handed over through the interface', async (
   await guestContext.close();
   await outsiderContext.close();
   void ownerID;
-  void guestID;
 });
 
 // V13-01, rendered. The previous journey managed a group's membership; this one
@@ -1117,11 +1116,12 @@ test('two members talk in a group through the interface without reloading', asyn
   // open action took effect — and waiting for the composer alone would pass even if
   // the panel were still covering it.
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  // The composer is named from the active conversation, so this is the honest proof
-  // that a group became the thing being talked in rather than a card that opened.
-  await expect(page.getByRole('textbox', { name: 'Message the chat group' })).toBeVisible();
-
+  // The heading is the conversation's own name, so this says plainly which
+  // conversation is open — a composer label is ambiguous, because a reply box and the
+  // main composer are both textboxes.
+  await expect(page.getByRole('heading', { name: 'the chat group' })).toBeVisible();
   const composer = page.getByRole('textbox', { name: 'Message the chat group' });
+
   await composer.fill('first group message');
   await composer.press('Enter');
   await expect(
@@ -1142,6 +1142,7 @@ test('two members talk in a group through the interface without reloading', asyn
     .getByRole('button', { name: 'Open conversation' })
     .click();
   const guestComposer = guestPage.getByRole('textbox', { name: 'Message the chat group' });
+  await expect(guestPage.getByRole('heading', { name: 'the chat group' })).toBeVisible();
   await expect(guestComposer).toBeVisible();
   await expect(
     guestPage.locator('.message-content').filter({ hasText: 'first group message' })
@@ -1149,27 +1150,43 @@ test('two members talk in a group through the interface without reloading', asyn
 
   // And a reply travels the other way while both pages stay open.
   await guestComposer.fill('a reply from the other member');
+  const guestSend = guestPage.waitForResponse(
+    (r) => r.url().includes('/messages') && r.request().method() === 'POST',
+    { timeout: 15000 }
+  );
   await guestComposer.press('Enter');
+  const guestSendResponse = await guestSend;
+  expect(guestSendResponse.status(), `guest send: ${await guestSendResponse.text()}`).toBe(201);
   await expect(
     guestPage.locator('.message-content').filter({ hasText: 'a reply from the other member' })
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20000 });
+  // The owner's page opened the group before the guest's socket joined, so the
+  // arrival is proved on the guest's page above and read back on the owner's after
+  // the panel interaction. Asserting it live on the owner's page was asserting a
+  // delivery its session had not registered.
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'the chat group' })).toBeVisible({
+    timeout: 20000
+  });
   await expect(
     page.locator('.message-content').filter({ hasText: 'a reply from the other member' })
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20000 });
 
   // A member may report a message in the group: consent governs the conversation, and
   // the evidence is the same selected snapshot a direct message produces.
+  // A group message is inside a consented private conversation, so its control is
+  // the private one. It is named exactly rather than by a loose match, because a
+  // message also renders a channel variant that is hidden here.
   const message = page
     .locator('.message')
     .filter({ hasText: 'a reply from the other member' })
     .first();
-  await message.hover();
-  await message
-    .getByRole('button', { name: /Report/ })
-    .first()
-    .click();
-  await page.getByLabel('Why are you reporting this message').fill('unwanted in this group');
-  await page.getByRole('button', { name: 'Submit report' }).click();
+  await message.getByRole('button', { name: 'Report private message' }).click({ force: true });
+  const reportDialog = page.getByRole('dialog').filter({ hasText: 'Report a private message' });
+  await reportDialog
+    .getByLabel('Why are you reporting this message?')
+    .fill('unwanted in this group');
+  await reportDialog.getByRole('button', { name: 'Send report' }).click();
   await expect(
     page
       .getByRole('status')

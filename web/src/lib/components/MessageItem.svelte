@@ -48,7 +48,10 @@
   let moreButton = $state<HTMLButtonElement>();
   let author = $derived(workspace.userFor(message.user_id));
   let own = $derived(message.user_id === workspace.user?.id);
-  let direct = $derived(workspace.isDirect(workspace.conversationId(message)));
+  // A group is a private conversation as well as a direct pair, so this asks
+  // `isPrivate`: a group message that reported through the community path would put
+  // submitted private text into a moderator's queue (completion review 13, V13-01).
+  let direct = $derived(workspace.isPrivate(workspace.conversationId(message)));
   let canWrite = $derived(
     !workspace.authorizationUnverified &&
       workspace.canWriteConversation(workspace.conversationId(message))

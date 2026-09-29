@@ -122,7 +122,9 @@
         const attachment = await uploadFile<Attachment>(
           file,
           (value) => (progress = value),
-          workspace.isDirect(destination) ? destination : undefined
+          // A group is a private conversation, so a staged upload names the
+          // conversation rather than a channel.
+          workspace.isPrivate(destination) ? destination : undefined
         );
         if (
           generation !== workspace.authorizationGeneration ||

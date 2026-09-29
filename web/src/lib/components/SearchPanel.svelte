@@ -39,7 +39,7 @@
     searched = false;
     try {
       const hits = await api<Message[]>(
-        `/search?q=${encodeURIComponent(searchQuery)}&${workspace.isDirect(searchChannel) ? 'conversation_id' : 'channel_id'}=${encodeURIComponent(searchChannel)}`
+        `/search?q=${encodeURIComponent(searchQuery)}&${workspace.isPrivate(searchChannel) ? 'conversation_id' : 'channel_id'}=${encodeURIComponent(searchChannel)}`
       );
       if (admitted !== workspace.authorizationGeneration) return;
       results = hits;
@@ -108,7 +108,7 @@
     {#if !changed}
       {#each results as message (message.id)}<button onclick={() => jump(message)}
           ><small
-            >{workspace.isDirect(workspace.conversationId(message))
+            >{workspace.isPrivate(workspace.conversationId(message))
               ? 'Direct conversation'
               : '#' +
                 (workspace.state?.channels.find((channel) => channel.id === message.channel_id)
