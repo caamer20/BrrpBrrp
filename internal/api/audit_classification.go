@@ -31,12 +31,31 @@ var restrictedAuditPrefixes = []string{
 }
 
 // The restricted audit feed is readable by the installation's operator and by an
-// account holding an explicit audit capability, and it is the only place private
-// group membership is recorded. That is a deliberate widening relative to
-// `report.review_private`: a reviewer of submitted evidence is granted exactly the
-// evidence that was submitted and nothing else, and a group is not submitted
-// evidence. Granting one must not quietly grant the other (completion review 13,
-// V13-02).
+// account holding `report.review_private` — **not** by ordinary `audit.read`.
+//
+// It used to require only `audit.read`, on the argument that a separate URL is a
+// separate policy. It is not: the feed carries the *reporter's* username, the
+// reviewer's username, evidence identifiers and timestamps. An account that is
+// refused the evidence itself with 403 must not learn that a specific person
+// reported a specific private message, who reviewed it, or when — that is the fact
+// the evidence policy exists to withhold, and the audit row states it plainly
+// (completion review 14, V14-01).
+//
+// So the two are separate policies on one feed, not two feeds:
+//
+//   - `report.review_private` sees private *evidence* audit. It already reads the
+//     evidence, so the row naming it adds nothing that was not deliberately
+//     submitted to them.
+//   - `audit.read` alone sees neither. It remains a community-feed capability.
+//
+// Group lifecycle is treated the same way and *not* widened: a group is not
+// submitted evidence, so holding `report.review_private` does not grant private group
+// membership. A reviewer of reported messages learns nothing about who is in whose
+// group. The operator, who administers the installation, still sees all of it.
+//
+// A broader policy is a legitimate thing for an owner to choose. It is not a thing
+// to encode as a bug fix, and the evidence for that is a review that had to be
+// countermanded by the person who owns the data.
 
 // restrictedAuditLike selects restricted rows.
 //

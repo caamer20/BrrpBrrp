@@ -333,12 +333,17 @@ regression verified failing before its change and passing after.
 **V13-02, group metadata in ordinary audit.** A plain `audit.read` account could see
 `group.invited` and `group.joined` with the actor's username and the private group id.
 Group events are now part of the restricted classification, so the one classifier
-covers writers, both readers and cleanup. The audience defect underneath it is
-recorded rather than patched: the restricted feed was gated on
+covers writers, both readers and cleanup. The audience defect underneath it was
+originally recorded rather than patched: the restricted feed was gated on
 `report.review_private`, which meant the only accounts able to read who had joined a
 group were evidence reviewers — a grant made to see submitted text was in practice a
-grant to browse group membership. It is now gated on `audit.read`. Two M0 tests
-encoded the old conflation and are updated to the separation.
+grant to browse group membership. It was then moved to `audit.read` to fix that, which
+was a wider mistake (V14-01, below): an ordinary auditor was refused the evidence
+itself and then handed the reporter, the reviewer, the evidence id and the time.
+
+The feed is now gated on `report.review_private` again, and private group lifecycle is
+*not* widened by that grant: a group is not submitted evidence. The community audit
+capability reads the community feed and nothing private.
 
 **V13-03, membership changes bypassing the revocation protocol.** Accept, leave,
 remove and transfer committed as ordinary writes. Reproduced before the fix: a
@@ -831,3 +836,22 @@ and every host, platform, media and capacity qualification.
 7. Establish the canonical public repository, maintainer/security contacts, hosted CI, immutable artifact identity, signing and release process. Complete the prescribed independent reviews, 14-day beta and seven-day final-candidate observation before proposing v1.0.0 publication.
 
 No unpublished prerelease is a substitute for those acceptance results. The current source is a locally tested alpha.7 candidate whose review-11 findings are repaired; alpha.6 remains the prior packaged checkpoint, and no release gate has passed.
+
+
+**V14-01, private audit read under the community audit capability.** The restricted
+audit feed names the reporter, the reviewer, the evidence id and the time. It was
+reachable with ordinary `audit.read`, so an account refused `/api/admin/private-reports`
+with 403 received 200 from the audit feed with the reporter's username in plain text —
+the exact disclosure the evidence policy exists to prevent.
+
+Reproduced first, through real report and review mutations, and the reproduction named
+the leaked value: `request_recipient`, `admin`, and both evidence ids. The feed is now
+gated on `report.review_private` in both the route guard and the in-transaction check,
+so a grant revoked between the two is still refused. A refusal body is asserted not to
+describe the event it refuses.
+
+Three tests had encoded the widened policy, including one that asserted an *evidence
+reviewer* must be refused. Those asserted the defect, so they were corrected rather than
+satisfied: the evidence capability is now the granting one, and every case checks both
+directions, because a policy only ever tested in the denying direction is a policy
+nobody has confirmed still works. ADR 0013 records the decision and its reasoning.

@@ -409,7 +409,6 @@ func TestAGroupUsesTheSharedMessageAndReceiptModel(t *testing.T) {
 	_ = guest
 }
 
-
 // The membership list is read through a scalar subquery for the owner flag, and a
 // scalar subquery with no matching row returns NULL rather than 0. Scanned into an
 // int that is a 500, which the interface cannot tell from a real fault — so the
@@ -546,19 +545,32 @@ func TestGroupLifecycleEventsAreNotReadableThroughOrdinaryAudit(t *testing.T) {
 		t.Fatal("an account without the audit capability read the restricted audit feed")
 	}
 
-	// The restricted feed keeps them, and the group is what makes an account
-	// authorized to read it: a member, the owner, and the installation's operator.
-	// An ordinary member is refused: membership is not authority to read an audit
-	// trail, and a restricted feed any member could read would be a community feed
-	// with a filter on it. The operator holds the audit capability by role, and an
-	// explicit grant is the only other way in.
+	// The restricted feed is now read under the *evidence* capability, and an ordinary
+	// `audit.read` grant is not enough. The row names who reported and who reviewed, so
+	// the community audit capability must not disclose that a specific person reported
+	// a specific private message — that is the fact the evidence policy withholds, and
+	// this is where it was being disclosed (completion review 14, V14-01).
 	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, guest); w.Code != http.StatusForbidden {
 		t.Fatalf("an ordinary member read the restricted audit feed: %d", w.Code)
 	}
-	memberRole, memberAuditor := evidenceRole(t, s, h, groupAdminCookie, "member auditor", string(authz.AuditRead))
+	auditorRoleID, memberAuditor := evidenceRole(t, s, h, groupAdminCookie, "community auditor", string(authz.AuditRead))
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, memberAuditor); w.Code != http.StatusForbidden {
+		t.Fatalf("an account holding only audit.read read a feed naming private reporters: %d %s", w.Code, w.Body.String())
+	}
+	// The evidence capability is the other half: an account that may review submitted
+	// evidence has already been shown it, so the row naming it adds nothing that was
+	// not deliberately submitted to them.
+	// The grant has to come from an account that already holds the capability, which
+	// before the ownership ceremony the administrator role does not. This is the real
+	// delegation path an operator would use, not a test-only shortcut.
+	enrollMFA(t, h, groupAdminCookie, "correct horse battery")
+	if w := request(t, h, "POST", "/api/owner", map[string]string{"username": "admin", "confirm": "admin"}, groupAdminCookie); w.Code != 200 {
+		t.Fatalf("designate the owner: %d %s", w.Code, w.Body.String())
+	}
+	evidenceRoleID, evidenceReader := evidenceRole(t, s, h, groupAdminCookie, "private evidence reviewer", string(authz.ReportReviewPrivate))
 	for name, cookie := range map[string]*http.Cookie{
-		"the operator":             groupAdminCookie,
-		"an account granted audit": memberAuditor,
+		"the operator":                groupAdminCookie,
+		"an account granted evidence": evidenceReader,
 	} {
 		w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, cookie)
 		if w.Code != 200 {
@@ -577,9 +589,12 @@ func TestGroupLifecycleEventsAreNotReadableThroughOrdinaryAudit(t *testing.T) {
 	}
 
 	// Revocation is read-time, not a filter that forgets: an account that loses the
-	// audit capability stops seeing it immediately.
-	revokeEvidenceRole(t, h, groupAdminCookie, memberRole)
-	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, memberAuditor); w.Code != http.StatusForbidden {
+	// capability stops seeing it immediately, on *both* feeds. A revocation that only
+	// removed community-audit access while the private feed kept working would be a
+	// revocation that a determined account routes around.
+	revokeEvidenceRole(t, h, groupAdminCookie, evidenceRoleID)
+	revokeEvidenceRole(t, h, groupAdminCookie, auditorRoleID)
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, evidenceReader); w.Code != http.StatusForbidden {
 		t.Fatalf("a revoked account still read the restricted audit feed: %d", w.Code)
 	}
 	if w := request(t, h, "GET", "/api/admin/audit-logs", nil, memberAuditor); w.Code != http.StatusForbidden {

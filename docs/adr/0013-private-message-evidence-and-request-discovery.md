@@ -224,3 +224,36 @@ to the reporter of exactly what is saved, who can review it, and what is exclude
 Independent security and privacy review, both-host (Windows/Tailscale and Docker)
 qualification, hosted CI, and the broader WP-14/15 scope remain open and are not
 claimed by this slice. No G0–G8 release gate is passed.
+
+
+## Accountability is read under the evidence capability, not the community audit one
+
+Every private-evidence review writes an audit row. That row names the **reporter**,
+the **reviewer**, the evidence identifier and the time. It is the accountable record
+and it must exist — but it must not be readable by an account that is refused the
+evidence itself.
+
+It briefly was. `/api/admin/private-reports/audit` was moved behind ordinary
+`audit.read` on the argument that a different URL is a different policy. It is not:
+an account refused `/api/admin/private-reports` with 403 received the feed with 200,
+including the reporter's username, the reviewer's username, the evidence ids and the
+timestamps. The community audit capability was disclosing, in plain text, the fact
+that a specific person reported a specific private message — which is the exact thing
+this ADR exists to withhold (completion review 14, V14-01).
+
+**The policy is `report.review_private`.** An account that may review submitted
+evidence has already been shown it, so the row naming it adds nothing that was not
+deliberately submitted to them. An ordinary auditor has been shown nothing and learns
+from the row that the evidence exists. `audit.read` remains a community-feed
+capability and gains no private metadata.
+
+Private **group lifecycle** is treated the same way and is *not* widened by the same
+grant. A group is not submitted evidence: holding `report.review_private` does not
+grant private group membership, and a reviewer of reported messages learns nothing
+about who is in whose group. Only the operator — who administers the installation —
+sees both. The two questions have different answers and the same URL, so the
+capability check is the whole policy.
+
+A wider policy is a legitimate thing for an owner to choose. It is not a thing to
+encode as a bug fix, and this one was encoded as a bug fix with tests written to
+approve it.

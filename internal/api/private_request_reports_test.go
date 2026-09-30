@@ -619,10 +619,11 @@ func TestRequestReviewAuditIsClassifiedAsRestricted(t *testing.T) {
 	}
 
 	// The same event is readable under the restricted audit policy, and it names the
-	// reviewer who did it: this is the accountable record. The policy is the audit
-	// capability rather than the evidence one, so a grant made to see submitted
-	// evidence is not also a grant to read an audit trail (V13-02).
-	_, auditReader := evidenceRole(t, s, h, admin, "restricted audit reader", string(authz.AuditRead))
+	// reviewer who did it: this is the accountable record. The policy is the *evidence*
+	// capability, because the row states the reporter and the reviewer — an ordinary
+	// auditor, refused the evidence itself a few lines above, must not learn that the
+	// evidence exists (completion review 14, V14-01).
+	_, auditReader := evidenceRole(t, s, h, admin, "restricted audit reader", string(authz.ReportReviewPrivate))
 	restricted := readJSON[[]map[string]any](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditReader))
 	found := false
 	for _, entry := range restricted {
@@ -633,10 +634,15 @@ func TestRequestReviewAuditIsClassifiedAsRestricted(t *testing.T) {
 	if !found {
 		t.Fatal("the request review is absent from the restricted audit feed")
 	}
-	// It is not readable without the audit capability, and specifically not by an
-	// account whose only grant is the evidence one (V13-02).
-	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code != http.StatusForbidden {
-		t.Fatalf("an evidence reviewer read the restricted audit feed: %d", w.Code)
+	// It is not readable by an ordinary auditor. The community audit capability is a
+	// feed capability, and this one names private reporters (V14-01).
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
+		t.Fatalf("an audit-only reader read a feed naming private reporters: %d %s", w.Code, w.Body.String())
+	}
+	// And it is readable by an authorized evidence reviewer, which is the other half of
+	// the policy: an evidence grant must not become a dead end for accountability.
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code != 200 {
+		t.Fatalf("an evidence reviewer could not read the accountable record: %d %s", w.Code, w.Body.String())
 	}
 }
 

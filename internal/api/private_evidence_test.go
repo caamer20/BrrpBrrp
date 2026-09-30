@@ -503,12 +503,21 @@ func TestPrivateReviewAuditIsRestrictedToTheEvidencePolicy(t *testing.T) {
 			t.Errorf("private review metadata reached an audit-only reader: %+v", entry)
 		}
 	}
-	// The review is still accountable: it is recorded and readable under the
-	// restricted audit policy rather than simply dropped. That policy is the audit
-	// capability, not the evidence one — a reviewer is granted the evidence that was
-	// submitted, not an audit trail (completion review 13, V13-02).
-	_, auditReader := evidenceRole(t, s, h, admin, "restricted audit reader", string(authz.AuditRead))
-	restricted := readJSON[[]map[string]string](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditReader))
+	// The audit-only reader is refused the restricted feed too. It carries the
+	// reporter's and the reviewer's usernames, the evidence id and the time, so the
+	// community audit capability must not disclose that a specific person reported a
+	// specific private message — that is the fact the evidence policy withholds, and
+	// this is where it was disclosed (completion review 14, V14-01).
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
+		t.Fatalf("an audit-only reader read the restricted feed naming private reporters: %d %s", w.Code, w.Body.String())
+	}
+	// The review is still accountable: it is recorded and readable under the restricted
+	// audit policy rather than simply dropped. That policy is the *evidence*
+	// capability — an account that may review submitted evidence has already been shown
+	// it, so the row naming it adds nothing that was not deliberately submitted to
+	// them. An ordinary auditor gets neither.
+	_, evidenceAuditor := evidenceRole(t, s, h, admin, "restricted audit reader", string(authz.ReportReviewPrivate))
+	restricted := readJSON[[]map[string]string](t, request(t, h, "GET", "/api/admin/private-reports/audit", nil, evidenceAuditor))
 	if len(restricted) == 0 {
 		t.Fatal("the private review was not recorded at all")
 	}
@@ -521,15 +530,20 @@ func TestPrivateReviewAuditIsRestrictedToTheEvidencePolicy(t *testing.T) {
 	if !found {
 		t.Errorf("the private review is not readable under the evidence policy: %+v", restricted)
 	}
-	// The community feed is the thing that excludes them, and an account with no
-	// audit capability at all is refused the restricted one too. The restricted feed
-	// is an audit surface, so holding audit.read is what opens it — that is the
-	// separation V13-02 introduced, and it is asserted rather than assumed.
-	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code != http.StatusForbidden {
-		t.Fatalf("an evidence reviewer reached the restricted audit feed without the audit capability: %d", w.Code)
+	// The community feed is the thing that excludes them. The restricted feed is
+	// opened by the *evidence* capability, because the row names the reporter and the
+	// reviewer: a reviewer has already been shown the evidence, so the audit row adds
+	// nothing new to them, while an ordinary auditor has been shown nothing and would
+	// learn from it that a specific person reported a specific private message
+	// (completion review 14, V14-01).
+	//
+	// Both directions are asserted. A policy that is only ever checked in the denying
+	// direction is a policy nobody has confirmed still works.
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, reviewer); w.Code != 200 {
+		t.Fatalf("an authorized evidence reviewer could not read the restricted feed: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditReader); w.Code != 200 {
-		t.Fatalf("an account granted audit could not read the restricted feed: %d %s", w.Code, w.Body.String())
+	if w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, auditor); w.Code != http.StatusForbidden {
+		t.Fatalf("an account holding only audit.read read the restricted feed: %d", w.Code)
 	}
 }
 

@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -823,10 +823,13 @@ func (s *Server) privateEvidenceAuditLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer tx.Rollback()
-	// Read under the audit capability, checked inside the transaction like every
+	// Read under the *evidence* capability, checked inside the transaction like every
 	// other authority decision, so a grant revoked between the route guard and this
-	// point is refused rather than acted on.
-	if _, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.AuditRead); err != nil {
+	// point is refused rather than acted on. The row names the reporter and the
+	// reviewer, so `audit.read` is not sufficient: the community audit capability
+	// must not disclose that a specific person reported a specific private message
+	// (completion review 14, V14-01).
+	if _, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.ReportReviewPrivate); err != nil {
 		s.authorityFailed(w, err)
 		return
 	}
