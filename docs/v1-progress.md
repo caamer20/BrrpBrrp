@@ -206,7 +206,18 @@ supersedes the older schema-14 one.
   is invisible to somebody using a keyboard. This is not a conformance claim: a
   screen-reader, keyboard, zoom and reduced-motion pass find what no scanner can, and
   M6 requires them from a person.
-- **CI parses every shipped script and checks the capacity fixture's routes against
+- **Composer and navigation (WP-16).** Three items the requirement names were absent:
+  a member could not link to a message, could not stop an upload, and a failed upload
+  cost them a trip back to the file picker and their typed text. Now: **Copy link**
+  copies a *permalink*, not the message — sharing a link is sharing a reference, and
+  pasting the text would put a private conversation wherever it was pasted. The
+  permalink resolves through the same context path as a reply reference, so it is
+  checked against current authority rather than carrying the permissions it was
+  created with. **An upload can be cancelled**, because an upload that cannot be
+  stopped is one somebody is trapped in: the only way out was to close the tab, which
+  cost them the draft too. A deliberate cancel is not reported as a failure. And a
+  failed upload is **retryable in one press**, keeping both the file and the draft.
+- - **CI parses every shipped script and checks the capacity fixture's routes against
   the router.** The capacity and alert tooling needs a live server, which is exactly
   when somebody reaches for it, so a script that rotted silently used to fail on a
   real deployment. Both gates were run before being committed: a gate that fails on
