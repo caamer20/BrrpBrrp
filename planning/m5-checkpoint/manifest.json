@@ -1,0 +1,46 @@
+{
+  "milestone": "M5 — both-host operations, capacity qualification, public release engineering",
+  "source_commit": "c141b0a05411b159cb8fd0ff069ffff93904e4fc",
+  "schema": 20,
+  "backup_format": 2,
+  "race": {
+    "command": ".tools/go/bin/go test -race -count=1 -timeout 40m ./...",
+    "result": "PASS",
+    "packages": 10,
+    "api_seconds": 1556.727,
+    "total_seconds": 1558.32,
+    "data_races": 0,
+    "note": "The first run found a data race in a test helper that iterated the SFU peer map without its lock while a connection-state callback removed a peer. Production code holds that lock; the test reached past it. Fixed, and the suite is green."
+  },
+  "capacity": {
+    "tooling": [
+      "scripts/capacity-fixture.mjs",
+      "scripts/capacity-load.mjs",
+      "make capacity-fixture",
+      "make capacity-load"
+    ],
+    "recorded_run": "planning/m5-checkpoint/load-loopback.json",
+    "population": "4 accounts, 3 channels, 24 messages, 2 reactions, 3 direct conversations",
+    "latency": {
+      "delivery_p95_ms": 9,
+      "search_p95_ms": 4,
+      "reconnect_p95_ms": 7
+    },
+    "claims_no_budget": true,
+    "reason": "One development host over loopback. The master plan budgets are stated for four cores, 8 GiB, a LAN and 100 Mbit/s symmetric. No ramp, no peak, no soak, no media, no host qualification."
+  },
+  "release_engineering": {
+    "schema13_rehearsal_ships": true,
+    "schema13_rehearsal_runs_in_ci": true,
+    "sbom": "THIRD-PARTY-SBOM.json (CycloneDX 1.5), generated from the same component set as the notices, version-stamped per release",
+    "connection_path_reported": "A call reports direct, STUN or relayed, so whether it is relayed is answerable from the client."
+  },
+  "not_established": [
+    "No host qualification: no Windows host, no Linux Docker host, no Tailscale peer. docs/host-qualification.md is written and has not been run.",
+    "No qualifying capacity figure: the reference profile is 250 accounts, 100 channels, a million messages, 100 clients, a two-hour peak and a 24-hour soak. None was run.",
+    "No monitoring or alert delivery: a configured alert is not a delivered alert, and none was verified.",
+    "No container runtime qualification: static Dockerfile checks are not Docker runtime.",
+    "No signed Windows download, no canonical public repository or registry identity, and no Git remote configured in this environment.",
+    "No independent security or accessibility review, no physical-device observation, and no beta."
+  ]
+}

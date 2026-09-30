@@ -149,6 +149,13 @@ run**.
   rather than `true`, because a run that measured nothing must not read as a run that
   passed.
 
+**The race suite passes at this schema.** `.tools/go/bin/go test -race -count=1
+-timeout 40m ./...` — ten packages, the API package at 1556.7 s, 1558.3 s overall,
+**no data races**. The first run found one: a test helper I had added iterated the
+SFU's peer map without its lock while a connection-state callback removed a peer.
+Production code holds that lock; the test reached past it. The recorded figure
+supersedes the older schema-14 one.
+
 **What is not established.** No qualifying capacity or soak measurement, no
 monitoring or alert delivery, no container runtime, no signed Windows download, and
 no canonical public repository or registry identity. There is no Git remote
