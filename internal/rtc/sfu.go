@@ -23,6 +23,10 @@ type Options struct {
 	// and a bare embedder do not want a logger, and a call that connects is not a
 	// failure that needs inventing a logger to report.
 	Log *slog.Logger
+	// ForceRelay forbids direct candidates on the *server* side too. Setting it on
+	// clients alone is half an instruction, and ICE is free to pair a relayed client
+	// with a direct server.
+	ForceRelay bool
 
 	ExternalIP       string
 	PortMin, PortMax uint16
@@ -219,7 +223,19 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 	for used[slot] {
 		slot++
 	}
-	pc, err := s.api.NewPeerConnection(webrtc.Configuration{ICEServers: s.options.ICEServers})
+	// The transport policy is the *server's* to set, not only the client's.
+	//
+	// Telling a browser to use only the relay is half an instruction: if the server
+	// keeps offering direct candidates, ICE is free to pair a relayed client with a
+	// direct server and the call runs peer-to-peer anyway. An operator who switched
+	// forced relay on for a network where direct paths do not work would have calls
+	// that appear to work locally and fail for everybody else — the exact failure the
+	// setting exists to prevent, and one that no client-side test can see.
+	configuration := webrtc.Configuration{ICEServers: s.options.ICEServers}
+	if s.options.ForceRelay {
+		configuration.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
+	pc, err := s.api.NewPeerConnection(configuration)
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -438,6 +454,30 @@ func (s *SFU) Signal(userID, owner string, signal Signal) error {
 		return peer.pc.AddICECandidate(*signal.ICE)
 	}
 	return nil
+}
+
+// SetForceRelay changes the transport policy for connections made from now on.
+//
+// It does not tear down existing calls. A policy is how a *new* connection is
+// offered; changing it mid-call would drop a working call to move it onto a path that
+// has not been shown to work, which is the opposite of what the operator asked for.
+// The calls already up keep whatever path they negotiated, and new ones get the new
+// policy — so a member's next call is the one that changes, and the log's
+// candidate-pair line is what confirms it happened.
+func (s *SFU) SetForceRelay(force bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.options.ForceRelay = force
+}
+
+// ForceRelayEnabled reports the policy the next connection will be offered. It is
+// the read side of SetForceRelay, so a caller — a test, or an operator-facing
+// surface — can confirm the setting reached the engine rather than inferring it from
+// a configuration value the operator typed.
+func (s *SFU) ForceRelayEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.options.ForceRelay
 }
 
 func (s *SFU) SetState(userID, owner string, muted, deafened, speaking bool) {

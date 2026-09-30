@@ -167,6 +167,12 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 400, err.Error())
 		return
 	}
+	// The relay being reconfigured is not the same thing as the media engine being
+	// reconfigured. Without this the setting would be saved, shown, and reported as
+	// active, while the SFU kept offering direct candidates — an operator reading
+	// "forced relay is on" in the settings screen would be reading a claim the server
+	// was not making.
+	s.voice.SetForceRelay(settings.ForceRelay && settings.TURN)
 	encoded, _ := json.Marshal(settings)
 	if _, err := tx.Exec(`INSERT INTO settings(key,value,updated_at) VALUES('public',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, string(encoded), db.Now()); err != nil {
 		_ = s.configureTURN(previous)

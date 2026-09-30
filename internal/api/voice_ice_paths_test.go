@@ -318,3 +318,40 @@ func TestTheThreeRelayTransportsCannotShareAPort(t *testing.T) {
 		t.Fatalf("three distinct relay ports were refused with %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// The setting has to reach the media engine, not just the relay and the settings
+// screen. An operator reading "forced relay is on" must be reading a claim the
+// server is actually making; a setting that saves, displays, and does nothing is
+// worse than one that is absent.
+func TestForcingTheRelayReachesTheMediaEngine(t *testing.T) {
+	s, _, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	configureTURNForTest(t, handler, s, admin)
+	if forcedNow(t, s) {
+		t.Fatal("forced relay was on before it was asked for")
+	}
+
+	settings := s.Settings()
+	settings.ForceRelay = true
+	saveSettings(t, handler, s, admin, settings)
+	if !forcedNow(t, s) {
+		t.Fatal("forcing the relay saved the setting and left the media engine offering direct candidates")
+	}
+
+	// And it can be turned off again, which matters as much: an operator who turned
+	// it on to test a network needs to turn it off without restarting the server.
+	settings = s.Settings()
+	settings.ForceRelay = false
+	saveSettings(t, handler, s, admin, settings)
+	if forcedNow(t, s) {
+		t.Fatal("turning forced relay off left the media engine forbidding direct candidates")
+	}
+}
+
+// forcedNow reports the media engine's transport policy, read from the engine that
+// decides it rather than from the settings the operator typed. A test that read the
+// settings back would pass whether or not the setting was ever applied.
+func forcedNow(t *testing.T, s *Server) bool {
+	t.Helper()
+	return s.voice.ForceRelayEnabled()
+}

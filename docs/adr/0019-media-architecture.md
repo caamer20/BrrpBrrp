@@ -343,7 +343,41 @@ The two questions are now separate functions. `room` makes a room; `existingRoom
 reads one. The distinction is one word at every call site, which is the right size
 for a mistake this easy to repeat.
 
-### 7.4 One more defect this work found in passing
+### 7.4 Forced relay was half an instruction
+
+`force_relay` was implemented on the client and on nothing else. Telling a browser to
+use only the relay does not make the call use only the relay: the server was still
+offering direct candidates, and ICE is free to pair a relayed client with a direct
+server. The call then runs peer to peer — which is fine, and is what the operator was
+trying to *avoid*.
+
+The failure this produces is the exact one the setting exists to prevent, and it is
+invisible from the client: calls work for the operator and fail for everybody else,
+on a network the operator switched the setting on *because* direct paths did not work
+there.
+
+Proven with a real call. Two peers configured `ICETransportPolicyRelay`, a real TURN
+relay in the same process, real allocations and real RTP. Before the fix the
+connecting call was carried by `host`/`prflx` — a direct path — and the test failed
+naming it. After, it is `relay`/`relay`. This is the first evidence in the project that
+the relay path carries a call at all; everything before it established that the relay
+*starts* and issues credentials, which is not the same claim.
+
+Two more things the same work found:
+
+- **The setting never reached the media engine.** Saving it reconfigured the relay but
+  not the SFU, so it would display as active while the server kept offering direct
+  candidates. It is applied on save now, in both directions — an operator who turned
+  it on to test a network needs to turn it off without a restart.
+- **Turning it off was never possible.** There was no read path and no live update.
+
+`SetForceRelay` does **not** tear down existing calls. A transport policy is how a new
+connection is offered; changing it mid-call would drop a working call to move it onto
+a path not yet shown to work, which is the opposite of the request. Calls already up
+keep the path they negotiated; the next call gets the new policy, and the
+candidate-pair log line is what confirms it happened.
+
+### 7.5 One more defect this work found in passing
 
 `ice_servers` was a nil slice, which marshals to JSON `null`, not `[]`. The client
 iterates that list, so `ice_servers.map(...)` threw a `TypeError` and the call failed

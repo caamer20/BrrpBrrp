@@ -177,7 +177,15 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	// relay it already runs; reaching for a third party from inside the server adds a
 	// vendor dependency to a product that promises none, and does nothing on an
 	// offline installation.
-	voice, err := rtc.New(rtc.Options{ExternalIP: config.VoiceExternalIP, PortMin: config.VoicePortMin, PortMax: config.VoicePortMax, Log: log}, s.publishVoiceStates)
+	voice, err := rtc.New(rtc.Options{
+		ExternalIP: config.VoiceExternalIP, PortMin: config.VoicePortMin, PortMax: config.VoicePortMax, Log: log,
+		// The server's half of the forced-relay instruction. Without it the setting
+		// only reaches browsers, and ICE pairs a relayed client with a direct server
+		// whenever it can — so an operator who switched it on for a network without
+		// direct paths would see calls that work for themselves and fail for everyone
+		// else, which is the failure the setting exists to prevent.
+		ForceRelay: s.settings.ForceRelay && s.settings.TURN,
+	}, s.publishVoiceStates)
 	if err != nil {
 		cancel()
 		return nil, err
