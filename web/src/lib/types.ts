@@ -308,3 +308,21 @@ export interface GroupConversation {
   can_transfer: boolean;
   pending_invitations: number;
 }
+
+// A named community thread (ADR 0017). It is a grouping inside a channel
+// conversation, not a second message store, so it has no messages of its own in the
+// snapshot: its replies are read from the thread.
+export interface Thread {
+  id: string;
+  conversation_id: string;
+  root_message_id: string;
+  title: string;
+  state: 'active' | 'archived' | 'locked';
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  reply_count: number;
+  last_reply_at: string;
+  followers: number;
+  following: boolean;
+}

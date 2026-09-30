@@ -2742,9 +2742,27 @@ meter {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.mobile-character-count,
-.message-more {
+.mobile-character-count {
   display: none;
+}
+/* The overflow menu is the only route to several real actions — starting a named
+   thread, reporting, the remaining message actions — so hiding it on a wide screen
+   made them unreachable by mouse. It is revealed on hover and on keyboard focus
+   rather than always shown, so the reading column stays quiet, and it is never
+   removed from the accessibility tree the way `display: none` would. */
+.message-more {
+  position: absolute;
+  top: -15px;
+  /* Clear of the hover action bar, which sits at the message's top-right corner. Two
+     controls in the same corner overlap, and the bar appearing on hover would sit on
+     top of the button that reveals the rest of the menu. */
+  right: 23px;
+  transform: translateX(calc(100% + 4px));
+  opacity: 0;
+}
+.message:hover .message-more,
+.message:focus-within .message-more {
+  opacity: 1;
 }
 .message-action-preview {
   padding-bottom: 18px;

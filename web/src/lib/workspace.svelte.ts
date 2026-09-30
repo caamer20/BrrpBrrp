@@ -111,6 +111,23 @@ class Workspace {
   switcherOpen = $state(false);
   threadId = $state('');
   onConversationEvent: ((event: RealtimeEvent) => void) | null = null;
+  // A named thread is a different thing from a reply thread: it is a channel
+  // conversation with a subject, its own window and its own state. It is tracked
+  // separately so closing a reply thread does not close the named one, and so the two
+  // can never be confused for each other's history.
+  namedThreadId = $state('');
+  // A channel's thread list, opened from the channel header.
+  threadsOpen = $state(false);
+
+  // Whether this account may manage channels. This only decides which controls are
+  // offered; every one of them is re-checked on the server, so hiding a control is a
+  // courtesy and never the authorization.
+  get canManageChannels() {
+    return this.isOwner || this.can('channel.manage');
+  }
+  // The most recent conversation events, so an open thread view can notice a reply
+  // addressed to it. Bounded: this is a nudge to refetch, not a history to keep.
+  conversationEvents = $state<RealtimeEvent[]>([]);
   scrollRestore = $state<ScrollPosition | null>(null);
   jumpingUnread = $state(false);
   uploadCount = $state(0);
@@ -768,6 +785,8 @@ class Workspace {
     // their own results and follow authorizationGeneration instead of being closed,
     // so the query a person typed is not thrown away.
     this.threadId = '';
+    this.namedThreadId = '';
+    this.threadsOpen = false;
     this.refreshWorkspace = true;
     this.scheduleChanges();
   }
@@ -796,6 +815,8 @@ class Workspace {
     this.readMarker = '';
     this.replyTo = null;
     this.threadId = '';
+    this.namedThreadId = '';
+    this.threadsOpen = false;
     this.typing = {};
   }
 
@@ -819,6 +840,9 @@ class Workspace {
 
   async selectChannel(id: string) {
     this.threadId = '';
+    // A named thread belongs to the channel it is in. Opening another channel closes
+    // it, the same as a reply thread, because the view it holds is that channel's.
+    this.namedThreadId = '';
     if (id === this.activeId && this.messages.length) {
       this.sidebarOpen = false;
       return;
@@ -1366,6 +1390,7 @@ class Workspace {
 
   private receive(event: RealtimeEvent) {
     this.onConversationEvent?.(event);
+    this.conversationEvents = [...this.conversationEvents, event].slice(-50);
     if (event.t === 'presence.update' && this.state) this.state.presence = event.d;
     // Voice presence is delivered one channel at a time, so an update for a
     // restricted channel replaces only that channel's entries and can never
@@ -1858,6 +1883,8 @@ class Workspace {
     this.composerCaptures.clear();
     this.composerDrafts = new Map();
     this.threadId = '';
+    this.namedThreadId = '';
+    this.conversationEvents = [];
     this.switcherOpen = false;
     this.onConversationEvent = null;
     clearTimeout(this.flushTimer);

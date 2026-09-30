@@ -65,6 +65,13 @@ const (
 	// distinguishable from a direct one without inferring it from the conversation
 	// (ADR 0016).
 	activityGroupMessage = "group_message"
+	// activityThreadReply is a reply in a followed community thread. It is a source
+	// kind of its own so that following is visible in the activity list and the
+	// preference that governs it is separable from a direct or group message
+	// (ADR 0017). It is not a private kind: a community thread is readable by the
+	// channel's members, so no member is told about a reply in a thread they were
+	// never in.
+	activityThreadReply = "thread_reply"
 )
 
 // privateActivityKinds maps an activity kind to the private notification

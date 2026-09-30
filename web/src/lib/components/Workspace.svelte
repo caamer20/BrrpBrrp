@@ -13,6 +13,8 @@
   import SearchPanel from './SearchPanel.svelte';
   import PinsPanel from './PinsPanel.svelte';
   import ThreadPanel from './ThreadPanel.svelte';
+  import NamedThreadPanel from './NamedThreadPanel.svelte';
+  import ThreadListPanel from './ThreadListPanel.svelte';
   import ChannelSwitcher from './ChannelSwitcher.svelte';
 
   import LazyPanel from './LazyPanel.svelte';
@@ -309,6 +311,13 @@
       </p>
       <div class="header-actions">
         {#if workspace.direct}<DirectControls />{:else}<ChannelNotifications />{/if}
+        {#if workspace.channel}<button
+            class="icon-button"
+            aria-label="Threads in this channel"
+            title="Threads in this channel"
+            disabled={!workspace.activeId}
+            onclick={() => (workspace.threadsOpen = true)}><Icon name="hash" /></button
+          >{/if}
         <button
           class="icon-button"
           aria-label="Pinned messages"
@@ -419,6 +428,10 @@
 {#if workspace.pinsOpen}<PinsPanel />{/if}
 {#if workspace.switcherOpen}<ChannelSwitcher />{/if}
 {#if workspace.threadId}{#key workspace.threadId}<ThreadPanel id={workspace.threadId} />{/key}{/if}
+{#if workspace.threadsOpen}<ThreadListPanel />{/if}
+{#if workspace.namedThreadId}{#key workspace.namedThreadId}<NamedThreadPanel
+      id={workspace.namedThreadId}
+    />{/key}{/if}
 {#if workspace.settingsOpen}<LazyPanel
     title="Your preferences"
     close={() => (workspace.settingsOpen = false)}

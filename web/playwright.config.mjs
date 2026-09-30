@@ -39,6 +39,10 @@ export default defineConfig({
     ...(process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1'
       ? [{ name: 'directs', testMatch: 'directs.spec.mjs', dependencies: ['release'] }]
       : []),
+    // Threads are a community feature, not a private one, so this journey runs in
+    // both modes. It depends on the release journey for the installation and its
+    // channel, and it must precede the ownership ceremony, which cannot be undone.
+    { name: 'threads', testMatch: 'threads.spec.mjs', dependencies: ['release'] },
     { name: 'voice', testMatch: 'voice.spec.mjs', dependencies: ['release'] },
     { name: 'account-switch', testMatch: 'account-switch.spec.mjs', dependencies: ['release'] },
     {

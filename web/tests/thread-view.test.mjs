@@ -1,0 +1,71 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+// The send outcome decides what the composer offers next, and getting it wrong
+// invites a person to send the same thing twice. A definite refusal wrote nothing, so
+// the key is still free. Anything else may have committed, and a lost response must
+// never look like a failure to save (ADR 0014).
+import { threadSubmitState, canSendThreadReply } from '../src/lib/thread-state.ts';
+
+const readSource = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+
+test('a refusal keeps the action available; an unknown outcome does not', () => {
+  assert.equal(threadSubmitState(false, null), 'ready');
+  assert.equal(threadSubmitState(false, { status: 400 }), 'refused');
+  assert.equal(threadSubmitState(false, { status: 403 }), 'refused');
+  assert.equal(threadSubmitState(false, { status: 429 }), 'refused');
+  // No status at all is a transport failure: the request may have committed and the
+  // response been lost, which is not the same as being told no.
+  assert.equal(threadSubmitState(false, { message: 'network' }), 'uncertain');
+  assert.equal(threadSubmitState(false, { status: 500 }), 'uncertain');
+  assert.equal(threadSubmitState(true, null), 'ready');
+});
+
+test('a page is walked by its first row, not its last', () => {
+  // The server returns each page oldest-first, so the next older page begins before
+  // the first row. Taking the last re-reads the page just fetched, which is a cursor
+  // walk that never terminates.
+  const source = readSource('src/lib/threads.svelte.ts');
+  assert.match(source, /before = page\[0\]\.id;/);
+  assert.doesNotMatch(source, /before = page\[page\.length - 1\]\.id;/);
+});
+
+test('the send key is released only after the outcome is known', () => {
+  const source = readSource('src/lib/components/NamedThreadPanel.svelte');
+  // The key is captured before the send and replaced after it, so a retry within the
+  // same failure is the same operation rather than new work.
+  assert.match(source, /const key = operationKey;/);
+  assert.match(source, /await view\.send\(text, key\);/);
+  assert.match(source, /operationKey = crypto\.randomUUID\(\);/);
+});
+
+test('a thread that is not found is not re-requested', () => {
+  const source = readSource('src/lib/threads.svelte.ts');
+  // Re-requesting a missing thread on every render would be a way to probe for the
+  // existence of a channel the reader can no longer see.
+  assert.match(source, /this\.missing = true;/);
+  assert.match(source, /if \(this\.disposed \|\| this\.missing\) return;/);
+});
+
+test('the follow control reflects what the server decided', () => {
+  const source = readSource('src/lib/threads.svelte.ts');
+  // Reflecting the request rather than the answer would leave a refused follow
+  // looking like it worked.
+  assert.match(source, /following: result\.following/);
+});
+
+// The reply control is live only when there is somewhere to reply, the thread is
+// writable, the person has typed something and no send is in flight. A locked or
+// vanished thread must not offer a control whose handler cannot succeed.
+test('the reply control follows the thread, not just the draft', () => {
+  const ready = { open: true, locked: false, missing: false, sending: false, draft: 'hello' };
+  assert.equal(canSendThreadReply(ready), true);
+  assert.equal(canSendThreadReply({ ...ready, draft: '   ' }), false);
+  assert.equal(canSendThreadReply({ ...ready, sending: true }), false);
+  // A locked thread is still readable and followable, but nothing can be added to it.
+  assert.equal(canSendThreadReply({ ...ready, locked: true }), false);
+  // A thread that is gone offers nothing, rather than a control that fails on press.
+  assert.equal(canSendThreadReply({ ...ready, missing: true }), false);
+  assert.equal(canSendThreadReply({ ...ready, open: false }), false);
+});

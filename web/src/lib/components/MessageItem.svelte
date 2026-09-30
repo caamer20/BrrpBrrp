@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { Message } from '../types';
+  import type { Message, Thread } from '../types';
   import { workspace } from '../workspace.svelte';
   import { api, errorMessage } from '../api';
   import ReactionPicker from './ReactionPicker.svelte';
@@ -124,6 +124,31 @@
   function openThread() {
     moreOpen = false;
     workspace.threadId = message.id;
+  }
+  // A named thread belongs to a channel, so it is only offered where one is in view.
+  // The server decides for real either way; this only avoids offering it where it
+  // could not possibly work.
+  const canStartNamedThread = $derived(showThread && !!workspace.channel);
+  let threadPromptOpen = $state(false);
+  let threadTitleInput = $state<HTMLInputElement>();
+  let threadTitle = $state('');
+  let threadError = $state('');
+  async function startNamedThread() {
+    const title = threadTitle.trim();
+    if (!title) return;
+    threadError = '';
+    try {
+      const created = await api<Thread>(
+        `/channels/${encodeURIComponent(workspace.activeId)}/threads`,
+        'POST',
+        { root_message_id: message.id, title }
+      );
+      threadPromptOpen = false;
+      threadTitle = '';
+      workspace.namedThreadId = created.id;
+    } catch (error) {
+      threadError = errorMessage(error);
+    }
   }
   async function beginEdit() {
     moreOpen = false;
@@ -378,6 +403,13 @@
       <button onclick={replyToMessage}><Icon name="reply" />Reply</button>
       {#if showThread}<button onclick={openThread}><Icon name="hash" />Open reply thread</button
         >{/if}
+      {#if canStartNamedThread && !message.pending}<button
+          onclick={() => {
+            moreOpen = false;
+            threadPromptOpen = true;
+            void tick().then(() => threadTitleInput?.focus());
+          }}><Icon name="hash" />Start a named thread</button
+        >{/if}
       <button
         onclick={() => {
           moreOpen = false;
@@ -402,6 +434,36 @@
         >{/if}
     </div>
   </Modal>{/if}
+
+{#if threadPromptOpen}<form
+    class="thread-prompt"
+    onsubmit={(event) => {
+      event.preventDefault();
+      void startNamedThread();
+    }}
+  >
+    <label for="thread-title-{message.id}">Name this thread</label>
+    <input
+      id="thread-title-{message.id}"
+      bind:this={threadTitleInput}
+      bind:value={threadTitle}
+      maxlength="120"
+      placeholder="What is this discussion about?"
+    />
+    {#if threadError}<p class="thread-prompt-error" role="alert">{threadError}</p>{/if}
+    <div class="button-row">
+      <button
+        type="button"
+        class="secondary"
+        onclick={() => {
+          threadPromptOpen = false;
+          threadTitle = '';
+          threadError = '';
+        }}>Cancel</button
+      >
+      <button type="submit" class="primary" disabled={!threadTitle.trim()}>Start thread</button>
+    </div>
+  </form>{/if}
 
 {#if reportOpen}<ReportMessage {message} close={() => (reportOpen = false)} />{/if}
 {#if privateReportOpen}<ReportPrivateMessage

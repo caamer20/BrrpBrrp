@@ -113,7 +113,11 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, user db.Us
 	if !ok {
 		return
 	}
-	clause := "WHERE conversation_id=?"
+	// A channel's listing is the channel's own conversation, and a thread's replies
+	// are not part of it: they are read from the thread. Without this a busy thread
+	// buries the channel it lives in, and a client paginating both sees every reply
+	// twice.
+	clause := "WHERE conversation_id=? AND thread_id IS NULL"
 	args := []any{scope.ID}
 	limit := pageLimit(r)
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
@@ -176,6 +180,39 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, user db.User
 		return
 	}
 	respond(w, 200, message)
+}
+
+// createThreadMessage resolves the thread to the channel it inherits authorization
+// from and then runs the ordinary send against that channel. The only difference is
+// that the new message is filed into the thread, which the scope carries.
+func (s *Server) createThreadMessage(w http.ResponseWriter, r *http.Request, user db.User) {
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	principal, err := s.authorizeInTx(r.Context(), tx, user)
+	if err != nil {
+		tx.Rollback()
+		s.authorityFailed(w, err)
+		return
+	}
+	thread, scope, err := s.threadAccess(r.Context(), tx, principal, r.PathValue("id"), true)
+	if err != nil {
+		tx.Rollback()
+		s.scopeFailed(w, err)
+		return
+	}
+	_ = thread
+	if err := tx.Commit(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	// The channel path value is what the shared send resolves, and the thread is
+	// carried alongside it so the insert files the message into the thread.
+	r.SetPathValue("id", scope.ID)
+	r.SetPathValue("thread", thread.ID)
+	s.createMessage(w, r, user)
 }
 
 func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.User) {
@@ -298,20 +335,33 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 		return
 	}
 	if input.ReplyToID != "" {
+		// A reply is resolved in the destination it is being sent to, so replying to a
+		// message in another thread is refused rather than quietly joining two
+		// conversations under one parent.
+		countClause := `SELECT count(*) FROM messages WHERE id=? AND conversation_id=?`
+		countArgs := []any{input.ReplyToID, scope.ID}
+		if threadID := r.PathValue("thread"); threadID != "" {
+			countClause += ` AND thread_id=?`
+			countArgs = append(countArgs, threadID)
+		}
 		var count int
-		if err := tx.QueryRow(`SELECT count(*) FROM messages WHERE id=? AND conversation_id=?`, input.ReplyToID, scope.ID).Scan(&count); err != nil {
+		if err := tx.QueryRow(countClause, countArgs...).Scan(&count); err != nil {
 			s.failed(w, err)
 			return
 		}
 		if count != 1 {
-			problem(w, 400, "Reply to an existing message in this channel.")
+			if r.PathValue("thread") != "" {
+				problem(w, 400, "Reply to a message in this thread.")
+			} else {
+				problem(w, 400, "Reply to an existing message in this channel.")
+			}
 			return
 		}
 	}
 	// conversation_id records the conversation scope every reader resolves through
 	// COALESCE(conversation_id, channel_id). A channel conversation's id is its channel id, so
 	// the new column and the legacy column agree for every message this path writes.
-	_, err = tx.Exec(`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key,reply_to_id) VALUES(?,?,NULLIF(?,''),?,?,?,?,NULLIF(?,''))`, id, scope.ID, scope.ChannelID, principal.UserID, input.Content, now, input.IdempotencyKey, input.ReplyToID)
+	_, err = tx.Exec(`INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key,reply_to_id,thread_id) VALUES(?,?,NULLIF(?,''),?,?,?,?,NULLIF(?,''),NULLIF(?,''))`, id, scope.ID, scope.ChannelID, principal.UserID, input.Content, now, input.IdempotencyKey, input.ReplyToID, r.PathValue("thread"))
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -340,6 +390,12 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	if err := s.recordDirectMessageActivity(r.Context(), tx, scope, principal.UserID, id, sentAt); err != nil {
 		s.failed(w, err)
 		return
+	}
+	if threadID := r.PathValue("thread"); threadID != "" {
+		if err := s.recordThreadReplyActivity(r.Context(), tx, scope, principal.UserID, threadID, id, sentAt); err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
 	// The receipt is completed in the same transaction as the message, so a committed message
 	// always has its receipt and a rolled-back send has neither.
