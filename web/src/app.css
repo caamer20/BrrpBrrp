@@ -57,6 +57,12 @@ input,
 select,
 textarea {
   font: inherit;
+  /* A member writing in Arabic and pasting an English link should see the text laid
+     out the way they wrote it, not laid out by the interface's own direction. This is
+     the same rule as for message text, and it matters more here: the composer is where
+     the problem is noticed, and a caret in the wrong place while composing is the most
+     disruptive form of this bug. */
+  direction: auto;
 }
 button,
 summary,
@@ -921,6 +927,14 @@ kbd {
   line-height: 1.65;
   font-size: 0.94rem;
   color: var(--text);
+  /* Message text is written by members, so it can be in any language and can mix
+     them. Without this, a message that begins in Arabic and ends in an English URL
+     renders its final full stop on the wrong side and its line breaks in the wrong
+     order — legible, and wrong, which is worse than obviously broken. `auto` lets the
+     browser decide from the first strong character, and `isolate` keeps the paragraph's
+     direction from leaking into the surrounding layout. */
+  direction: auto;
+  unicode-bidi: isolate;
 }
 .message-content:empty {
   display: none;
