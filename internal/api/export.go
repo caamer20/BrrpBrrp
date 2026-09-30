@@ -215,6 +215,13 @@ func (s *Server) requestExport(w http.ResponseWriter, r *http.Request, user db.U
 	// asking for a new export and being told "delete something first" is a worse
 	// answer than losing a copy they can rebuild at no cost to anybody.
 	if err := s.reclaimExportStorage(r.Context(), tx, principal.UserID); err != nil {
+		// A full server is an ordinary, explainable refusal — a 409 with words, not a
+		// 500, because the member did nothing wrong and the condition clears itself when
+		// a copy expires or the operator's expiry sweep runs.
+		if errors.Is(err, errExportStorageFull) {
+			problem(w, 409, errExportStorageFull.Error())
+			return
+		}
 		s.failed(w, err)
 		return
 	}
@@ -379,13 +386,21 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 		return err
 	}
 	if int64(len(encoded)) > maxExportBytes {
-		// The bound on bytes is the same bound on rows seen from the other side: the
-		// file is not written at all rather than written truncated.
+		// The row bound and the byte bound are the same bound seen from two sides. The
+		// earlier version recorded the omission and then wrote the oversized file
+		// anyway, so the ceiling protected nothing except the reader's patience: a
+		// member whose export was over the limit got a document the server had already
+		// declared it would not produce.
+		//
+		// So it is not written. The job fails, the member is told why in the place they
+		// can see it, and nothing lands on disk for a delivery to serve. The
+		// conversation-level bound above normally stops this long before: 50,000
+		// messages of 4,000 characters is about 200 MiB, under a 256 MiB ceiling.
 		document.Summary.Truncated = true
 		document.Omissions = append(document.Omissions, "the file exceeded its size limit and was not written")
-		if encoded, err = json.MarshalIndent(document, "", "  "); err != nil {
-			return err
-		}
+		// The row still records what was reached, so the member can see how much of
+		// their history the build covered even though no file was produced.
+		return s.recordTruncatedExport(ctx, tx, exportID, userID, document)
 	}
 
 	path := s.exportPath(exportID)
@@ -823,6 +838,12 @@ func (s *Server) exportIDsFor(q db.Queryer, userID string) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// errExportStorageFull reports that the server is already holding its ceiling of
+// finished copies, so a new job cannot be admitted. It is a refusal rather than a
+// silent admission: the alternative is a server that exceeds its own stated bound
+// quietly, which is the failure a bound exists to prevent.
+var errExportStorageFull = errors.New("this server is already holding the maximum number of prepared exports; try again after one expires, or delete one of yours")
+
 // exportStorageBounds are the ceilings on finished copies. They are small because the
 // export is a retrieval convenience, not an archive: a member who wants more asks
 // again, and a server holding a year of one account's exports is a liability rather
@@ -860,6 +881,16 @@ func (s *Server) reclaimExportStorage(ctx context.Context, tx *sql.Tx, userID st
 	// The relief is the smaller of the two, and zero spare means no relief at all.
 	if slack := maxReadyExportsOnServer - server; slack < excess {
 		excess = slack
+	}
+	// A full server is a refusal, not a job admitted anyway.
+	//
+	// When the slack is zero the clamp above makes `excess` zero, the function returns
+	// "nothing to do", and the new export is inserted anyway — so the server ends up
+	// holding one more copy than its own ceiling says it should. The bound was
+	// therefore only ever enforced for the *account*, and quietly not enforced for the
+	// server at exactly the moment it mattered.
+	if server >= maxReadyExportsOnServer {
+		return errExportStorageFull
 	}
 	if excess <= 0 {
 		return nil
@@ -911,4 +942,45 @@ func (s *Server) drainExportRemovals() {
 			s.log.Warn("a reclaimed export file could not be removed", "export", id, "error", err)
 		}
 	}
+}
+
+// abandonStaleExports closes jobs that no process is running.
+//
+// A `building` row is the only thing blocking that account from asking again, and a
+// crash between the insert and the build finishing left one behind permanently: the
+// member's later request was answered "an export is already being prepared" by a job
+// that no longer exists, and nothing in the product could tell the difference.
+//
+// A row older than the longest a build can take is not a build. The grace is generous
+// because being wrong in this direction is cheap — a build that is genuinely still
+// running is not expected to outlive an hour on any supported host, and the worst case
+// of marking it failed is that a member asks again.
+func (s *Server) abandonStaleExports(ctx context.Context, q db.Queryer, grace time.Duration) (int, error) {
+	result, err := q.ExecContext(ctx, `UPDATE data_exports SET state='failed',completed_at=?,omissions='the server stopped before this export finished'
+		WHERE id IN (SELECT id FROM data_exports WHERE state='building' AND created_at<? LIMIT 100)`,
+		db.Now(), db.Timestamp(time.Now().Add(-grace)))
+	if err != nil {
+		return 0, err
+	}
+	affected, _ := result.RowsAffected()
+	return int(affected), nil
+}
+
+// recordTruncatedExport closes a job that reached its byte ceiling.
+//
+// The row is marked `failed` rather than `ready`, because a member offered a
+// "successful" export that has no file is a worse outcome than a refusal: the
+// interface would show a download button for something that 404s. The counts and the
+// omission are still recorded, so the member can see how far the build got.
+func (s *Server) recordTruncatedExport(ctx context.Context, tx *sql.Tx, exportID, userID string, document exportDocument) error {
+	now := db.Now()
+	_, err := tx.ExecContext(ctx, `UPDATE data_exports SET state='failed',completed_at=?,conversation_count=?,message_count=?,
+		attachment_count=?,bytes_written=0,truncated=1,omissions=?,completed_by=?
+		WHERE id=? AND user_id=? AND state='building'`,
+		now, document.Summary.Conversations, document.Summary.Messages, document.Summary.Attachments,
+		strings.Join(document.Omissions, "; "), userID, exportID, userID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -171,3 +171,31 @@ that file lives for up to seven days, and the operator's decision was that the p
 conversations inside it should stop being reachable. Serving it anyway is the same
 leak as serving an export after a removal, with a different cause and the same
 seven-day tail.
+
+## A full server refuses; an interrupted job is closed
+
+**The server bound was only ever enforced per account.** The clamp that limits how
+much of one account's excess the server's spare capacity can relieve made the reclaim
+a no-op when the server was full — and the new job was then admitted anyway, so the
+server ended up holding one more copy than its own ceiling states. A bound enforced
+only for the account is not a server bound. A full server now refuses with a 409 that
+says so and points at the two things that clear it: a copy expiring, or the member
+deleting one of theirs.
+
+**An interrupted build blocked the account forever.** A `building` row is the only
+thing standing between an account and asking again, so a crash between the insert and
+the build finishing left a permanent "an export is already being prepared" — answered
+by a job that no longer exists, and indistinguishable from one that is genuinely
+running. Rows older than an hour are closed, at startup as well as on the hourly pass,
+because a member who pressed the button a moment before the server stopped should not
+wait a maintenance interval to press it again. A *recent* row is left alone: it may
+really be building, and a second build beside it would be worse.
+
+**The byte ceiling now means something.** The oversized branch recorded the omission
+and then wrote the oversized file anyway, so the ceiling protected nothing except the
+reader's patience — a member whose export was over the limit received a document the
+server had already declared it would not produce. The file is not written; the job is
+recorded as failed with the counts it reached, so the member can see how far it got
+and why there is nothing to download. Marking it `failed` rather than `ready` is the
+point: a "successful" export with no file is worse than a refusal, because the
+interface would offer a download that 404s.

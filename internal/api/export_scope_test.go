@@ -470,3 +470,119 @@ func TestAnExportDownloadIsRegisteredSoARevocationCanEndIt(t *testing.T) {
 		t.Fatalf("the export download answered %d once admitted", code)
 	}
 }
+
+// A build interrupted by a restart must not block the account forever.
+//
+// The `building` row is the only thing standing between an account and asking again,
+// so a crash between the insert and the build finishing left a permanent "an export
+// is already being prepared" — answered by a job that no longer exists, and
+// indistinguishable from one that is genuinely running.
+func TestAnInterruptedExportIsAbandonedRatherThanBlockingTheAccount(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	_, alice := namedUser(t, s, "export_stuck_alice")
+	aliceID := memberIDOf(t, s, "export_stuck_alice")
+
+	// A job the server never finished: the row exists, no file does, and it is old
+	// enough that nothing could still be building it.
+	stuck := db.ID()
+	if _, err := s.store.Exec(`INSERT INTO data_exports(id,user_id,operation_key,state,created_at,fresh_auth_at)
+		VALUES(?,?,'stuck-job-1','building',?,?)`, stuck, aliceID,
+		db.Timestamp(time.Now().Add(-2*time.Hour)), db.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// The account is blocked, and the refusal is the one a real running job gives.
+	markPrivileged(t, s, alice)
+	if w := request(t, handler, "POST", "/api/me/export", map[string]any{"operation_key": "export-after-crash"}, alice); w.Code != http.StatusConflict {
+		t.Fatalf("a stuck job did not block the account: %d %s", w.Code, w.Body.String())
+	}
+
+	closed, err := s.abandonStaleExports(t.Context(), s.store, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed != 1 {
+		t.Fatalf("the sweep closed %d interrupted jobs, want 1", closed)
+	}
+	var state string
+	if err := s.store.QueryRowContext(t.Context(), `SELECT state FROM data_exports WHERE id=?`, stuck).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "failed" {
+		t.Fatalf("the interrupted job is still %q", state)
+	}
+	// And the account can ask again — the whole point.
+	if w := request(t, handler, "POST", "/api/me/export", map[string]any{"operation_key": "export-after-crash"}, alice); w.Code != http.StatusAccepted {
+		t.Fatalf("the account could not ask again after its interrupted job was closed: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A *recent* `building` row is a job that may genuinely still be running, and closing
+// it would let a second build start beside it.
+func TestARecentBuildingExportIsLeftAlone(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	_, alice := namedUser(t, s, "export_live_alice")
+	aliceID := memberIDOf(t, s, "export_live_alice")
+	_ = alice
+
+	live := db.ID()
+	if _, err := s.store.Exec(`INSERT INTO data_exports(id,user_id,operation_key,state,created_at,fresh_auth_at)
+		VALUES(?,?,'live-job-1','building',?,?)`, live, aliceID, db.Now(), db.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if closed, err := s.abandonStaleExports(t.Context(), s.store, time.Hour); err != nil {
+		t.Fatal(err)
+	} else if closed != 0 {
+		t.Fatalf("the sweep closed %d jobs that may still be building", closed)
+	}
+	var state string
+	if err := s.store.QueryRowContext(t.Context(), `SELECT state FROM data_exports WHERE id=?`, live).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "building" {
+		t.Fatalf("a running build was closed: state %q", state)
+	}
+}
+
+// A server already holding its ceiling refuses a new job rather than exceeding its
+// own bound.
+//
+// The clamp that limits how much of an account's excess the server's spare capacity
+// can relieve made the reclaim a no-op when the server was full — and the job was then
+// admitted anyway, so the server ended up holding one more copy than it says it
+// should. A bound that is only enforced for the account is not a server bound.
+func TestAFullServerRefusesANewExportRatherThanExceedingItsBound(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	_, alice := namedUser(t, s, "export_full_alice")
+	aliceID := memberIDOf(t, s, "export_full_alice")
+
+	// Fill the server to its ceiling with exports belonging to other accounts.
+	now := db.Now()
+	for i := 0; i < maxReadyExportsOnServer; i++ {
+		if _, err := s.store.Exec(`INSERT INTO data_exports(id,user_id,operation_key,state,created_at,completed_at,fresh_auth_at,scope)
+			VALUES(?,?,'filler-'||?,'ready',?,?,?,'[]')`, db.ID(), aliceID, i, now, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	markPrivileged(t, s, alice)
+	w := request(t, handler, "POST", "/api/me/export", map[string]any{"operation_key": "export-when-full"}, alice)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("a full server admitted a new export: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "maximum number") {
+		t.Fatalf("the refusal does not explain itself: %s", w.Body.String())
+	}
+	// And the ceiling still holds: nothing was inserted.
+	var ready int
+	if err := s.store.QueryRowContext(t.Context(), `SELECT count(*) FROM data_exports WHERE state='ready'`).Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready != maxReadyExportsOnServer {
+		t.Fatalf("the server holds %d finished exports after refusing one at %d", ready, maxReadyExportsOnServer)
+	}
+}

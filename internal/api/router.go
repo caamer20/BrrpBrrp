@@ -212,6 +212,16 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	go s.pushWorker()
 	s.workers.Add(1)
 	go s.maintenanceWorker()
+	// One pass at startup, before the hourly one. A `building` export row is the only
+	// thing blocking that account from asking again, so a job interrupted by the
+	// restart that just happened would otherwise answer "an export is already being
+	// prepared" for up to an hour. A member who pressed a button a moment before the
+	// server stopped should not have to wait a maintenance interval to press it again.
+	if _, err = s.abandonStaleExports(ctx, s.store, time.Hour); err != nil {
+		cancel()
+		s.Close()
+		return nil, err
+	}
 	for range 2 {
 		s.workers.Add(1)
 		go s.previewWorker()

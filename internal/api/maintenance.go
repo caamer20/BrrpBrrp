@@ -114,6 +114,14 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.expireExports(s.ctx, s.store); err != nil {
 		return err
 	}
+	// A build interrupted by a restart leaves a `building` row, and that row is the
+	// only thing standing between the account and asking again — so an interrupted job
+	// becomes a permanent "an export is already being prepared" answered by a job that
+	// no longer exists. Closed here, and on the same pass as the expiry that may be
+	// what the member was waiting for.
+	if _, err := s.abandonStaleExports(s.ctx, s.store, time.Hour); err != nil {
+		return err
+	}
 	// An export file with no row behind it: a crash between reclaiming the row and
 	// unlinking the file, or an account erased by a path that predates the cleanup.
 	// Every other sweep works from the table, so without this one a file with no row
