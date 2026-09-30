@@ -657,3 +657,32 @@ exists to catch that: it withdraws a permission *while a share is live* and requ
 the frames to stop. Without it, "the mute no longer freezes the screen" and "a
 moderator can no longer stop a screen" are the same test, and only one of them is
 correct.
+
+
+## One connection, one microphone — and the second microphone is a replacement
+
+The server refuses a renegotiated microphone with *"this connection already has a
+microphone"*, and `OnTrack` returns without reading any audio track that arrives once
+one is claimed. Both are correct as statements about **slots** and wrong as statements
+about **people**.
+
+A connection has one audio output because it has one peer. It does not follow that the
+peer has one microphone for the duration of the call. People plug in a headset, switch
+to a USB microphone, hand the device to a colleague, or have a browser reopen the input
+after a device change. On the old code every one of those produced a connected track, a
+moving level meter in the caller's own window, and **no audio at all for anybody else**
+— the exact failure where the interface says everything is fine.
+
+So the second microphone takes over the connection's audio output rather than being
+discarded, and the renegotiation that carries it is accepted and releases the claim. The
+refusal that remains is about the *permission*: `SetSpeakAllowed(false)` still gates the
+offer, so a member who may not transmit cannot talk their way back in by renegotiating.
+
+Two things this deliberately does not do. It does not treat a second microphone as a
+second *input* — that is the bound, and it is enforced by the single output, not by
+refusing. And it does not make the grant permanent: a replacement can be replaced, which
+is the whole point, and the alternative is the server needing a restart to hear somebody
+again.
+
+The client is told (`voice.microphone_replaced`) so it can redraw its input state instead
+of leaving a device selector showing hardware the server is no longer reading.

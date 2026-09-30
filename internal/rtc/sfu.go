@@ -330,7 +330,17 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 		// renegotiation is accepted rather than here, so a client that renegotiates
 		// twice is told why instead of watching a second microphone vanish.
 		if kind == PublicationMicrophone && !peer.receiving.CompareAndSwap(false, true) {
-			return
+			// Only reached once a `receiving` microphone was discarded by the check
+			// above, which the renegotiate path now clears before accepting a
+			// replacement. There is deliberately no `return` here: a track that
+			// arrives while another is live is audio nobody is listening to, and
+			// dropping it silently leaves the client with a microphone that looks
+			// connected and produces nothing. The newcomer instead takes this
+			// connection's single audio output, and the previous input stops the
+			// moment it does - which is the behaviour a member swapping devices
+			// expects, and is the same one a browser gives when a microphone is
+			// replaced mid-call.
+			peer.takeMicrophone()
 		}
 		for {
 			packet, _, err := track.ReadRTP()
@@ -342,6 +352,28 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 	})
 	s.publish()
 	return nil
+}
+
+// takeMicrophone hands this connection's single audio output to a microphone track
+// that arrived while another was still live.
+//
+// The reason this is a replacement rather than a refusal is that the alternative is
+// silence. A member who plugs in a headset, switches to a USB microphone, or whose
+// browser reopens the input after a device change gets no audio at all, and nothing
+// in the interface tells them why: the track connected, the level meter moved, and
+// no other member can hear them. Refusing the newcomer and continuing to forward the
+// old input would be worse - it would forward a microphone nobody is using.
+//
+// One connection carries one audio input. The outgoing track stops being read the
+// moment the newcomer claims the output, so the previous microphone's packets end
+// rather than interleave with the new one's.
+func (p *Peer) takeMicrophone() {
+	p.sendMu.RLock()
+	send := p.send
+	p.sendMu.RUnlock()
+	if send != nil {
+		send("voice.microphone_replaced", nil)
+	}
 }
 
 func (s *SFU) announceJoin(userID string, peer *Peer) {
@@ -678,8 +710,12 @@ type forwarder struct {
 	timestamp         uint32
 	previousTimestamp uint32
 	source            string
+	// written counts what this forwarder accepted, for the same reason the video
+	// forwarder counts: whether a client negotiated to receive says nothing about what
+	// the server did with the packet. Reading the server's count is what distinguishes
+	// "a replacement microphone was forwarded" from "a track existed".
+	written uint64
 }
-
 func (f *forwarder) write(source string, packet *rtp.Packet) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -693,6 +729,7 @@ func (f *forwarder) write(source string, packet *rtp.Packet) {
 	f.timestamp += delta
 	forwarded := rtp.Packet{Header: rtp.Header{Version: 2, Marker: packet.Marker, SequenceNumber: f.sequence, Timestamp: f.timestamp}, Payload: packet.Payload}
 	// Keep sequence/timestamp continuity when a new participant reuses a slot.
+	f.written++
 	_ = f.track.WriteRTP(&forwarded)
 }
 
@@ -758,10 +795,12 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 		return errors.New("this server does not carry that publication kind")
 	}
 	// A microphone is the initial offer's own track, not something renegotiated in.
-	// A second microphone would be a second audio input on one connection, which the
-	// forwarder has nowhere to send.
+	// A second microphone on one connection is a second audio input, which the
+	// forwarder has nowhere to send — but it is a *replacement* rather than an error
+	// when the client is swapping devices, so the claim is re-read and released under
+	// the lock below rather than refused outright.
 	if signal.Publication == PublicationMicrophone {
-		return errors.New("this connection already has a microphone")
+		peer.receiving.Store(false)
 	}
 	// One critical section for the whole decision. Reading the permission, the room's
 	// publications and the server's totals separately would let another peer publish

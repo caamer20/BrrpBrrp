@@ -291,19 +291,124 @@ func TestSpeakPermissionGatesAScreenToo(t *testing.T) {
 	}
 }
 
-// A second microphone is refused: the connection already has one, and the forwarder
-// has nowhere to send a second audio input.
-func TestASecondMicrophoneIsRefused(t *testing.T) {
+// A second microphone on one connection is not a second audio input; it is a
+// replacement. The connection has one audio output, and the track that claims it is
+// the one members hear.
+func TestASecondMicrophoneTakesOverTheConnectionInsteadOfLeavingItSilent(t *testing.T) {
 	sfu := newTestSFU(t)
 	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	ana, bo := sfu.peers["ana"], sfu.peers["bo"]
+	sfu.mu.Unlock()
+
+	// Ana's current microphone is reaching bo.
+	before := audioWrites(t, bo)
+	sfu.forwardPublication(ana, PublicationMicrophone, audioFrame(1))
+	if got := audioWrites(t, bo); got != before+1 {
+		t.Fatalf("bo received %d audio packets, want %d", got, before+1)
+	}
+
+	// A second microphone arrives on ana's connection — a headset plugged in
+	// mid-call. The old code returned here, so the new track was never read and
+	// ana was left with a connected microphone nobody could hear.
+	replaced := make(chan bool, 1)
+	ana.sendMu.RLock()
+	prior := ana.send
+	ana.sendMu.RUnlock()
+	ana.sendMu.Lock()
+	ana.send = func(kind string, data any) {
+		if kind == "voice.microphone_replaced" {
+			replaced <- true
+		}
+		prior(kind, data)
+	}
+	ana.sendMu.Unlock()
+	ana.takeMicrophone()
+
+	select {
+	case <-replaced:
+	default:
+		t.Fatal("the client was not told its microphone was replaced")
+	}
+
+	// One audio input, not two interleaved: the replacement's packets reach bo, and
+	// each forwarded frame advances this slot's sequence once rather than twice.
+	slot := bo.outputs[0]
+	sfu.forwardPublication(ana, PublicationMicrophone, audioFrame(2))
+	if got := audioWrites(t, bo); got != before+2 {
+		t.Fatalf("the replacement microphone did not reach bo: %d writes, want %d", got, before+2)
+	}
+	slot.mu.Lock()
+	after := slot.sequence
+	slot.mu.Unlock()
+	if after != 2 {
+		t.Fatalf("the slot advanced to sequence %d across two frames, want 2 — two inputs would double-step it", after)
+	}
+}
+
+// Renegotiating a microphone is how a client says "here is my new input". It used to
+// be refused outright — "this connection already has a microphone" — which left a
+// member who swapped devices silent for the life of the call.
+//
+// The offer now releases the claim so the arriving track is read. What still refuses
+// is the *permission*, not the existence of a second input: the client gets its
+// microphone back, and a member who may not transmit still may not.
+func TestAMemberWhoReplacesTheirMicrophoneCanRenegotiateAndBeHeard(t *testing.T) {
+	sfu := newTestSFU(t)
+	peer := connectPeer(t, sfu, "ana", "room")
 	waitFor(t, "ana to connect", func() bool {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
 	})
-	if err := sfu.renegotiate(sfu.peers["ana"], Signal{
-		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationMicrophone,
-	}); err == nil {
-		t.Fatal("a second microphone was admitted on one connection")
+	connectionID := sfu.connectionIDFor("ana")
+	// The server's own view of the peer, which is what the offer must release.
+	ana := sfu.peers["ana"]
+
+	// A live microphone is claimed by the connection.
+	ana.receiving.Store(true)
+	if err := sfu.Signal("ana", "ana", Signal{
+		ConnectionID: connectionID, SDP: microphoneOffer(t, peer.pc), Publication: PublicationMicrophone,
+	}); err != nil {
+		t.Fatalf("a member replacing their microphone was refused: %v", err)
 	}
+	if ana.receiving.Load() {
+		t.Fatal("the connection still claims the old microphone after a replacement")
+	}
+
+	// The permission still gates it. A member who may not transmit cannot talk their
+	// way back in by renegotiating a microphone.
+	sfu.SetSpeakAllowed("ana", "ana", false)
+	if err := sfu.Signal("ana", "ana", Signal{
+		ConnectionID: connectionID, SDP: microphoneOffer(t, peer.pc), Publication: PublicationMicrophone,
+	}); err == nil {
+		t.Fatal("a member with no speak permission replaced their microphone")
+	}
+}
+
+// microphoneOffer builds a real offer carrying a fresh audio input, which is what a
+// client sends when it swaps microphones. A stub SDP is refused by Pion for lacking an
+// ICE ufrag, which would make this test fail on the wrong thing.
+func microphoneOffer(t *testing.T, client *webrtc.PeerConnection) *webrtc.SessionDescription {
+	t.Helper()
+	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, "microphone", "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := client.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	return &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: client.LocalDescription().SDP}
 }
 
 // A second offer with no publication named is refused, rather than being treated as an
@@ -1102,6 +1207,29 @@ func screenWrites(t *testing.T, sfu *SFU, userID string) uint64 {
 		output.mu.Unlock()
 	}
 	return total
+}
+
+// audioWrites sums the packets this peer's audio outputs have accepted. It is the
+// server's own counter, incremented by a write — not evidence that a track existed,
+// which is exactly the distinction the microphone replacement turns on.
+func audioWrites(t *testing.T, peer *Peer) uint64 {
+	t.Helper()
+	var total uint64
+	for _, output := range peer.outputs {
+		output.mu.Lock()
+		total += output.written
+		output.mu.Unlock()
+	}
+	return total
+}
+
+// audioFrame builds one Opus-sized RTP packet on the audio clock. `n` only has to
+// differ between frames: the forwarder steps its own timeline by the arrival delta.
+func audioFrame(n uint32) *rtp.Packet {
+	return &rtp.Packet{
+		Header:  rtp.Header{Version: 2, SequenceNumber: uint16(n), Timestamp: n * 960, Marker: n%50 == 0},
+		Payload: []byte{0xf8, 0xff, 0xfe},
+	}
 }
 
 // The room's screen allowance is one, and the check that enforces it must be the one
