@@ -23,8 +23,8 @@ import "strings"
 // Prefixes are matched by SQL LIKE, so the trailing dot is load-bearing: it keeps
 // `private_report.` from also matching a future `private_reporting.*`.
 var restrictedAuditPrefixes = []string{
-	"private_report.",  // private message evidence: submission and review
-	"private_request.", // pending-request evidence: submission and review
+	"private_report.",   // private message evidence: submission and review
+	"private_request.",  // pending-request evidence: submission and review
 	"request_evidence.", // retained for rows written before the `private_` prefixes
 	// were adopted; see the compatibility note in migration 14's documentation
 	"group.", // private group lifecycle: who invited, who joined, who left
@@ -103,4 +103,41 @@ func isRestrictedAuditAction(action string) bool {
 		}
 	}
 	return false
+}
+
+// evidenceAuditPrefixes are the restricted events an account holding
+// `report.review_private` may read: private *evidence* review, and nothing else.
+//
+// A group is not submitted evidence. The grant is exactly the snapshot a person
+// deliberately submitted, and a group's membership is neither submitted nor
+// deliberate — the row names the invitee and the group. Serving those rows to an
+// evidence reviewer turned a grant made to see reported text into a grant to browse
+// who is in whose private group (completion review 14, V14-01).
+//
+// It is the same shape as `restrictedAuditLike` and for the same reason: the
+// parentheses are load-bearing, and callers may not strip them.
+func evidenceAuditLike(column string) string {
+	return "(" + evidenceAuditClauses(column, " OR ", false) + ")"
+}
+
+func evidenceAuditClauses(column, join string, negate bool) string {
+	operator := " LIKE "
+	if negate {
+		operator = " NOT LIKE "
+	}
+	clause := ""
+	for i, prefix := range evidenceAuditPrefixes {
+		if i > 0 {
+			clause += join
+		}
+		clause += column + operator + "'" + prefix + "%'"
+	}
+	return clause
+}
+
+var evidenceAuditPrefixes = []string{
+	"private_report.",   // private message evidence: submission and review
+	"private_request.",  // pending-request evidence: submission and review
+	"request_evidence.", // retained for rows written before the `private_` prefixes
+	// were adopted; see the compatibility note in migration 14's documentation
 }

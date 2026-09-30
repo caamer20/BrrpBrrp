@@ -248,11 +248,22 @@ from the row that the evidence exists. `audit.read` remains a community-feed
 capability and gains no private metadata.
 
 Private **group lifecycle** is treated the same way and is *not* widened by the same
-grant. A group is not submitted evidence: holding `report.review_private` does not
-grant private group membership, and a reviewer of reported messages learns nothing
-about who is in whose group. Only the operator — who administers the installation —
-sees both. The two questions have different answers and the same URL, so the
-capability check is the whole policy.
+grant — and that turned out to need a query change, not only a capability check. The
+feed selected *every* restricted prefix, so holding `report.review_private` was in
+practice also a grant to browse who is in whose private group. A group is not
+submitted evidence: the grant is exactly the snapshot a person deliberately submitted,
+and a group's membership is neither submitted nor deliberate — the row names the
+invitee and the group. Only the owner, who administers the installation, sees both.
+
+So the two audiences are separated **in the query**, and before the limit: a group row
+must not occupy a page slot or move the cursor an evidence reviewer is holding. Three
+cases are asserted, and all three:
+
+- an evidence reviewer reads evidence audit and never a `group.` row;
+- the owner reads both, because the operator is accountable for group lifecycle too;
+- an ordinary auditor is refused, and the refusal body describes nothing.
+
+The last is the one that catches a fix which only ever widens.
 
 A wider policy is a legitimate thing for an owner to choose. It is not a thing to
 encode as a bug fix, and this one was encoded as a bug fix with tests written to

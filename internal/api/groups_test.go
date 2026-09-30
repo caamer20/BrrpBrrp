@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -568,23 +569,31 @@ func TestGroupLifecycleEventsAreNotReadableThroughOrdinaryAudit(t *testing.T) {
 		t.Fatalf("designate the owner: %d %s", w.Code, w.Body.String())
 	}
 	evidenceRoleID, evidenceReader := evidenceRole(t, s, h, groupAdminCookie, "private evidence reviewer", string(authz.ReportReviewPrivate))
-	for name, cookie := range map[string]*http.Cookie{
-		"the operator":                groupAdminCookie,
-		"an account granted evidence": evidenceReader,
-	} {
-		w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, cookie)
-		if w.Code != 200 {
-			t.Fatalf("%s could not read the restricted audit feed: %d %s", name, w.Code, w.Body.String())
+	// The operator sees both kinds: it administers the installation and is
+	// accountable for group lifecycle as much as for evidence review.
+	w := request(t, h, "GET", "/api/admin/private-reports/audit", nil, groupAdminCookie)
+	if w.Code != 200 {
+		t.Fatalf("the operator could not read the restricted audit feed: %d %s", w.Code, w.Body.String())
+	}
+	found := false
+	for _, entry := range readJSON[[]map[string]any](t, w) {
+		if action, _ := entry["action"].(string); isRestrictedAuditAction(action) {
+			found = true
 		}
-		entries := readJSON[[]map[string]any](t, w)
-		found := false
-		for _, entry := range entries {
-			if action, _ := entry["action"].(string); isRestrictedAuditAction(action) {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("%s could not see the group lifecycle events they are entitled to", name)
+	}
+	if !found {
+		t.Fatal("the operator could not see the group lifecycle events they are entitled to")
+	}
+	// An evidence reviewer does *not* see them, even though it can read the feed. This
+	// loop previously asserted the opposite, which is the defect: a group is not
+	// submitted evidence, and the row names the invitee and the group (V14-01).
+	reviewerFeed := request(t, h, "GET", "/api/admin/private-reports/audit", nil, evidenceReader)
+	if reviewerFeed.Code != 200 {
+		t.Fatalf("an evidence reviewer could not read the feed at all: %d %s", reviewerFeed.Code, reviewerFeed.Body.String())
+	}
+	for _, entry := range readJSON[[]map[string]any](t, reviewerFeed) {
+		if action, _ := entry["action"].(string); strings.HasPrefix(action, "group.") {
+			t.Fatalf("AN EVIDENCE REVIEWER WAS HANDED PRIVATE GROUP MEMBERSHIP: %q", action)
 		}
 	}
 

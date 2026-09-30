@@ -850,14 +850,35 @@ func (s *Server) privateEvidenceAuditLogs(w http.ResponseWriter, r *http.Request
 	// reviewer, so `audit.read` is not sufficient: the community audit capability
 	// must not disclose that a specific person reported a specific private message
 	// (completion review 14, V14-01).
-	if _, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.ReportReviewPrivate); err != nil {
+	principal, err := s.requireCapabilityInTx(r.Context(), tx, user, authz.ReportReviewPrivate)
+	if err != nil {
 		s.authorityFailed(w, err)
 		return
+	}
+	// The two kinds of restricted record have different audiences, and the query used
+	// to hand both to anyone who could read either.
+	//
+	// A group is not submitted evidence. `report.review_private` grants exactly the
+	// snapshot a person deliberately submitted, and a group's membership is neither
+	// submitted nor deliberate — it is disclosed by the row itself, which names the
+	// invitee and the group. So an evidence reviewer sees evidence audit and nothing
+	// else.
+	//
+	// The owner administers the installation and is accountable for both, which is a
+	// policy rather than a different grant. An ordinary auditor sees neither, and is
+	// refused above before this query runs.
+	//
+	// The filter is applied in SQL and therefore *before* the limit: a group row must
+	// not occupy a page slot or move the cursor an evidence reviewer is holding
+	// (ADR 0013).
+	filter := restrictedAuditLike("a.action")
+	if !principal.IsOwner {
+		filter = evidenceAuditLike("a.action")
 	}
 	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,
         COALESCE(u.username,'former member'),a.action,a.target_id,a.created_at
         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-        WHERE a.id<? AND `+restrictedAuditLike("a.action")+` ORDER BY a.id DESC LIMIT 50`, before)
+        WHERE a.id<? AND `+filter+` ORDER BY a.id DESC LIMIT 50`, before)
 	if err != nil {
 		s.failed(w, err)
 		return
