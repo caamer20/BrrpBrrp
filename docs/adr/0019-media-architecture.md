@@ -301,7 +301,33 @@ with *no* path at all, which is worse than the direct path it was giving up — 
 that requirement is enforced where the operator changes it rather than discovered at
 the next call.
 
-### 7.2 One defect this work found in passing
+### 7.2 A removed member was still published in the room
+
+`leavePeer` removed the peer from the map and closed its connection, and never
+touched the room's publication registry. So a member whose authority was withdrawn —
+removed from a group, banned, deactivated, erased — kept a publication in the room.
+
+That is not a cosmetic leftover. The room's bound is counted from that registry, so
+the removed member's screen kept consuming the one-screen allowance and refused
+**everybody after them**: the room stayed full for a share that ended the moment its
+owner was removed, which is the same failure as the one-stop case above, reached by a
+different route.
+
+Withdrawal now happens under the same lock that removed the peer, so nothing can
+observe a member who is gone and still published. The room is told only when
+something was actually withdrawn — a member who left with nothing sharing does not
+make the room re-render a screen nobody was watching.
+
+Withdrawal is **scoped to the departing peer**. Clearing the room's registry would
+pass the obvious test and break every call in it, so the retained-member case is
+asserted directly: after one member is removed, the other's publication survives and
+their connection is untouched.
+
+Every lifecycle path already called `leaveVoice` — session close, sign-out,
+deactivation, ban, erasure, group removal — so this sits on the live revocation path
+rather than beside it.
+
+### 7.3 One more defect this work found in passing
 
 `ice_servers` was a nil slice, which marshals to JSON `null`, not `[]`. The client
 iterates that list, so `ice_servers.map(...)` threw a `TypeError` and the call failed

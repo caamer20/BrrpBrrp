@@ -520,7 +520,36 @@ func (s *SFU) leavePeerOwned(userID string, peer *Peer, owner string) {
 		peer.detachTimer.Stop()
 	}
 	channelID := peer.state.ChannelID
+	// Everything this peer was publishing stops now, not when its connection happens
+	// to drain. The room's bound is counted from this registry, so a removed member's
+	// screen left behind here keeps consuming the one-screen allowance and refuses
+	// everybody after them — the room stays full for a share that ended the moment its
+	// owner was removed. This is the revocation half of "stop forwarding immediately",
+	// and it happens under the same lock that removed the peer, so nothing can observe
+	// a member who is gone and still published.
+	registry := s.room(channelID)
+	withdrew := false
+	for _, publication := range registry.list() {
+		if publication.Owner == userID {
+			if _, ok := registry.remove(publication.ID); ok {
+				withdrew = true
+			}
+		}
+	}
+	var recipients []*Peer
+	for _, other := range s.peers {
+		if other.state.ChannelID == channelID {
+			recipients = append(recipients, other)
+		}
+	}
 	s.mu.Unlock()
+	// Told only when something was actually withdrawn. A member who left with nothing
+	// sharing does not make the room re-render a screen nobody was watching.
+	if withdrew {
+		for _, other := range recipients {
+			other.emit("screen.stopped", map[string]any{"channel_id": channelID})
+		}
+	}
 	peer.emit("voice.left", map[string]string{"channel_id": channelID})
 	_ = peer.pc.Close()
 	s.publish()

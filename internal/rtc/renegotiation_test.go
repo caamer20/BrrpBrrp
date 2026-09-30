@@ -641,3 +641,67 @@ func TestAnUnestablishedCallReportsNoPathRatherThanAnEmptyOne(t *testing.T) {
 		t.Fatal("a peer with no connection reported a candidate pair")
 	}
 }
+
+// A member whose authority is withdrawn must stop being visible in the room, not
+// merely stop sending. `leavePeer` removed the peer from the map and closed its
+// connection, but never touched the room's publication registry — so a revoked
+// member's screen stayed in the room's list, kept consuming the one-screen bound,
+// and every later screen share was refused by a share whose owner had been removed.
+func TestARemovedMemberStopsBeingPublished(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.announcePublication(peer, Publication{
+		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	if len(sfu.Publications("room")) != 1 {
+		t.Fatal("the share was never published")
+	}
+
+	sfu.leavePeer("ana", peer)
+	if got := len(sfu.Publications("room")); got != 0 {
+		t.Fatalf("a member who left is still published in the room: %d publications", got)
+	}
+}
+
+// The other half of revocation: withdrawing one member's authority must not take
+// anybody else's with it. A fix that cleared the whole room's publications would
+// pass the test above and break every call in it.
+func TestRemovingOneMemberLeavesTheRestSharing(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	waitFor(t, "bo to connect", func() bool {
+		return sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	ana, bo := sfu.peers["ana"], sfu.peers["bo"]
+	sfu.announcePublication(ana, Publication{ID: "a1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.announcePublication(bo, Publication{ID: "b1", Owner: "bo", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.mu.Unlock()
+	if len(sfu.Publications("room")) != 2 {
+		t.Fatalf("the room carries %d publications, want 2", len(sfu.Publications("room")))
+	}
+
+	sfu.leavePeer("ana", ana)
+	published := sfu.Publications("room")
+	if len(published) != 1 {
+		t.Fatalf("removing one member left %d publications, want 1", len(published))
+	}
+	if published[0].Owner != "bo" {
+		t.Fatalf("the surviving publication belongs to %q, want bo", published[0].Owner)
+	}
+	// Bo's connection is untouched: being in a room with someone who was removed is
+	// not itself a reason to be disconnected.
+	if sfu.connectionStateOf("bo") != webrtc.PeerConnectionStateConnected {
+		t.Fatal("removing one member disconnected another")
+	}
+}
