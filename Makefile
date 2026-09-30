@@ -31,6 +31,27 @@ source-package:
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
 notices:
 	BRRP_GO='$(GO)' node scripts/licenses.mjs ./cmd/brrpbrrp --version $(VERSION)
+
+# Capacity qualification. Both halves need a running server, so neither is wired into
+# `check`: a capacity run on a developer's laptop is a development measurement, and
+# folding it into the ordinary gate would make the gate mean something different from
+# what its name says.
+#
+#   make capacity-fixture BASE=http://127.0.0.1:8080 OWNER=you PASS=... \
+#        ACCOUNTS=250 CHANNELS=100 MESSAGES=1000000 PRIVATE=1
+#   make capacity-load    BASE=... COOKIE='brrp_session=...' CLIENTS=100 DURATION=7200
+CAPACITY_BASE ?= http://127.0.0.1:8080
+capacity-fixture:
+	node scripts/capacity-fixture.mjs --base '$(CAPACITY_BASE)' \
+		--owner-user '$(OWNER)' --owner-pass '$(PASS)' \
+		--accounts $(or $(ACCOUNTS),250) --channels $(or $(CHANNELS),100) \
+		--messages $(or $(MESSAGES),1000000) \
+		$(if $(PRIVATE),--private-traffic,) \
+		--report '$(or $(REPORT),planning/m5-checkpoint/fixture.json)' --label '$(or $(LABEL),make)'
+capacity-load:
+	node scripts/capacity-load.mjs --base '$(CAPACITY_BASE)' --cookie '$(COOKIE)' \
+		--clients $(or $(CLIENTS),100) --duration $(or $(DURATION),7200) \
+		--report '$(or $(REPORT),planning/m5-checkpoint/load.json)' --label '$(or $(LABEL),make)' 
 browser-check: build
 	$(GO) build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
 	cd web && npm run test:e2e
