@@ -75,6 +75,9 @@
         >
       {/if}
       {#if voice.quality}<small class="voice-quality">{voice.quality}</small>{/if}
+      {#if voice.connectionPath}<small class="voice-quality" title={voice.connectionPath}
+          >{voice.connectionPath}</small
+        >{/if}
       {#if voice.movingTo}<small class="voice-quality" role="status">Switching rooms…</small>{/if}
       {#if voice.pushToTalk && voice.channelId}<button
           class="secondary full"

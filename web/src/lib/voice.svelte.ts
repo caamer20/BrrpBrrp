@@ -3,6 +3,7 @@ import { workspace } from './workspace.svelte';
 import { errorMessage } from './api';
 import type { RealtimeEvent } from './types';
 import { VoiceChime } from './voice-chime';
+import { describePath } from './connection-path';
 import {
   canShareScreen,
   onCaptureEnded,
@@ -26,6 +27,10 @@ class Voice {
   inputLevel = $state(0);
   changingMicrophone = $state(false);
   quality = $state('');
+  // The selected candidate pair's kind: 'host' | 'srflx' | 'prflx' | 'relay'. It is
+  // read by qualification and by support, and it is the only way to tell a direct
+  // connection from a relayed one after the fact.
+  connectionPath = $state('');
   // Screen sharing. The state is the *share's* state rather than the call's, because
   // somebody can be connected and not sharing, sharing and muted, or neither — and
   // collapsing them into one flag is how "I stopped sharing" ends up meaning "I left
@@ -692,6 +697,23 @@ class Voice {
       try {
         const stats = await peer.getStats();
         if (peer !== this.peer) return;
+        // Which candidate pair won is recorded as well as how fast it is. Latency
+        // alone cannot distinguish a direct path from a relay, so a call that works on
+        // the host and fails for everybody else — the signature of a relay advertising
+        // a private address — looks identical to a good connection without this.
+        // The candidate reports carry the type of each candidate; a pair names the two
+        // it settled on. Both are read from the same stats snapshot, so the pair and
+        // its candidates cannot come from different moments.
+        const candidates = new Map<string, { candidateType?: string }>();
+        stats.forEach((report) => {
+          if (
+            (report.type === 'local-candidate' || report.type === 'remote-candidate') &&
+            report.id
+          )
+            candidates.set(report.id, report as { candidateType?: string });
+        });
+        let chosen:
+          { local?: { candidateType?: string }; remote?: { candidateType?: string } } | undefined;
         stats.forEach((report) => {
           if (
             report.type === 'candidate-pair' &&
@@ -700,9 +722,22 @@ class Voice {
             report.currentRoundTripTime != null
           ) {
             const latency = Math.round(report.currentRoundTripTime * 1000);
+            const local = report.localCandidateId
+              ? candidates.get(report.localCandidateId)
+              : undefined;
+            const remote = report.remoteCandidateId
+              ? candidates.get(report.remoteCandidateId)
+              : undefined;
+            chosen = { local, remote };
             this.quality = `${latency < 150 ? 'Good' : latency < 300 ? 'Fair' : 'Slow'} connection · ${latency} ms`;
           }
         });
+        if (chosen?.local || chosen?.remote) {
+          // `relay` means the pair went through a TURN server. It is named explicitly
+          // because a support conversation about a slow call almost always needs to
+          // know whether the answer is "it is relayed" before it needs the round trip.
+          this.connectionPath = describePath(chosen.local, chosen.remote);
+        }
       } catch {
         /* A closing peer no longer has statistics. */
       }
