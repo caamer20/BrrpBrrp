@@ -51,6 +51,37 @@ jobs:
       # Makefile runs and every Docker build input, and must exclude the operator's own
       # host notes.
       - run: node scripts/check-source-package.mjs
+      # Every shipped script is parsed, not just the ones a job happens to run. A
+      # script with a syntax error is otherwise found by whoever runs it next, on
+      # their machine, at the moment they need it — which for the capacity and alert
+      # tooling is exactly the moment they are trying to measure a real deployment.
+      - name: Every shipped script parses
+        run: |
+          status=0
+          for script in scripts/*.mjs; do
+            if ! node --check "$script"; then
+              echo "::error::$script does not parse"
+              status=1
+            fi
+          done
+          exit $status
+      # The capacity and alert tooling runs against a live server, so CI cannot run it
+      # — but it can refuse to let the files rot: a fixture generator whose routes or
+      # the server's response shape drift from the product will still start, and fail
+      # against a real deployment rather than in a check.
+      - name: The capacity fixture names routes the product serves
+        run: |
+          node -e '
+            const { readFileSync } = require("node:fs");
+            const router = readFileSync("internal/api/router.go", "utf8");
+            for (const route of ["/api/channels", "/api/channels/{id}/messages", "/api/directs", "/api/admin/users", "/api/search"]) {
+              if (!router.includes(route)) {
+                console.error("::error::the capacity tooling names " + route + ", which the router does not serve");
+                process.exit(1);
+              }
+            }
+            console.log("capacity fixture routes match the product");
+          '
   browser:
     needs: test
     runs-on: ubuntu-latest
