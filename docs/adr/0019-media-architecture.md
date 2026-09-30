@@ -439,3 +439,43 @@ exactly that rather than promising sound the platform cannot deliver.
 capture path, the separate publication, the bounds and the messaging are all covered;
 whether a given browser and operating system actually hand over the audio is the
 device qualification in §8, and it is not something a synthetic stream can answer.
+
+## 10. A microphone that did not start now says which one of six things happened
+
+WP-19 asks for accurate device diagnostics. There were none. Every failure from
+`getUserMedia` produced one sentence — "check browser and device microphone
+permissions" — regardless of cause, and the settings list reported a failed
+enumeration as "your browser could not list microphones".
+
+Those are the wrong words for almost everyone who reads them. Somebody whose headset
+button latched muted, or whose stored device was unplugged last week, has *already*
+checked the permission. Reading it again teaches them that this message is not worth
+reading, and the next time it matters they will skip it too.
+
+Six causes, six sentences, and they are told apart by the platform's own error name
+rather than its message — messages differ between browsers and between versions, so
+matching on them produces a diagnosis that changes with an unrelated update:
+
+| Cause | What the reader is told |
+| --- | --- |
+| Insecure page | Needs HTTPS, or localhost. Diagnosed *first*, because a refusal here would otherwise read as a permission problem they cannot change. |
+| No media API | The browser has no microphone access at all. Not a permission — a capability. |
+| Permission denied | Where to allow it, in the browser's own site settings. |
+| No input device | Connect one, or choose a different input. |
+| Device unavailable | The chosen device is gone, and — because the choice is remembered — it stayed selected after being unplugged. |
+| Device in use | Another program has it; a meeting app left running is the usual cause. |
+
+Two properties are asserted rather than assumed. **No two diagnoses share a sentence**,
+because two causes with one message is a message that is wrong for one of them and the
+reader cannot tell which. And **every diagnosis produces words**, so a new browser
+error degrades to a generic sentence rather than to a blank panel.
+
+The settings list now uses the same enumeration, and distinguishes *"your browser
+withholds names until you allow the microphone"* from *"this machine has no
+microphone"*. An empty device list shown silently reads as a product that cannot see
+the hardware; those are different problems with different fixes.
+
+**What this does not establish.** None of this observes a real device. It reads the
+name the browser attaches to a failure and produces a sentence. Whether the
+microphone then works, and what it sounds like, is §8's device qualification and cannot
+be answered from a test runner.

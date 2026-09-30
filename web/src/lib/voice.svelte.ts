@@ -1,3 +1,4 @@
+import { diagnoseMicrophone, microphoneMessage, type MicrophoneDiagnosis } from './devices';
 import { storage } from './storage';
 import { workspace } from './workspace.svelte';
 import { errorMessage } from './api';
@@ -26,6 +27,8 @@ class Voice {
   speaking = $state(false);
   audioBlocked = $state(false);
   error = $state('');
+  /** Why the microphone did not start, when it did not. Empty means it did. */
+  diagnosis = $state<MicrophoneDiagnosis>('ok');
   movingTo = $state('');
   inputLevel = $state(0);
   changingMicrophone = $state(false);
@@ -300,10 +303,11 @@ class Voice {
       }, 25000);
     } catch (error) {
       if (generation !== this.generation) return;
-      this.error =
-        error instanceof DOMException && error.name === 'NotAllowedError'
-          ? 'Microphone access was denied. Allow it in your browser settings, then try again.'
-          : errorMessage(error);
+      // A call that did not start has a handful of ordinary causes, and they are not
+      // the same for everybody. "Check permissions" is the beginning of a search for
+      // most people who read it, because they have already checked the permission.
+      this.diagnosis = diagnoseMicrophone(error, window.isSecureContext);
+      this.error = microphoneMessage(this.diagnosis) || errorMessage(error);
       this.leave();
     }
   }

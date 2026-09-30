@@ -3,6 +3,7 @@
   import { voice } from '../voice.svelte';
   import { VoiceChime } from '../voice-chime';
   import { errorMessage } from '../api';
+  import { listInputs } from '../devices';
   let { compact = false }: { compact?: boolean } = $props();
   let devices = $state<MediaDeviceInfo[]>([]);
   let testing = $state(false);
@@ -14,14 +15,23 @@
   let timer: ReturnType<typeof setInterval>;
   let captureTimer: ReturnType<typeof setTimeout>;
   let generation = 0;
+  let namesPending = $state(false);
   async function refresh() {
-    try {
-      devices = ((await navigator.mediaDevices?.enumerateDevices()) || []).filter(
-        (device) => device.kind === 'audioinput'
-      );
-    } catch {
-      error = 'Your browser could not list microphones.';
-    }
+    // The shared helper, so the list and the call's failure speak the same language.
+    // Two enumerations in one product means one of them eventually says "your browser
+    // could not list microphones" for a failure the other one can name exactly.
+    const result = await listInputs();
+    // The template reads `deviceId` and `label`, which is the shape the select has
+    // always been written against. Adapting here keeps one enumeration in the product
+    // and one spelling of a device at the boundary that renders it.
+    devices = result.devices.map((device) => ({
+      deviceId: device.id,
+      kind: 'audioinput',
+      label: device.label,
+      groupId: ''
+    })) as MediaDeviceInfo[];
+    namesPending = result.namesPending;
+    error = result.error;
   }
   onMount(() => {
     refresh();
@@ -125,7 +135,14 @@
       {#each devices.filter((device) => device.deviceId && device.deviceId !== 'default') as device}<option
           value={device.deviceId}>{device.label || 'Microphone'}</option
         >{/each}
-    </select><small>Allow microphone access to see device names.</small></label
+    </select><small
+      >{#if namesPending}
+        Your browser hides device names until you allow microphone access. Join a call once, or use
+        the test below, and they appear here.
+      {:else}
+        Allow microphone access to see device names.
+      {/if}</small
+    ></label
   >
   <div class="button-row">
     <button class="secondary" onclick={testMicrophone}
