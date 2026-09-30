@@ -410,6 +410,37 @@ list, which is the honest encoding of "no servers to offer".
   [host qualification](../host-qualification.md), and it needs hosts this environment
   does not have.
 
+## 8a A call is a live relationship, and history is not the question
+
+A private conversation's read admission is deliberately **retained** history: a
+blocked member can still read what was said before the block, because erasing the past
+on request is not what a block is. That decision was being reused as the admission rule
+for a *call*.
+
+Which produced two defects, both reproduced (completion review 14, V14-07):
+
+**A blocked pair could open a call.** The message POST returned 403 and the call was
+admitted. A block is the user saying "do not contact me", and a call is the most
+immediate contact there is; the two disagreeing about the same block is the defect, not
+a subtlety. A call now asks the block question in both directions — the caller's own
+block list, and the block lists of the other accepted members, because a block is
+recorded against the blocker and a conversation has two sides.
+
+**Revalidation evicted every authorized private participant.** The enforcement pass
+that runs after any authority change looked the room up as a *community channel*
+unconditionally. A direct conversation has no channel row, the lookup failed, and every
+member of every private call was dropped — by a moderator renaming a channel, or a role
+being granted three rooms away. Reproduced: two participants in a live direct call, one
+unrelated change, both gone.
+
+Both were the same mistake: the call path and the message path asked different
+questions about the same relationship, and the enforcement pass asked a third. The
+enforcement pass now resolves the room through the *same function that admits a join*,
+so the two cannot disagree — and because that function asks about blocks, a block
+applied while two people are already talking ends the call too. Admission and
+revalidation are the same question asked at two moments; answering it at only the first
+means "the block works" holds only for people who have not already joined.
+
 ## 9. Screen audio is a separate publication, and it is best-effort by construction
 
 The server has carried `screen_audio` as a distinct kind since §4. Nothing produced

@@ -189,8 +189,6 @@ func (s *Server) enforceVoiceAccess(ctx context.Context, actor, reason string, o
 	for _, authority := range authorities {
 		principals[authority.User.ID] = principalFor(authority, owners, established, revision)
 	}
-	channels := make(map[string]db.Channel, len(states))
-	access := make(map[string]db.ChannelAccess, len(states))
 	for _, state := range states {
 		if len(restricted) > 0 && !restricted[state.UserID] {
 			continue
@@ -200,22 +198,29 @@ func (s *Server) enforceVoiceAccess(ctx context.Context, actor, reason string, o
 			s.evictVoice(actor, reason, state)
 			continue
 		}
-		channel, seen := channels[state.ChannelID]
-		if !seen {
-			channel, err = s.store.Channel(ctx, s.store, state.ChannelID)
-			if err != nil {
-				s.evictVoice(actor, reason, state)
-				continue
-			}
-			lists, listErr := s.store.ChannelAccessLists(ctx, s.store, state.ChannelID)
-			if listErr != nil {
-				s.log.Warn("voice enforcement lookup failed", "error", listErr)
-				continue
-			}
-			channels[state.ChannelID] = channel
-			access[state.ChannelID] = lists[state.ChannelID]
+		// The room is resolved through the same function that admits a join, so
+		// revalidation and admission cannot disagree about what a room is.
+		//
+		// They did disagree. This pass looked the room up as a *community channel*
+		// unconditionally, so a direct conversation had no channel row, the lookup
+		// failed, and every authorized member of every private call was evicted by
+		// any unrelated authority change anywhere in the installation — a moderator
+		// renaming a channel, a role granted three rooms away. Reproduced: two
+		// participants in a live direct call, an unrelated change, both gone
+		// (completion review 14, V14-07).
+		//
+		// The same pass decides whether a block now ends the call, which is the other
+		// half of the same finding and has to be asked here too: admission and
+		// revalidation are the same question asked at two moments.
+		// `voice.connect` is a capability and the room is a place: the resolver decides
+		// the second, and the first is separate. Dropping it here let an account that
+		// had lost the capability keep an established call — the resolver answers
+		// "may this account be in this room", not "may this account make calls at all".
+		if !principal.Allowed(authz.VoiceConnect) {
+			s.evictVoice(actor, reason, state)
+			continue
 		}
-		if !principal.MayReadChannel(channel, access[state.ChannelID]) || !principal.Allowed(authz.VoiceConnect) {
+		if _, refusal := s.resolveVoiceRoom(ctx, s.store, principal, state.ChannelID); refusal != "" {
 			s.evictVoice(actor, reason, state)
 			continue
 		}
@@ -319,6 +324,24 @@ func (s *Server) resolveVoiceRoom(ctx context.Context, q db.Queryer, principal a
 		if scope.Kind != "direct" && scope.Kind != "group" {
 			return voiceRoom{}, "Voice room not found."
 		}
+		// A block ends contact, and a call is the most immediate contact there is.
+		//
+		// The conversation's read admission is deliberately *retained*-history: a
+		// blocked member can still read what was said before the block, which is the
+		// documented and correct behaviour. Reusing it for a live call was therefore
+		// reading a privacy decision about the past as an admission rule for the
+		// present, and a blocked pair could open a call the whole time. The message
+		// path already refuses a new message after a block; the call did not, and the
+		// two disagreeing about the same block is the defect (completion review 14,
+		// V14-07).
+		//
+		// Existing history stays readable to both of them. What a block ends is *new*
+		// contact: a new call, and a new message.
+		if blocked, err := s.blockedBetween(ctx, q, principal.UserID, roomID); err != nil {
+			return voiceRoom{}, "Voice room not found."
+		} else if blocked {
+			return voiceRoom{}, "Voice room not found."
+		}
 		return voiceRoom{
 			ID: roomID, Kind: scope.Kind, Capacity: maxPrivateCallParticipants,
 			DisplayName: s.privateRoomName(ctx, q, scope, principal.UserID), Private: true,
@@ -405,4 +428,27 @@ func (s *Server) publishPrivateVoiceRoom(ctx context.Context, roomID string, pay
 	payload["private"] = true
 	revision := s.authorizationRevision(ctx)
 	s.hub.BroadcastToRevision(recipients, revision, "voice.state_updated", payload)
+}
+
+// blockedBetween reports whether one of the account's peers in a private conversation
+// has blocked it, or it has blocked them.
+//
+// A block is a one-directional fact recorded against the blocker, so the question is
+// asked in both directions: the caller's own block list, and the block lists of the
+// other accepted members. A conversation with one member is the direct-call case and
+// one direction of the pair is the whole of it.
+func (s *Server) blockedBetween(ctx context.Context, q db.Queryer, userID, conversationID string) (bool, error) {
+	var blocked bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_blocks
+		WHERE blocker_id=? AND blocked_id IN (SELECT user_id FROM conversation_members
+			WHERE conversation_id=? AND user_id<>? AND state='accepted'))`, userID, conversationID, userID).Scan(&blocked)
+	if err != nil || blocked {
+		return blocked, err
+	}
+	// The other direction: somebody on the line has blocked this account. The subquery
+	// finds the blocker, and the block list is what says whether they did.
+	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_blocks b
+		JOIN conversation_members m ON m.user_id=b.blocker_id AND m.conversation_id=?
+		WHERE b.blocked_id=? AND m.state='accepted')`, conversationID, userID).Scan(&blocked)
+	return blocked, err
 }
