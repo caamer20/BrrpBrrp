@@ -54,7 +54,7 @@ func main() {
 	if goBin == "" {
 		goBin = "go"
 	}
-	notices := licenses(goBin)
+	notices := licenses(goBin, *version)
 	if *noticesOnly != "" {
 		fail(os.WriteFile(*noticesOnly, notices, 0644))
 		return
@@ -336,9 +336,15 @@ func add(archive *zip.Writer, path, name string, mode os.FileMode) {
 // compiler actually links into the binary, the packages the web bundle contains and
 // the standard library, and it fails rather than ship a component whose license it
 // could not read. The same script writes the repository's THIRD-PARTY-NOTICES.md.
-func licenses(goBin string) []byte {
-	command := exec.Command("node", "scripts/licenses.mjs", "./cmd/brrpbrrp", "-")
-	command.Env = append(os.Environ(), "BRRP_GO="+goBin)
+func licenses(goBin, version string) []byte {
+	command := exec.Command("node", "scripts/licenses.mjs", "./cmd/brrpbrrp", "-", "--version", version)
+	// The notices go into the archive; the SBOM is written beside the notices file so
+	// both come from the same discovered component set.
+	sbomPath := "dist/releases/THIRD-PARTY-SBOM.json"
+	if err := os.MkdirAll(filepath.Dir(sbomPath), 0755); err != nil {
+		fail(err)
+	}
+	command.Env = append(os.Environ(), "BRRP_GO="+goBin, "BRRP_SBOM_PATH="+sbomPath)
 	command.Stderr = os.Stderr
 	data, err := command.Output()
 	if err != nil {

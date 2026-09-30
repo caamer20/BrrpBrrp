@@ -30,7 +30,7 @@ docker-inputs:
 source-package:
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
 notices:
-	BRRP_GO='$(GO)' node scripts/licenses.mjs
+	BRRP_GO='$(GO)' node scripts/licenses.mjs ./cmd/brrpbrrp --version $(VERSION)
 browser-check: build
 	$(GO) build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
 	cd web && npm run test:e2e
