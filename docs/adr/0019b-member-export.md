@@ -151,3 +151,23 @@ a copy of somebody's history that nothing can ever reach again. Orphans are remo
 the same grace period as an unclaimed upload: a file younger than the grace may belong
 to an export whose row committed moments ago, and unlinking it would break a build in
 progress.
+
+## Delivery is registered, so a withdrawal can interrupt it
+
+The scope check decides whether a download may *start*. An export can be hundreds of
+megabytes, so a membership revoked midway through has to interrupt the transfer —
+and a response that is not in the delivery registry cannot be interrupted by
+anything. The download is now registered through the same registry every attachment
+uses, and served through a revocable reader, so an authority change ends the copy
+rather than letting it run to completion. Range requests still resolve, because a
+member resuming a large download needs them.
+
+`ServeFile` is gone from this path for the same reason: it hands the response a file
+handle the server has no handle on, so the registry cannot see the transfer at all.
+
+**Turning the private feature off ends delivery too.** The build is gated on the same
+flag, so a file containing a private conversation can only predate the change — but
+that file lives for up to seven days, and the operator's decision was that the private
+conversations inside it should stop being reachable. Serving it anyway is the same
+leak as serving an export after a removal, with a different cause and the same
+seven-day tail.

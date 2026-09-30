@@ -373,3 +373,100 @@ func TestAFreshExportFileIsNotSwept(t *testing.T) {
 	}
 	_ = handler
 }
+
+// Turning the private feature off ends delivery of an export that contains private
+// conversations.
+//
+// The build is gated on the same flag, so a file containing one can only predate the
+// change — but that file lives for up to seven days, and the operator's decision was
+// that the private conversations inside it should stop being reachable. Serving it
+// anyway is the same leak as serving an export after a removal, with a different
+// cause and the same seven-day tail.
+func TestAnExportStopsDeliveringWhenThePrivateFeatureIsTurnedOff(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	s.config.PrivateConversations = true
+	_, alice := namedUser(t, s, "export_off_delivery")
+	aliceID := memberIDOf(t, s, "export_off_delivery")
+	_, _ = memberAccount(t, s, "export_off_peer")
+	peerID := memberIDOf(t, s, "export_off_peer")
+
+	direct := readJSON[map[string]any](t, request(t, handler, "POST", "/api/directs",
+		map[string]string{"user_id": peerID, "introduction": "before the feature was turned off"}, alice))
+	request(t, handler, "POST", "/api/directs/"+direct["id"].(string)+"/accept", map[string]any{}, sessionFor(t, s, peerID))
+	if w := request(t, handler, "POST", "/api/channels/"+direct["id"].(string)+"/messages",
+		map[string]any{"content": "private words before the switch", "idempotency_key": "export-off-1"}, alice); w.Code != 201 {
+		t.Fatalf("seed the private message: %d %s", w.Code, w.Body.String())
+	}
+
+	_ = exportFor(t, s, handler, alice, "export-key-before-switch")
+	exportID := latestExportID(t, s, aliceID)
+	if served := heldExportText(t, s, exportID); !strings.Contains(served, "private words before the switch") {
+		t.Fatal("the export does not carry the private message, so the fixture proves nothing")
+	}
+	// The permitted control: it is delivered while the feature is on.
+	markPrivileged(t, s, alice)
+	if w := request(t, handler, "GET", "/api/me/export/"+exportID, nil, alice); w.Code != 200 {
+		t.Fatalf("the export is not delivered while the feature is on: %d %s", w.Code, w.Body.String())
+	}
+
+	// The operator turns private conversations off. The file is unchanged on disk; the
+	// delivery decision is not.
+	s.config.PrivateConversations = false
+	download := request(t, handler, "GET", "/api/me/export/"+exportID, nil, alice)
+	if download.Code != http.StatusForbidden {
+		t.Fatalf("an export carrying private conversations was still delivered after the feature was turned off: %d %s", download.Code, download.Body.String())
+	}
+	if strings.Contains(download.Body.String(), "private words before the switch") {
+		t.Fatal("the refusal itself carried the private message")
+	}
+}
+
+// A download is registered in the delivery registry, so an authority change that lands
+// while a large export is streaming ends it rather than letting it run to completion.
+//
+// The scope check decides whether the response may *start*. An export can be hundreds
+// of megabytes, so a membership revoked midway through has to interrupt the transfer,
+// and a response with no registry entry cannot be interrupted by anything.
+func TestAnExportDownloadIsRegisteredSoARevocationCanEndIt(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	s.config.PrivateConversations = true
+	_, alice := namedUser(t, s, "export_stream_alice")
+	aliceID := memberIDOf(t, s, "export_stream_alice")
+
+	_ = exportFor(t, s, handler, alice, "export-key-stream")
+	exportID := latestExportID(t, s, aliceID)
+	markPrivileged(t, s, alice)
+
+	// Hold the request at the admission hook — the same point every other stream test
+	// uses — so the registry entry exists while the response is still undecided.
+	admitted := make(chan struct{})
+	release := make(chan struct{})
+	hook := func() { close(admitted); <-release }
+	s.streamAdmission.Store(&hook)
+	defer s.streamAdmission.Store(nil)
+
+	done := make(chan int, 1)
+	go func() {
+		done <- request(t, handler, "GET", "/api/me/export/"+exportID, nil, alice).Code
+	}()
+	<-admitted
+
+	registered := s.deliveries.snapshot()
+	found := false
+	for _, record := range registered {
+		if record.userID == aliceID {
+			found = true
+		}
+	}
+	close(release)
+	if !found {
+		t.Fatalf("the export response was never registered, so no revocation can end it: %+v", registered)
+	}
+	if code := <-done; code != 200 {
+		t.Fatalf("the export download answered %d once admitted", code)
+	}
+}

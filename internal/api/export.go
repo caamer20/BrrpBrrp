@@ -648,6 +648,35 @@ func (s *Server) downloadExport(w http.ResponseWriter, r *http.Request, user db.
 		s.failed(w, err)
 		return
 	}
+	// The response is registered before the bytes are served, through the same registry
+	// every attachment download uses. The scope check above decides *whether* this may
+	// start; the registry is what ends it if the access changes while it is running.
+	// Without it a membership revoked midway through a large export left the transfer
+	// running to completion, because the check had already returned.
+	ctx, done := s.deliveries.begin("", user.ID, currentSessionHash(r))
+	defer done()
+	if hook := s.streamAdmission.Load(); hook != nil {
+		(*hook)()
+	}
+	file, err := os.Open(s.exportPath(record.ID))
+	if os.IsNotExist(err) {
+		// The row outlives its file when a build failed after the row was written, or
+		// when the file was swept as an orphan. Either way there is nothing to serve and
+		// the member is told to ask again rather than shown a 404 for an export they
+		// are entitled to.
+		problem(w, 410, "This export's file is no longer on the server. Request a new one.")
+		return
+	}
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	// The name carries the build time rather than a request time, so a member with
 	// several exports can tell them apart in their downloads folder.
@@ -656,7 +685,10 @@ func (s *Server) downloadExport(w http.ResponseWriter, r *http.Request, user db.
 	// A no-store header: this is one account's history, and a cached copy in a shared
 	// machine's proxy would outlive the session that asked for it.
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeFile(w, r, s.exportPath(record.ID))
+	// Revocable, and range-capable: an export can be hundreds of megabytes, so a
+	// client that is resuming a download issues a Range, and a transfer that runs for
+	// minutes is exactly the one a withdrawal needs to interrupt.
+	http.ServeContent(w, r, filepath.Base(s.exportPath(record.ID)), stat.ModTime(), revocableReader{ctx: ctx, reader: file})
 }
 
 // deleteExport is the member's own deletion of a produced file. It is offered because
@@ -736,6 +768,16 @@ func (s *Server) exportScopeStillReadable(ctx context.Context, q db.Queryer, pri
 		return false, err
 	}
 	if state != "active" {
+		return false, nil
+	}
+	if kind != "channel" && !s.config.PrivateConversations {
+		// The feature was turned off after this file was built. The private
+		// conversations inside it are exactly what the operator disabled, and a file
+		// already on disk would otherwise keep delivering them for its remaining
+		// lifetime — which is up to seven days after the decision was made.
+		//
+		// The build is gated the same way (see `exportableConversations`), so a file
+		// with a private conversation in it can only predate the change.
 		return false, nil
 	}
 	if kind == "channel" {
