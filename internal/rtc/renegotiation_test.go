@@ -757,3 +757,92 @@ func TestScreenAudioIsABoundedPublicationOfItsOwn(t *testing.T) {
 		t.Fatal("a second screen's audio was admitted to a room that already has one")
 	}
 }
+
+// A hundred share start/stop cycles must leave nothing behind. This is the
+// regression half of the master's-plan "100 share start/stop cycles": the cycles
+// themselves, the room's bound, and the server's own accounting after each one.
+//
+// A stop that leaks a transceiver, a publication, or a screen output is invisible on
+// the first cycle and fatal on the hundredth — the room stays full for shares that
+// ended, or the connection accumulates state until a call fails for a reason nobody
+// can name. Asserting the count after each cycle is what makes the leak visible on
+// the one that causes it.
+func TestAHundredShareCyclesLeaveNothingBehind(t *testing.T) {
+	sfu := newTestSFU(t)
+	// A real client peer, not a bare connection: it applies the server's answers, so
+	// each cycle is a complete conversation rather than a half one. Pion refuses a
+	// second offer while the connection still holds the first one's local state, so a
+	// hundred cycles have to be hundred conversations to be a fair test of the stop.
+	client := connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.mu.Unlock()
+
+	const cycles = 100
+	for cycle := 1; cycle <= cycles; cycle++ {
+		// A real offer, produced the way the client produces one. An empty description
+		// is refused before the bound is consulted, so a test built from one would be
+		// testing the refusal rather than the cycle.
+		// The client's half of the exchange. A stop leaves the connection ready for the
+		// next offer, so each cycle is a complete conversation rather than a half one —
+		// which is what makes the hundred cycles representative of a real call.
+		offer := func() *webrtc.SessionDescription {
+			track, err := webrtc.NewTrackLocalStaticRTP(
+				webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}, "screen", "ana")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+				t.Fatal(err)
+			}
+			desc, err := client.pc.CreateOffer(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.pc.SetLocalDescription(desc); err != nil {
+				t.Fatal(err)
+			}
+			return client.pc.LocalDescription()
+		}
+		if err := sfu.renegotiate(peer, Signal{ConnectionID: peer.connectionID, SDP: offer(), Publication: PublicationScreenVideo}); err != nil {
+			t.Fatalf("cycle %d: the first share was refused: %v", cycle, err)
+		}
+		// The client applies the server's answer through its own send handler, which is
+		// the same path a browser uses. Waiting for it keeps the next cycle honest.
+		waitFor(t, "the client's half of the first exchange", func() bool {
+			return client.pc.SignalingState() == webrtc.SignalingStateStable
+		})
+		if got := len(sfu.Publications("room")); got != 1 {
+			t.Fatalf("cycle %d: the room carries %d publications, want 1", cycle, got)
+		}
+		if err := sfu.Signal("ana", "ana", Signal{ConnectionID: peer.connectionID, PublicationStopped: true}); err != nil {
+			t.Fatalf("cycle %d: the stop failed: %v", cycle, err)
+		}
+		if got := len(sfu.Publications("room")); got != 0 {
+			t.Fatalf("cycle %d: %d publications survived the stop", cycle, got)
+		}
+		// The room's allowance must come back every time. This is the property that
+		// matters: a stop that does not release the room leaves it full for the rest of
+		// the call, and the hundredth person is refused by the first person's share.
+		if err := sfu.renegotiate(peer, Signal{ConnectionID: peer.connectionID, SDP: offer(), Publication: PublicationScreenVideo}); err != nil {
+			t.Fatalf("cycle %d: the room did not become shareable again: %v", cycle, err)
+		}
+		waitFor(t, "the client's half of the second exchange", func() bool {
+			return client.pc.SignalingState() == webrtc.SignalingStateStable
+		})
+		if err := sfu.Signal("ana", "ana", Signal{ConnectionID: peer.connectionID, PublicationStopped: true}); err != nil {
+			t.Fatalf("cycle %d: the second stop failed: %v", cycle, err)
+		}
+	}
+	if got := len(sfu.Publications("room")); got != 0 {
+		t.Fatalf("after %d cycles the room carries %d publications, want 0", cycles, got)
+	}
+	// The connection is still the one we started with, and is still usable. A hundred
+	// cycles that leave a connection that cannot carry a call have not passed.
+	if sfu.connectionStateOf("ana") != webrtc.PeerConnectionStateConnected {
+		t.Fatalf("after %d cycles the connection is %v, want connected", cycles, sfu.connectionStateOf("ana"))
+	}
+}

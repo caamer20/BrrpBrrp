@@ -479,3 +479,28 @@ the hardware; those are different problems with different fixes.
 name the browser attaches to a failure and produces a sentence. Whether the
 microphone then works, and what it sounds like, is §8's device qualification and cannot
 be answered from a test runner.
+
+## 11. The hundred share start/stop cycles — the regression half
+
+The master plan asks for a hundred share start/stop cycles. On hardware that is also
+an observation of media quality and of the browser's own capture lifecycle, and it is
+not repeatable in CI. What *is* repeatable is the part that actually breaks: whether
+a stop releases the room.
+
+So the hundred cycles run here, through the production `renegotiate` and
+`PublicationStopped` paths, with a real client peer applying each answer. Each cycle
+asserts the room's count, the stop, the count again, and — the property that matters —
+**that the room is shareable again immediately afterwards**. A stop that leaks an
+entry leaves the room full for the rest of the call, so the hundredth person is
+refused by the first person's share. The last assertion is that the connection is
+still usable: a hundred cycles that leave a connection which cannot carry a call have
+not passed.
+
+Confirmed to fail on cycle 1 when the stop is made a no-op, which is the point of
+checking the count after *every* cycle rather than at the end.
+
+**What this does not establish.** Nothing about capture, picture quality, latency, or
+the browser's own behaviour across a hundred real prompts. A stop that leaks a
+transceiver on the *client* — rather than a publication on the server — would not be
+seen here, because the client half is a test peer. That is the device observation,
+and it is still open.
