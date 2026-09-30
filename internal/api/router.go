@@ -180,7 +180,7 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 		voice.Close()
 		return nil, err
 	}
-	if err = s.turn.Configure(s.settings.TURN, s.settings.TURNExternalIP, s.settings.TURNPort); err != nil {
+	if err = s.configureTURN(s.settings); err != nil {
 		cancel()
 		voice.Close()
 		return nil, err
@@ -450,4 +450,26 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 		return false
 	}
 	return true
+}
+
+// configureTURN brings the relay up with the configured transports. A TCP fallback
+// that is off means the relay is offered over UDP alone, which is what this shipped
+// before the fallback existed and stays the default rather than becoming an error.
+//
+// The TLS transport is wired but not enabled: a `turns:` URL without a certificate
+// would give a client something it cannot connect to, and ICE reports that as a network
+// fault rather than a misconfiguration. It is left off until an operator supplies a
+// certificate through the settings surface (ADR 0019, §7).
+func (s *Server) configureTURN(settings db.Settings) error {
+	tcpPort := 0
+	if settings.TURNTCPFallback {
+		tcpPort = settings.TURNTLSPort
+		if tcpPort == 0 {
+			// A distinct default rather than the UDP port: two protocols cannot share
+			// one listener, and an operator who asked for a fallback without naming a
+			// port meant a port that is not the one already in use.
+			tcpPort = settings.TURNPort + 1
+		}
+	}
+	return s.turn.ConfigureWithFallback(settings.TURN, settings.TURNExternalIP, settings.TURNPort, tcpPort, 0, settings.TURNAdvertisedHost, nil)
 }

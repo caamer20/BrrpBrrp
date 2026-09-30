@@ -39,6 +39,22 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 400, "Some settings are outside the supported range.")
 		return
 	}
+	if settings.TURNTCPFallback && (settings.TURNTLSPort < 0 || settings.TURNTLSPort > 65535) {
+		problem(w, 400, "The TURN TCP fallback port must be 0 (choose one automatically) or between 1024 and 65535.")
+		return
+	}
+	if settings.TURNTLSPort != 0 && (settings.TURNTLSPort < 1024 || settings.TURNTLSPort > 65535) {
+		problem(w, 400, "The TURN TCP fallback port must be between 1024 and 65535.")
+		return
+	}
+	if settings.TURNTCPFallback && settings.TURNTLSPort != 0 && settings.TURNTLSPort == settings.TURNPort {
+		problem(w, 400, "The TURN TCP fallback needs a different port from the UDP one.")
+		return
+	}
+	if len(settings.TURNAdvertisedHost) > 253 {
+		problem(w, 400, "The TURN advertised host is too long.")
+		return
+	}
 	if settings.TURN && net.ParseIP(settings.TURNExternalIP) == nil {
 		problem(w, 400, "TURN needs the server's reachable IPv4 address.")
 		return
@@ -98,13 +114,13 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 400, "Confirm the server name before enabling or shortening automatic retention.")
 		return
 	}
-	if err := s.turn.Configure(settings.TURN, settings.TURNExternalIP, settings.TURNPort); err != nil {
+	if err := s.configureTURN(settings); err != nil {
 		problem(w, 400, err.Error())
 		return
 	}
 	encoded, _ := json.Marshal(settings)
 	if _, err := tx.Exec(`INSERT INTO settings(key,value,updated_at) VALUES('public',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, string(encoded), db.Now()); err != nil {
-		_ = s.turn.Configure(previous.TURN, previous.TURNExternalIP, previous.TURNPort)
+		_ = s.configureTURN(previous)
 		s.failed(w, err)
 		return
 	}
@@ -113,12 +129,12 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 		action = "settings.security_policy_changed"
 	}
 	if err := s.auditTx(r.Context(), tx, user.ID, action, ""); err != nil {
-		_ = s.turn.Configure(previous.TURN, previous.TURNExternalIP, previous.TURNPort)
+		_ = s.configureTURN(previous)
 		s.failed(w, err)
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		_ = s.turn.Configure(previous.TURN, previous.TURNExternalIP, previous.TURNPort)
+		_ = s.configureTURN(previous)
 		s.failed(w, err)
 		return
 	}

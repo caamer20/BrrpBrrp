@@ -109,6 +109,16 @@ type Settings struct {
 	TURN           bool   `json:"enable_turn_server"`
 	TURNPort       int    `json:"turn_port"`
 	TURNExternalIP string `json:"turn_external_ip"`
+	// The fallback transports. UDP alone leaves a client behind a network that blocks
+	// it with no path at all, which is the ordinary case on corporate and some mobile
+	// networks (ADR 0019, §7). A port of 0 means that transport is not offered.
+	TURNTLSPort   int    `json:"turn_tls_port"`
+	TURNTCPFallback bool  `json:"turn_tcp_fallback"`
+	// TURNAdvertisedHost is what clients are told to relay through. It is separate
+	// from TURNExternalIP because a host or container behind NAT has an address it
+	// listens on and a different one clients can reach, and getting this wrong produces
+	// a call that works locally and fails for everybody else.
+	TURNAdvertisedHost string `json:"turn_advertised_host"`
 	VoiceBitrate   int    `json:"voice_bitrate_kbps"`
 	MaxUploadBytes int64  `json:"max_upload_bytes"`
 	RetentionDays  int    `json:"message_retention_days"`

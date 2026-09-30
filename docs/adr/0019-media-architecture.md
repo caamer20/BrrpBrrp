@@ -1,0 +1,183 @@
+# ADR 0019 — Media architecture: extend the embedded SFU, replace its publication model
+
+**Status:** decided, **conditional on a measurement** (see §6)
+**Revises nothing.** Extends ADR 0009 (authority ordering) and 0003 (roles).
+**Basis:** the M4 architecture spike, cited throughout as *file:line*.
+
+## 1. What exists
+
+BrrpBrrp already has a real in-process SFU for community voice, and it is **hub-and-spoke,
+not a mesh**: clients never peer with each other. Each account gets exactly one
+server-side `PeerConnection` (`internal/rtc/sfu.go:145`), and a second tab is refused
+outright (`:123-125`).
+
+It is not, however, a *general* SFU. It is a pre-allocated, fixed-size Opus mixer:
+
+- one `recvonly` audio input for the publisher (`internal/rtc/sfu.go:151`);
+- **nine pre-created `sendonly` output tracks** named `voice-0 … voice-8` (`:156-157`),
+  which the client mirrors positionally (`web/src/lib/voice.svelte.ts:369-371`);
+- Opus is the only registered codec (`:101`);
+- `OnTrack` hard-rejects any non-audio track and any *second* track (`:199`);
+- `Signal` accepts an offer only when no remote description exists yet (`:275`), so
+  **there is no renegotiation at all**.
+
+Everything runs in the one binary: HTTP, WebSocket, SQLite, the web bundle, the SFU and a
+TURN relay (`internal/api/router.go:171,177`; `Dockerfile:44` is `FROM scratch` with one
+volume).
+
+## 2. What is missing, and what is structurally impossible today
+
+| Capability | State | Evidence |
+| --- | --- | --- |
+| Community voice | Present and tested | `internal/rtc/sfu.go`, `web/e2e/voice.spec.mjs` |
+| **Private calls** | **Structurally impossible** | `internal/api/voice_access.go:118` rejects anything whose channel `Type != "voice"`; a private conversation is a `conversations` row with `channel_id IS NULL` (`internal/db/migration11.sql:49-50`) |
+| **Screen video** | **Absent** | no `getDisplayMedia`, no `RTPCodecTypeVideo`, `video:false` at `web/src/lib/voice.svelte.ts:172,577` and `web/src/lib/components/AudioSettings.svelte:68` |
+| **Screen audio** | **Absent** | same |
+| TURN/relay | Present, **IPv4/UDP only** | `internal/rtc/turn.go:58,129` — `turn:…?transport=udp`, udp4 listener |
+| **UDP-blocked fallback** | **Absent** | no `transport=tcp` is ever offered |
+| Renegotiation | Absent | `internal/rtc/sfu.go:275` |
+
+Two findings deserve their own weight:
+
+**Private calls are not "a feature to add" but a structural gap.** The single admission
+path resolves a `db.Channel` and refuses anything that is not a voice channel
+(`voice_access.go:118`), and audience resolution goes through `channelAudienceIDs`
+(`internal/api/authz.go:560-570`). A private call needs the *membership-based* resolver
+that already exists at `internal/api/conversation_access.go:52-73`. Both paths are in this
+codebase; only one is wired to media.
+
+**`voice.share_screen` already exists and is enforced by nothing.** It is declared
+(`internal/authz/authz.go:35`), catalogued (`:69`), seeded into three roles
+(`internal/db/migration3.sql:89,92,95`) and described to users as "Publish a screen or
+window" (`web/src/lib/permissions.ts:37-41`) — but no code outside tests reads it. The
+product currently promises a capability it does not have.
+
+## 3. The decision: extend, do not replace
+
+**Keep the embedded Pion implementation and rewrite its publication model.** The
+alternative — a separately self-hosted SFU — was considered and rejected for reasons that
+are visible in the code, not by preference:
+
+1. **The control plane is the valuable part, and it is already built and tested.**
+   Per-channel publication limits (`voice_access.go:64-83`), resume-token ownership
+   (`internal/rtc/rooms.go:68-110`), TURN credential issuance *and revocation*
+   (`internal/rtc/turn.go:113,135`), non-cooperative speaker enforcement at the RTP
+   boundary (`internal/api/voice_capability_test.go`), and moderated rooms
+   (`internal/rtc/sfu.go:351-363`) all live on the same side as the RTC machinery. An
+   external SFU would mean re-implementing every one of them against a network boundary,
+   and each re-implementation is a new way for authorization to disagree with itself.
+
+2. **The deployment model is a selling point.** One binary, one volume, `FROM scratch`,
+   no second process to install, patch, back up, monitor or explain to an operator. That
+   is most of what makes the product approachable, and giving it up for a general SFU
+   would trade the project's strongest property for features the current code can be made
+   to have.
+
+3. **The gap is in the media core, not in the deployment shape.** What is missing —
+   track identity, renegotiation, video, transport fallback — is all *inside*
+   `internal/rtc/sfu.go`. Replacing the process does not avoid rewriting that logic; it
+   adds a network hop to it.
+
+The cost of this decision is stated plainly: **an in-process SFU shares fate with the
+application.** Media load competes with SQLite, HTTP and WebSocket for the same CPU, and
+there is no independent way to scale or restart the media plane. That is acceptable at
+the project's support profile and would not be at a much larger one.
+
+## 4. The rewrite: a typed publication model
+
+The fixed `voice-0..8` slot array is the thing that has to go. It is not a limitation;
+it is an assumption that a participant has exactly one track, forever, negotiated once,
+in a fixed order. Screen sharing breaks all three at once.
+
+Replace it with:
+
+- **A publication is a first-class object** with a stable id, an owner, a kind
+  (`microphone` | `screen_video` | `screen_audio`), and a lifecycle. A screen track is
+  never stored in a variable named for audio, so it cannot masquerade as microphone
+  state.
+- **Renegotiation is allowed**, and is the only correct way to add a track to a live
+  call. The current one-offer gate (`sfu.go:275`) is replaced with a serialized
+  negotiation queue per participant, so two simultaneous adds cannot interleave.
+- **A participant may hold several publications at once** — a microphone and a screen —
+  and each is forwarded, muted and revoked independently.
+- **Bounds are per publication kind and serverwide**, so "one screen share per room, two
+  per server" is expressible and enforceable rather than a count of slots.
+- **Two clocks and one direction are separated**: the current forwarder rewrites
+  sequence and timestamp with hard-coded `48000/960` audio constants
+  (`internal/rtc/sfu.go:439-451`). A video publication has a different clock rate and
+  must not inherit audio's, and the implementation has to refuse a rewrite it cannot
+  perform correctly.
+
+## 5. Private calls: same machinery, different admission
+
+A private call is not a second media stack. It is the same SFU, the same publications and
+the same TURN, behind a different admission decision:
+
+- the room key becomes a **conversation id**, not a channel id;
+- admission uses `conversationAudienceIDs`-style membership resolution
+  (`internal/api/conversation_access.go:52-73`) rather than `channelAudienceIDs`;
+- the call requires *current* membership, re-checked in the transaction, exactly as a
+  private message does — so removing somebody from a group ends their call the way it
+  ends their read access, not on a timer;
+- ringing is an ordinary activity source through the mechanism ADR 0015 already defines,
+  so a private call reaches its recipient's inbox and their notification preferences
+  rather than needing a new delivery path.
+
+**A call is not a channel.** `internal/db/migration11.sql:49-50` already forbids a
+message from carrying a private conversation's scope on a channel row; the same
+separation applies to media, and a private room must not be reachable by guessing a
+channel id.
+
+## 6. The measurement this decision is conditional on
+
+`docs/v1-implementation-plan.md:812-815` records the arithmetic: two 2.5 Mbit/s screen
+shares forwarded to nine viewers is roughly **45 Mbit/s of egress** from one process that
+is also serving HTTP, SQLite and WebSocket.
+
+Before committing to the embedded path for *video*, measure the rewritten core under
+the reference allocation (four cores, 8 GiB) with real encoded video at the planned
+bitrates, and record CPU, RSS and egress. If the forwarding cost is not comfortably
+inside the master plan's budgets, **revisit this ADR** — the point at which an external
+SFU stops being a rewrite of the same logic and starts being a different deployment is
+exactly this measurement.
+
+Two things cannot be measured here and are not claimed:
+
+- **Physical media quality.** The only recorded workload is 10 local Pion peers sending
+  60-byte synthetic payloads, peak combined heap 45.44 MB, explicitly not physical audio
+  or cross-network (`docs/acceptance.md:127-130`). Synthetic RTP proves the forwarding
+  path; it proves nothing about a microphone or a lossy path.
+- **The browser CI path.** `web/e2e/voice.spec.mjs:41-43` monkey-patches `getUserMedia`
+  to audio-only and *throws* on a video constraint, so no video publication is exercised
+  anywhere in CI. Browser lifecycle, capture denial, and a 100-cycle start/stop run are
+  physical-device work.
+
+## 7. What TURN needs
+
+`internal/rtc/turn.go` is IPv4/UDP only: a `udp4` listener (`:58`) and a URL forced to
+`transport=udp` (`:129`). A client behind a network that blocks UDP currently has **no
+path at all** — which is the ordinary case on corporate and some mobile networks.
+
+- Offer `turn:…?transport=tcp` alongside the UDP URL, and let ICE choose.
+- Add `turns:` (TLS on 5349) for networks that block the TCP fallback too.
+- Make the advertised relay address **configurable**, because a container or a host
+  behind NAT that advertises a private address produces a call that works locally and
+  fails for everyone else.
+- Record the **actual candidate type chosen** per client. "Tailscale and HTTPS both
+  worked" says nothing about whether media established.
+
+The existing credential machinery — 24-hour HMAC credentials with `RevokeUser`
+(`turn.go:113,135`) — is sound and stays.
+
+## 8. What this ADR does not establish
+
+- That any of it works. It records a decision and its basis; the evidence comes after
+  the implementation.
+- That the support profile is achievable. The egress arithmetic in §6 has to be measured,
+  not assumed.
+- That screen sharing is safe on any platform. Browser capture permission, the
+  indicator, and what happens when a track ends without a clean stop are browser-lifecycle
+  questions, and they are answered on real devices.
+- That calls work on the two required deployments. That is §3 of
+  [host qualification](../host-qualification.md), and it needs hosts this environment
+  does not have.
