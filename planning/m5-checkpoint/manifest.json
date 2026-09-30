@@ -1,15 +1,15 @@
 {
   "milestone": "M5 — both-host operations, capacity qualification, public release engineering",
-  "source_commit": "1c21f7b653e42db069922de88c7ad610f962b126",
+  "source_commit": "abe5537749c598db80234f972e93b7f02942ebc8",
   "schema": 21,
   "backup_format": 2,
   "race": {
     "command": ".tools/go/bin/go test -race -count=1 -timeout 40m ./...",
     "result": "PASS",
     "packages": 10,
-    "api_seconds": 1984.563,
+    "api_seconds": 2031.621,
     "data_races": 0,
-    "note": "A separate run that overlapped a binary rebuild reported one rtc failure (\"peer failed to connect\"). It was not a race: the package passes on three consecutive race-enabled runs and in the clean full run. The cause was the rebuild replacing the test binary underneath a running suite, not a product defect."
+    "note": "An earlier run reported a race in a test added for the screen forwarder, which read a peer output list without the SFU lock while a connection-state callback could remove that peer. It reproduced only sometimes, which is the property of a race. Fixed by reading under the lock through a named helper; the full suite is green."
   },
   "capacity": {
     "tooling": [
