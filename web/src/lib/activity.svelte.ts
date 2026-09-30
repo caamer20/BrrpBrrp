@@ -169,7 +169,11 @@ class ActivityStore {
    * the person lost access leads somewhere that refuses, which is the honest answer.
    */
   destination(entry: ActivityEntry): string {
-    return '/messages';
+    // A hash the application acts on, not a path it ignores. The previous value was a
+    // bare `/messages`, which no route matched, so following an entry did nothing a
+    // reader could see. Authority is still checked when the destination is opened, not
+    // carried from when the entry was written.
+    return '#messages';
   }
 
   /**

@@ -115,15 +115,113 @@ self.addEventListener('push', (event) => {
   }
   if (!notification) return;
   event.waitUntil(
-    self.registration.showNotification(notification.title || 'BrrpBrrp', {
-      body: notification.body || 'You were mentioned.',
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      tag: notification.message_id,
-      data: { url: notification.url || '/' }
-    })
+    (async () => {
+      // The server supplies `tag`, and the previous code read `message_id` — a field
+      // the payload does not have. Every notification therefore arrived with
+      // `tag: undefined`, which is not deduplication at all: two devices, or one
+      // device told twice about the same event, produced two notices.
+      const tag = notification.tag || notification.message_id || '';
+      // Retained across tabs and the worker, per account, for a day. Server-side
+      // uniqueness is one row per source event; it is not one notice per device, and
+      // it cannot know about a second tab that already showed the notice.
+      const key = `brrp.notified.${notification.account_id || ''}.${tag}`;
+      if (tag) {
+        try {
+          const seen = await seenRecently(key);
+          if (seen) return;
+        } catch {
+          // A storage failure must not swallow a notification: the notice is worth
+          // showing twice, and a missing key only risks that.
+        }
+      }
+      await self.registration.showNotification(notification.title || 'BrrpBrrp', {
+        body: notification.body || 'You were mentioned.',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        // A tag is what makes a second notice *replace* the first rather than stack
+        // beside it, and what lets the same event on two devices collapse to one.
+        ...(tag ? { tag } : {}),
+        data: { url: notification.url || '/' }
+      });
+      if (tag) {
+        try {
+          await remember(key);
+        } catch {
+          // Recorded-or-not does not change what was already shown.
+        }
+      }
+    })()
   );
 });
+
+// The retention is a day because a catch-up notice for something that happened
+// yesterday is still worth seeing, and one from last week is not: a member who has
+// been away should find recent activity, not a week of stale ones.
+const NOTIFY_RETENTION_MS = 24 * 60 * 60 * 1000;
+const NOTIFY_PREFIX = 'brrp.notify.';
+
+async function seenRecently(key) {
+  const at = await readStore(key);
+  return typeof at === 'number' ? Date.now() - at < NOTIFY_RETENTION_MS : false;
+}
+
+async function remember(key) {
+  await writeStore(key, Date.now());
+  // A bounded sweep rather than an expiry the browser may or may not honour.
+  const keys = (await listStore()).filter((name) => name.startsWith(NOTIFY_PREFIX));
+  for (const name of keys) {
+    const at = await readStore(name);
+    if (typeof at !== 'number' || Date.now() - at >= NOTIFY_RETENTION_MS) await deleteStore(name);
+  }
+}
+
+// Storage is best-effort: a browser that refuses IndexedDB still gets notifications,
+// which is the right trade. Blocking storage is best-effort in the other direction.
+function openStore() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('brrp-notifications', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('seen');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('notification store blocked'));
+  });
+}
+async function readStore(key) {
+  const store = await openStore();
+  return new Promise((resolve, reject) => {
+    const request = store.transaction('seen').objectStore('seen').get(key);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+async function writeStore(key, value) {
+  const store = await openStore();
+  return new Promise((resolve, reject) => {
+    const request = store.transaction('seen', 'readwrite').objectStore('seen').put(value, key);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+async function deleteStore(key) {
+  const store = await openStore();
+  return new Promise((resolve, reject) => {
+    const request = store.transaction('seen', 'readwrite').objectStore('seen').delete(key);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+async function listStore() {
+  const store = await openStore();
+  return new Promise((resolve, reject) => {
+    const keys = [];
+    const request = store.transaction('seen').objectStore('seen').getAllKeys();
+    request.onsuccess = () => {
+      for (const key of request.result) keys.push(String(key));
+      resolve(keys);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const target = new URL(event.notification.data?.url || '/', self.location.origin);

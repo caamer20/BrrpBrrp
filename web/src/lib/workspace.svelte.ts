@@ -468,6 +468,16 @@ class Workspace {
     this.setupRequired = false;
     this.stopped = false;
     const openSettings = location.hash === '#server-settings';
+    // A push notification's payload says `/messages`, and a notification click
+    // navigates the app there. Nothing opened that path, so clicking a private
+    // notification landed on whatever the account happened to be looking at — or on
+    // nothing at all. It is handled here, on a supported route under current
+    // authority, and the hash is cleared so a reload does not reopen it.
+    const notifyActivity = location.hash === '#messages' || location.hash === '#activity';
+    if (notifyActivity) {
+      this.openMessagesTab('activity');
+      history.replaceState(null, '', location.pathname + location.search);
+    }
     const params = new URLSearchParams(location.search);
     const requested = params.get('conversation') || params.get('channel');
     const initial =

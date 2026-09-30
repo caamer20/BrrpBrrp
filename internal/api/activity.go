@@ -762,7 +762,11 @@ func (s *Server) payloadForJob(job pushJob) map[string]string {
 		return job.payload
 	}
 	payload := map[string]string{
-		"url":    "/messages",
+		// A hash the client acts on, not a bare path. The previous value was `/messages`,
+		// which no route matched, so a notification click navigated the app somewhere it
+		// did not recognise and the activity it announced was never opened. Authority is
+		// still checked when the destination is opened.
+		"url": "#messages",
 		"title":  "BrrpBrrp",
 		"body":   "You have new activity",
 		// The tag is the client-side de-duplication key and it travels in the push
