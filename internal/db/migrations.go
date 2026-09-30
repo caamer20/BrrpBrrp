@@ -49,6 +49,7 @@ var Migrations = []Migration{
 	{Version: 19, Name: "named community threads", SQL: migration19, RebuildsReferences: true},
 	{Version: 20, Name: "moderation, timeouts and invitations", SQL: migration20},
 	{Version: 21, Name: "member data exports", SQL: migration21},
+	{Version: 22, Name: "export scope for delivery re-authorization", SQL: migration22},
 }
 
 // SchemaVersion is the newest schema this binary writes and understands.

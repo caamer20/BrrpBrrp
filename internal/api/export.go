@@ -44,16 +44,16 @@ const (
 type exportDocument struct {
 	// The build's own facts first, so a reader knows what they are looking at before
 	// they read anything in it.
-	Format      string         `json:"format"`
+	Format        string        `json:"format"`
 	FormatVersion int           `json:"format_version"`
-	GeneratedAt string         `json:"generated_at"`
-	ExpiresAt   string         `json:"server_copy_expires_at"`
-	Account     exportAccount  `json:"account"`
-	Summary     exportSummary  `json:"summary"`
+	GeneratedAt   string        `json:"generated_at"`
+	ExpiresAt     string        `json:"server_copy_expires_at"`
+	Account       exportAccount `json:"account"`
+	Summary       exportSummary `json:"summary"`
 	// Omissions is not a caveat appended at the end. It travels with the summary,
 	// because a member whose export stopped at its bound must be able to find that fact
 	// without reading the whole file — and must not be able to miss it.
-	Omissions  []string        `json:"omissions"`
+	Omissions     []string             `json:"omissions"`
 	Conversations []exportConversation `json:"conversations"`
 }
 
@@ -75,9 +75,9 @@ type exportSummary struct {
 }
 
 type exportConversation struct {
-	ID       string         `json:"id"`
-	Kind     string         `json:"kind"`
-	Title    string         `json:"title"`
+	ID       string          `json:"id"`
+	Kind     string          `json:"kind"`
+	Title    string          `json:"title"`
 	Messages []exportMessage `json:"messages"`
 }
 
@@ -104,37 +104,44 @@ type exportAttachment struct {
 }
 
 type exportReaction struct {
-	Emoji    string `json:"emoji"`
-	UserID   string `json:"user_id"`
+	Emoji     string `json:"emoji"`
+	UserID    string `json:"user_id"`
 	CreatedAt string `json:"created_at"`
 }
 
 // exportRecord is the row in data_exports.
 type exportRecord struct {
-	ID              string `json:"id"`
-	UserID          string `json:"user_id"`
-	OperationKey    string `json:"operation_key"`
-	State           string `json:"state"`
-	CreatedAt       string `json:"created_at"`
-	CompletedAt     string `json:"completed_at"`
-	ConversationCount int `json:"conversation_count"`
-	MessageCount    int    `json:"message_count"`
-	AttachmentCount int    `json:"attachment_count"`
-	BytesWritten    int64  `json:"bytes_written"`
-	Truncated       bool   `json:"truncated"`
-	Omissions       string `json:"omissions"`
-	ExpiresAt       string `json:"expires_at"`
-	CompletedBy     string `json:"completed_by"`
-	FreshAuthAt     string `json:"fresh_auth_at"`
+	ID                string `json:"id"`
+	UserID            string `json:"user_id"`
+	OperationKey      string `json:"operation_key"`
+	State             string `json:"state"`
+	CreatedAt         string `json:"created_at"`
+	CompletedAt       string `json:"completed_at"`
+	ConversationCount int    `json:"conversation_count"`
+	MessageCount      int    `json:"message_count"`
+	AttachmentCount   int    `json:"attachment_count"`
+	BytesWritten      int64  `json:"bytes_written"`
+	Truncated         bool   `json:"truncated"`
+	Omissions         string `json:"omissions"`
+	ExpiresAt         string `json:"expires_at"`
+	CompletedBy       string `json:"completed_by"`
+	FreshAuthAt       string `json:"fresh_auth_at"`
+	// Scope is the set of conversation ids the build actually selected, as JSON. It is
+	// written by the build transaction and read by the download check, so delivery is
+	// authorized against the file's own contents rather than against what the file
+	// "should" have contained. Empty means the row predates the column, and an export
+	// whose scope cannot be established is one whose authorization cannot either.
+	Scope string `json:"-"`
 }
 
-const exportColumns = `id,user_id,operation_key,state,created_at,completed_at,conversation_count,message_count,attachment_count,bytes_written,truncated,omissions,expires_at,COALESCE(completed_by,''),fresh_auth_at`
+const exportColumns = `id,user_id,operation_key,state,created_at,completed_at,conversation_count,message_count,attachment_count,bytes_written,truncated,omissions,expires_at,COALESCE(completed_by,''),fresh_auth_at,scope`
 
 func scanExport(row interface{ Scan(...any) error }) (exportRecord, error) {
 	var record exportRecord
 	err := row.Scan(&record.ID, &record.UserID, &record.OperationKey, &record.State, &record.CreatedAt, &record.CompletedAt,
 		&record.ConversationCount, &record.MessageCount, &record.AttachmentCount, &record.BytesWritten,
-		&record.Truncated, &record.Omissions, &record.ExpiresAt, &record.CompletedBy, &record.FreshAuthAt)
+		&record.Truncated, &record.Omissions, &record.ExpiresAt, &record.CompletedBy, &record.FreshAuthAt,
+		&record.Scope)
 	return record, err
 }
 
@@ -305,7 +312,7 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 			ID: account.ID, Username: account.Username,
 			DisplayName: account.DisplayName, CreatedAt: account.CreatedAt,
 		},
-		Omissions:    []string{},
+		Omissions:     []string{},
 		Conversations: []exportConversation{},
 	}
 
@@ -381,13 +388,25 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 		_ = os.Remove(temporary)
 		return err
 	}
+	// The scope is the file's own list of conversations, taken from what was written
+	// rather than from what was selected. A conversation that failed to read and was
+	// omitted is not in the file and must not be in the scope, or a later download
+	// would refuse the whole export for a conversation it never contained.
+	scope := make([]string, 0, len(document.Conversations))
+	for _, conversation := range document.Conversations {
+		scope = append(scope, conversation.ID)
+	}
+	encodedScope, err := json.Marshal(scope)
+	if err != nil {
+		return err
+	}
 	now := db.Now()
 	if _, err := tx.ExecContext(ctx, `UPDATE data_exports SET state='ready',completed_at=?,conversation_count=?,message_count=?,attachment_count=?,
-		bytes_written=?,truncated=?,omissions=?,expires_at=?,completed_by=?
+		bytes_written=?,truncated=?,omissions=?,expires_at=?,completed_by=?,scope=?
 		WHERE id=? AND user_id=? AND state='building'`,
 		now, document.Summary.Conversations, document.Summary.Messages, document.Summary.Attachments,
 		int64(len(encoded)), boolToInt(document.Summary.Truncated), strings.Join(document.Omissions, "; "),
-		document.ExpiresAt, userID, exportID, userID); err != nil {
+		document.ExpiresAt, userID, string(encodedScope), exportID, userID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -432,6 +451,15 @@ func (s *Server) exportableConversations(ctx context.Context, q db.Queryer, prin
 	// check that makes "never another private conversation" true rather than
 	// aspirational: a withdrawn membership excludes the conversation, whatever its
 	// history says.
+	// Private conversations are not selected at all when the feature is off. The
+	// route's own gate covers the request; this covers the *build*, which runs after
+	// the response and can still find private rows. Without it an export built on a
+	// server with private conversations disabled contained them anyway, because the
+	// selection queried the conversation table directly rather than asking the same
+	// question the interface asks (completion review 14, V14-02).
+	if !s.config.PrivateConversations {
+		return conversations, nil
+	}
 	rows, err := q.QueryContext(ctx, `SELECT c.id, c.kind, COALESCE(d.name,'') FROM conversations c
 		LEFT JOIN group_details d ON d.conversation_id=c.id
 		JOIN conversation_members m ON m.conversation_id=c.id AND m.user_id=? AND m.state='accepted'
@@ -562,6 +590,50 @@ func (s *Server) downloadExport(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 410, "This export's server copy has expired. Request a new one.")
 		return
 	}
+	// The file is re-authorized against its own recorded scope, under a transaction
+	// that also re-resolves the account's authority. Checking only "does this account
+	// own this export" is not enough: ownership of the *file* is not ownership of the
+	// conversations inside it, and a member removed from a group kept receiving that
+	// group's text from a file built before the removal — history 404, export 200, with
+	// the message in the body (completion review 14, V14-02).
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer tx.Rollback()
+	principal, err := s.authorizeInTx(r.Context(), tx, user)
+	if err != nil {
+		s.authorityFailed(w, err)
+		return
+	}
+	if principal.Inactive {
+		problem(w, 403, "This account is not currently permitted to download an export.")
+		return
+	}
+	// A row written before the scope column exists cannot be checked, so it is refused
+	// rather than served. "We cannot tell what this contains" is not a reason to hand
+	// it over; the member can request a new export, which will have a scope.
+	var scope []string
+	if err := json.Unmarshal([]byte(record.Scope), &scope); err != nil {
+		problem(w, 410, "This export was made before the server could record what it contained. Request a new one.")
+		return
+	}
+	for _, conversationID := range scope {
+		readable, err := s.exportScopeStillReadable(r.Context(), tx, principal, conversationID)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		if !readable {
+			problem(w, 403, "You can no longer read part of this export, so the server is not delivering it. Request a new export and it will contain only what you can read now.")
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		s.failed(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	// The name carries the build time rather than a request time, so a member with
 	// several exports can tell them apart in their downloads folder.
@@ -629,4 +701,47 @@ func (s *Server) expireExports(ctx context.Context, q db.Queryer) (int, error) {
 		removed++
 	}
 	return removed, nil
+}
+
+// exportScopeStillReadable asks the *current* access question for one conversation, at
+// delivery time. It is the same rules a conversation list uses, not a re-derivation of
+// what the build decided: a member who lost a role, a membership, or a restricted
+// channel's access since the build must not receive the file that predates it.
+//
+// There is no partial delivery. A file is a single document, and a member handed half
+// of one has been handed content they cannot read by any other route, with no marker
+// telling them which half. The refusal names the reason and points at the new export,
+// which will be built from what is readable now.
+func (s *Server) exportScopeStillReadable(ctx context.Context, q db.Queryer, principal authz.Principal, conversationID string) (bool, error) {
+	var kind, state string
+	if err := q.QueryRowContext(ctx, `SELECT kind,state FROM conversations WHERE id=?`, conversationID).Scan(&kind, &state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// A conversation that no longer exists cannot be read, whatever the file says.
+			return false, nil
+		}
+		return false, err
+	}
+	if state != "active" {
+		return false, nil
+	}
+	if kind == "channel" {
+		channel, err := s.store.Channel(ctx, q, conversationID)
+		if err != nil {
+			return false, nil
+		}
+		lists, err := s.store.ChannelAccessLists(ctx, q, conversationID)
+		if err != nil {
+			return false, err
+		}
+		return principal.MayReadChannel(channel, lists[conversationID]), nil
+	}
+	// A private conversation: current, accepted, usable membership. A withdrawn or
+	// ended membership is exactly the case this check exists for, and it is the same
+	// condition a history read would refuse.
+	var member bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members
+		WHERE conversation_id=? AND user_id=? AND state='accepted')`, conversationID, principal.UserID).Scan(&member); err != nil {
+		return false, err
+	}
+	return member, nil
 }

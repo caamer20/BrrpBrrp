@@ -79,3 +79,47 @@ erasure path exists to prevent.
   can retrieve, and nothing here is a claim about any jurisdiction's requirements.
 - **Not a way around erasure or retention.** Retention runs first; an export reflects
   the state retention has already decided.
+
+## The server holds a copy, so the server is responsible for it
+
+An export leaves the building as a file. The server keeps one for seven days, and
+during that week it is the one delivering a copy of somebody's history — which makes
+the delivery path a privacy surface, not a convenience.
+
+It was answering the wrong question. The download checked that the account owned the
+file, was in a good state, and that the copy had not expired, and then served the file.
+It never asked whether the account could still read the conversations the file was
+assembled from. Ownership of a *file* is not ownership of the *conversations inside
+it*, and the two came apart the moment a membership ended.
+
+Reproduced: a member's group export, built while access existed, then the membership
+removed through the real endpoint. Group history returned **404**. The export download
+returned **200 with the removed group's text in the body**.
+
+**The file carries its own scope.** `data_exports.scope` records the conversation ids
+the build actually wrote, from the document it produced rather than from the set it
+selected — a conversation that failed to read and was omitted is not in the file and
+must not be in the scope, or a later download would refuse the whole export for
+content it never had. Delivery re-resolves the account's authority in a transaction and
+checks each conversation with the *current* access rules: a member who lost a role, a
+membership, or a restricted channel's access since the build does not receive the file
+that predates it.
+
+**There is no partial delivery.** The file is a single document, and a member handed
+half of one has been handed content they cannot read by any other route, with no marker
+saying which half. The refusal says why and points at a new export, which will be built
+from what is readable now.
+
+**A row with no recorded scope is refused.** Exports written before the column existed
+cannot be checked, and "we cannot tell what this contains" is not a reason to hand it
+over.
+
+**The build is gated too, not only the request.** The route's feature check covers the
+request; the build runs after the response and was selecting private conversations by
+querying the conversation table directly, so an export on a server with private
+conversations disabled contained them anyway. The selection now asks the same question
+the interface asks.
+
+What this does not change: a copy a member legitimately downloaded before a
+withdrawal is theirs, and it cannot be recalled. This is about the server's own
+undelivered copy.

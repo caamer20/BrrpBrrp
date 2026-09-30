@@ -1,0 +1,18 @@
+-- Record what an export covered, so its delivery can be re-authorized.
+--
+-- A built export is the server's own copy of one account's history. Without this
+-- column the download path has nothing to check: it can see that the *account* may
+-- export, but not that the account may still read the conversations the file was
+-- assembled from. A member removed from a group kept receiving the group's text from
+-- a file built before the removal, because "may export" was the only question being
+-- asked (completion review 14, V14-02).
+--
+-- `scope` is a JSON array of conversation ids. It is written in the build transaction
+-- from exactly the set the build selected, so a delivery check compares the file
+-- against the same list rather than re-deriving what the file "should" have.
+--
+-- Rows written before this migration have an empty scope. They are refused at
+-- download rather than served: an export whose scope cannot be established is one
+-- whose authorization cannot either, and "we cannot tell what this contains" is not a
+-- reason to hand it over.
+ALTER TABLE data_exports ADD COLUMN scope TEXT NOT NULL DEFAULT '';

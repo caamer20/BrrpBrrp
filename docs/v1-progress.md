@@ -897,3 +897,40 @@ The operator-facing copy claimed the account "regains exactly the access it had 
 the timeout started" — true of the defect, false of the fix. It now describes what a
 timeout does and does not reach, and the duration is a set of named choices rather than
 a number box, which had no input bound to it at all.
+
+
+**V14-02, export delivery after access withdrawal.** An export leaves the building as a
+file, and the server keeps one for seven days — so during that week it is the one
+delivering a copy of somebody's history, and the delivery path is a privacy surface.
+
+The download checked that the account owned the *file*, was in a good state, and that
+the copy had not expired, then served it. It never asked whether the account could
+still read the conversations inside. Ownership of a file is not ownership of its
+conversations, and the two came apart when a membership ended.
+
+Reproduced through the real build and the real delivery: a member's group export, then
+ownership transferred and the member removed through the supported routes. Group history
+returned **404**; the download returned **200 with the removed group's text in the
+body**.
+
+Schema 22 records the scope: `data_exports.scope` holds the conversation ids the build
+actually wrote, taken from the document rather than from the set it selected, so a
+conversation that failed to read is not in the scope of a file that never contained it.
+Delivery re-resolves the account's authority in a transaction and checks each
+conversation with the *current* access rules.
+
+There is no partial delivery. The file is one document, and a member handed half of one
+has been handed content they cannot read by any other route with no marker saying which
+half. The refusal says why and points at a new export. A row written before the column
+existed is refused rather than served: "we cannot tell what this contains" is not a
+reason to hand it over.
+
+The build is gated too. The route's feature check covered the request; the build ran
+after the response and selected private conversations by querying the conversation table
+directly, so an export on a server with private conversations disabled contained them.
+Confirmed by a test that fails with the gate removed.
+
+Unchanged by this: a copy a member downloaded legitimately before a withdrawal is theirs
+and cannot be recalled. This is the server's own undelivered copy. Still outstanding
+from the same finding: finite ready-export storage per account and server, bounded job
+admission, crash/restart reconciliation and orphan-file cleanup after erasure.
