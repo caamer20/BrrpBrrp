@@ -1001,12 +1001,22 @@ func (s *SFU) setEmitter(userID string, send func(string, any)) {
 // slot that a listener is counting on.
 func (s *SFU) forwardPublication(source *Peer, kind PublicationKind, packet *rtp.Packet) {
 	s.mu.Lock()
-	// The same enforcement as the microphone, and for the same reason: forwarding is
-	// the boundary, not the state the client reported. A member whose permission was
-	// withdrawn has their packets dropped here even if their client still believes it
-	// is sharing.
-	if s.peers[source.state.UserID] != source || source.speakDenied ||
-		source.state.Muted || source.state.Deafened || source.state.AdminMuted || source.state.AdminDeafened {
+	// Forwarding is the boundary, not the state the client reported: a member whose
+	// permission was withdrawn has their packets dropped here even if their client
+	// still believes it is sharing.
+	//
+	// Which flags that means depends on what the packet *is*, and this used to ask
+	// the microphone's question of every publication. The consequence was that a
+	// member who pressed their own mute button also stopped broadcasting their
+	// screen to everyone in the room — the most common reason to mute is somebody
+	// talking over you, which is not a withdrawal of the right to be seen.
+	//
+	// A screen is gated on the *permissions*: the connection is still the peer's,
+	// the capability is still granted, and no moderator has silenced the member.
+	// Client-side voice state — requested mute, deafen, and the indicators that go
+	// with them — describes the microphone and says nothing about a second,
+	// independent publication on the same connection.
+	if s.peers[source.state.UserID] != source || source.speakDenied || source.state.AdminMuted {
 		s.mu.Unlock()
 		return
 	}
@@ -1014,6 +1024,14 @@ func (s *SFU) forwardPublication(source *Peer, kind PublicationKind, packet *rtp
 		// The microphone is the connection's own audio input and has always been
 		// forwarded by slot; it is not a registered publication. Routing it through the
 		// publication registry would count zero and drop every voice packet.
+		//
+		// Its own gate lives in `forward`, which is where the voice state has always
+		// been applied — keeping it there means the check is not duplicated here and
+		// cannot drift between the two copies.
+		if source.state.Muted || source.state.Deafened || source.state.AdminDeafened {
+			s.mu.Unlock()
+			return
+		}
 		s.mu.Unlock()
 		s.forward(source, packet)
 		return

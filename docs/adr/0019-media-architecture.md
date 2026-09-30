@@ -618,3 +618,42 @@ asserts the behaviour through the real signal path — the first member's screen
 published, the second's is refused, and the owner is unaffected — which is the
 observable contract. It does not demonstrate the interleaving, and the ADR says so
 rather than implying a race test that was never run.
+
+
+## A mute is a voice state, not a permission, and a screen is not a microphone
+
+The packet gate asked the microphone's question of every publication: a screen frame
+was dropped if its sender was muted, deafened, or silenced. So a member who pressed
+their own mute button stopped broadcasting their screen to everyone in the room.
+
+That is wrong for a reason that is visible in the product rather than in the code.
+**The commonest reason to mute is somebody talking over you** — an interruption, a
+cough, a colleague in the next room. It is not a withdrawal of the right to be seen,
+and it is certainly not something the person presenting intends to do to their
+audience. The audience sees a shared screen freeze mid-sentence because the presenter
+hit spacebar.
+
+The gate now asks the question that matches the publication:
+
+| Publication | Client-side voice state | Withdrawn permission | Admin mute |
+| --- | --- | --- | --- |
+| Microphone | gates it | gates it | gates it |
+| Screen / screen audio | does not gate it | gates it | gates it |
+
+`TestSpeakPermissionGatesAScreenToo` already pinned the third column and continues to
+pass. The first column is new, and it is what the mute test asserts.
+
+**The distinction is client state versus server authority, not audio versus video.**
+`requestedMuted` and `state.Muted` are something the member chose; `speakDenied` and
+`state.AdminMuted` are something the server decided. The screen is gated on the
+second and not the first, because only the second is a statement about whether this
+member is allowed to transmit at all. The microphone is gated on both, because there
+the client's choice *is* the request.
+
+A fix that simply dropped `Muted` from the shared condition would also have dropped
+`Deafened` and `AdminMuted` with it — those are three flags in one expression, and only
+one of them is the client's own business. `TestAWithdrawnPermissionStopsALiveScreen`
+exists to catch that: it withdraws a permission *while a share is live* and requires
+the frames to stop. Without it, "the mute no longer freezes the screen" and "a
+moderator can no longer stop a screen" are the same test, and only one of them is
+correct.

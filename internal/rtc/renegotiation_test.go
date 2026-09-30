@@ -179,6 +179,91 @@ func TestASecondScreenInOneRoomIsRefusedWithAReason(t *testing.T) {
 	}
 }
 
+// Muting your microphone is not a withdrawal of your screen. The two are separate
+// publications with separate audiences, and the reason people mute is usually the
+// opposite of the reason that makes them stop presenting: an interruption during a
+// call, or a cough, not a withdrawal of the right to be heard or seen.
+//
+// The withdrawal that does stop a screen is named differently and enforced
+// differently - `SetSpeakAllowed` and the admin mute, which are permissions rather
+// than a client-side choice.
+func TestAMutedMicrophoneDoesNotFreezeTheScreen(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	// Ana publishes a screen and bo is watching it.
+	sfu.mu.Lock()
+	sfu.announcePublication(sfu.peers["ana"], Publication{
+		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatalf("the viewer could not create a screen output: %v", err)
+	}
+
+	// A frame before the microphone is muted.
+	before := sfu.publishedScreenFrames()
+	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(1))
+
+	// Ana mutes her microphone, as she would when someone talks over her. `SetState`
+	// is what the client calls; the third argument is deafened, which stays false.
+	sfu.SetState("ana", "ana", true, false, false)
+	sfu.mu.Lock()
+	muted := sfu.peers["ana"].state.Muted
+	sfu.mu.Unlock()
+	if !muted {
+		t.Fatal("the mute did not take effect")
+	}
+
+	// A frame after. The screen is still the same screen, still live, and still
+	// published - a member's own push-to-mute cannot stop what everyone is watching.
+	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(2))
+
+	if got := sfu.publishedScreenFrames(); got != before+2 {
+		t.Fatalf("the viewer received %d screen frames across the mute, want %d", got, before+2)
+	}
+}
+
+// A withdrawn permission still does stop a screen, including when the withdrawal
+// arrives while a share is live - which is the case the mute test above must not
+// have opened up. The two look alike from the server and are not the same thing.
+func TestAWithdrawnPermissionStopsALiveScreen(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	sfu.announcePublication(sfu.peers["ana"], Publication{
+		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatalf("the viewer could not create a screen output: %v", err)
+	}
+
+	before := sfu.publishedScreenFrames()
+	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(1))
+	if got := sfu.publishedScreenFrames(); got != before+1 {
+		t.Fatalf("the viewer received %d frames before the withdrawal, want %d", got, before+1)
+	}
+
+	// A moderator withdraws the permission while the share is live.
+	sfu.SetSpeakAllowed("ana", "ana", false)
+	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(2))
+
+	if got := sfu.publishedScreenFrames(); got != before+1 {
+		t.Fatalf("the viewer received %d frames after the permission was withdrawn, want the share stopped at %d", got, before+1)
+	}
+}
+
 // A member who may listen but not transmit may not publish a screen either. A screen
 // is a transmission, and treating it as something separate is how a member with no
 // voice permission ends up broadcasting video.
@@ -1083,6 +1168,33 @@ func TestTheScreensAllowanceIsTakenWhenThePublicationIsRegistered(t *testing.T) 
 	if got := sfu.Publications("room")[0].Owner; got != "ana" {
 		t.Fatalf("the room publishes %q after the refusal, want the member who was admitted", got)
 	}
+}
+
+// screenFrame builds one video RTP packet on the video clock. `n` only has to differ
+// between frames: the forwarder steps its own timeline by the arrival delta.
+func screenFrame(n uint32) *rtp.Packet {
+	return &rtp.Packet{
+		Header:  rtp.Header{Version: 2, SequenceNumber: uint16(n), Timestamp: n * videoClockRate / 30},
+		Payload: []byte{0x00, 0x00, 0x00, 0x01, 0x65},
+	}
+}
+
+// publishedScreenFrames counts what the server actually forwarded, per peer. The
+// counter is the server's own — it is incremented by a write, not by a client's
+// claim that it sent something — which is what makes a frame count evidence that a
+// packet reached a viewer rather than evidence that a track existed.
+func (s *SFU) publishedScreenFrames() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var total uint64
+	for _, peer := range s.peers {
+		for _, output := range peer.screens {
+			output.mu.Lock()
+			total += output.written
+			output.mu.Unlock()
+		}
+	}
+	return total
 }
 
 func firstConnectionID(t *testing.T, sfu *SFU, userID string) string {
