@@ -85,3 +85,37 @@ thread with a thousand replies is reachable in full: every reply exactly once, i
 order, without the client accumulating them unboundedly. The client keeps a window and
 requests older pages rather than holding the whole thread, which is the property a
 large fixture has to prove rather than assert.
+
+
+## The thread is part of the send's destination
+
+The operation's identity is the account and the key, and the *destination* travels in
+the intent — so reusing a key for other work is a conflict rather than a silent replay.
+The thread is part of that destination: a member who asks for the same words in two
+threads of one channel has asked for two messages, and a receipt that omitted the
+thread would answer the second with the first.
+
+It is worth being precise about how much that was worth here. The message table
+carries `UNIQUE(user_id, idempotency_key)`, and *that* index is what produced the
+409 in the reproduced case — the intent digest omitting the thread was masked by it.
+The index is the older guard, and it disappears with the row it guards, so a retry
+after the first message was deleted would have recreated content the moment the index
+was no longer there to refuse it. The digest is the durable guard; the index is the
+accident that has been catching the everyday case. Both are correct to keep, and only
+one of them is load-bearing across deletion.
+
+## The thread's state is re-read in the transaction that inserts
+
+`createThreadMessage` resolved the thread, checked it was not locked, and committed that
+decision — then called the shared send, which opens its own transaction and inserts.
+A lock landing in between was decided by a check nothing re-asks.
+
+The state is now read again, immediately before the insert and inside the same
+transaction. **That re-check cannot be demonstrated by a test, and the reason is
+worth recording rather than hiding:** the store holds a single connection, so a
+concurrent writer waits for the sending transaction instead of interleaving with it.
+The gap was real and unreachable, which is exactly why it survived. The re-check is
+defence in depth at the cost of one indexed lookup, on the principle that the route
+guard decides whether a handler runs and the committing transaction decides whether a
+row may be written — and the second is the only one of the two close enough to the
+write to be about it.

@@ -33,10 +33,18 @@ const receiptPruneAfter = 30 * 24 * time.Hour
 // conversation, the trimmed content, the attachment ids and the reply target. Fields are
 // length-prefixed so no concatenation of them can collide with another, and the digest is what
 // makes reusing an operation key for other work a conflict instead of a silent replay.
-func sendIntentDigest(conversationID, content string, attachmentIDs []string, replyToID string) string {
+// threadID is the thread the message is filed into, or "" for an ordinary channel
+// message. It is part of the intent because the thread is part of the *destination*:
+// a member who reuses a key for the same words in a different thread has asked for
+// two messages and must get two, and a key that answered with the other thread's
+// message leaves a send that silently never happened.
+func sendIntentDigest(conversationID, threadID, content string, attachmentIDs []string, replyToID string) string {
 	hasher := sha256.New()
 	field := func(value string) { fmt.Fprintf(hasher, "%d:%s", len(value), value) }
 	field(conversationID)
+	// Bounded by its own length prefix, so "" and a thread id can never collide the
+	// way two adjacent bare fields could.
+	field(threadID)
 	field(content)
 	field(replyToID)
 	field(strconv.Itoa(len(attachmentIDs)))
@@ -203,7 +211,6 @@ func (s *Server) createThreadMessage(w http.ResponseWriter, r *http.Request, use
 		s.scopeFailed(w, err)
 		return
 	}
-	_ = thread
 	if err := tx.Commit(); err != nil {
 		s.failed(w, err)
 		return
@@ -212,6 +219,14 @@ func (s *Server) createThreadMessage(w http.ResponseWriter, r *http.Request, use
 	// carried alongside it so the insert files the message into the thread.
 	r.SetPathValue("id", scope.ID)
 	r.SetPathValue("thread", thread.ID)
+	// The thread's *state* is re-checked inside the send's own committing
+	// transaction, not only here. This transaction has already committed by the time
+	// the insert happens, so a lock landing in between was decided by a check nothing
+	// re-asks: the reply lands in a thread that stopped accepting replies before it
+	// was written. The route guard decides whether the handler runs; the committing
+	// transaction decides whether the row may be written, and only the second one is
+	// close enough to the write to be about it (ADR 0017; completion review 14, V14-04).
+	r.SetPathValue("thread_write", "1")
 	s.createMessage(w, r, user)
 }
 
@@ -250,7 +265,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// than a silent replay (ADR 0010 / D-11). The receipt is consulted first because it outlives
 	// the message: a retry of a send whose content was deleted or purged is answered from the
 	// record, never by creating the message again.
-	intent := sendIntentDigest(scope.ID, input.Content, input.AttachmentIDs, input.ReplyToID)
+	intent := sendIntentDigest(scope.ID, r.PathValue("thread"), input.Content, input.AttachmentIDs, input.ReplyToID)
 	if receipt, receiptErr := s.store.Receipt(r.Context(), tx, user.ID, input.IdempotencyKey); receiptErr == nil {
 		tx.Rollback()
 		s.answerSendReceipt(w, r, user, receipt, scope.ID, intent)
@@ -355,6 +370,41 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 			} else {
 				problem(w, 400, "Reply to an existing message in this channel.")
 			}
+			return
+		}
+	}
+	if hook := s.beginSendInterleave.Load(); hook != nil {
+		(*hook)()
+	}
+	// A thread's own state is re-read here, immediately before the insert and inside
+	// the same transaction as it.
+	//
+	// The check that admitted the request happened in a transaction that has already
+	// committed, so a lock landing between them would be ignored. With the store's
+	// single connection that cannot actually happen — a second writer waits for this
+	// one — which is exactly why the gap was invisible and why no test can demonstrate
+	// the difference. It is kept as defence in depth at the cost of one indexed lookup:
+	// the route guard decides whether the handler runs, and the committing transaction
+	// decides whether the row may be written, and the second is the only one of the two
+	// that is close enough to the write to be about it (ADR 0017;
+	// completion review 14, V14-04).
+	if threadID := r.PathValue("thread"); threadID != "" {
+		var state string
+		err := tx.QueryRowContext(r.Context(), `SELECT state FROM threads WHERE id=? AND conversation_id=?`,
+			threadID, scope.ID).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			// The thread is gone between the check and the write. Nothing is created, and
+			// the key is not claimed, so a retry is a fresh attempt rather than a conflict
+			// against work that never happened.
+			problem(w, 404, "Not found.")
+			return
+		}
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		if state == "locked" {
+			problem(w, 403, "This thread is locked. You can still read it and follow it.")
 			return
 		}
 	}

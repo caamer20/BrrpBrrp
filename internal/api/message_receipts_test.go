@@ -261,14 +261,19 @@ func TestLegacyReceiptCannotReplayIntoAnotherConversation(t *testing.T) {
 
 func TestSendIntentCanonicalizesAttachmentOrder(t *testing.T) {
 	ids := []string{"second", "first"}
-	if sendIntentDigest("room", "text", ids, "reply") != sendIntentDigest("room", "text", []string{"first", "second"}, "reply") {
+	if sendIntentDigest("room", "", "text", ids, "reply") != sendIntentDigest("room", "", "text", []string{"first", "second"}, "reply") {
 		t.Fatal("the same attachment set changed the send intent")
 	}
 	if ids[0] != "second" {
 		t.Fatal("canonicalization mutated the input")
 	}
-	if sendIntentDigest("room", "text", ids, "reply") == sendIntentDigest("other", "text", ids, "reply") {
+	if sendIntentDigest("room", "", "text", ids, "reply") == sendIntentDigest("other", "", "text", ids, "reply") {
 		t.Fatal("destination is not bound to intent")
+	}
+	// The thread is part of the destination, not decoration: the same words under the
+	// same key in two threads of one channel are two sends (V14-04).
+	if sendIntentDigest("room", "", "text", ids, "reply") == sendIntentDigest("room", "thread-1", "text", ids, "reply") {
+		t.Fatal("the thread is not bound to the send intent")
 	}
 }
 

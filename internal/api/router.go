@@ -105,6 +105,14 @@ type Server struct {
 	// is stored atomically for the same reason as streamAdmission: the hook is read
 	// from whichever goroutine is resolving an audience.
 	audienceInterleave atomic.Pointer[func()]
+
+	// beginSendInterleave runs inside a send's own transaction, immediately before the
+	// message is inserted and with no write of its own in flight. It exists so a test
+	// can begin a *concurrent* state change at exactly that point and prove the
+	// committing transaction sees it. A hook that fired while no transaction was open
+	// would only prove that a check happened some time earlier, which is the thing the
+	// check being moved was meant to stop.
+	beginSendInterleave atomic.Pointer[func()]
 	// writerAdmission, when set, runs in the socket writer immediately before the
 	// admission decision. A test pauses there to commit a revocation while the write is
 	// pending, which is the R5-01 ordering; production leaves it nil.
