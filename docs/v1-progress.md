@@ -126,10 +126,23 @@ suite has not been run for this schema. The recorded recovery and browser figure
 were taken at schema 20, before the publication model; the Go and frontend suites are
 current for schema 22.
 
-**Blocked on the owner.** `docs/host-qualification.md` is written step by step so
-both required deployments can be qualified the moment hosts exist. This environment
-has no Docker, no PowerShell, no Windows host and no Tailscale peer, so none of it has
-been run.
+**The Linux Docker runtime is written and unrun.** `scripts/check-docker.mjs` is a
+**runtime** check, not a static one: it creates a container on a disposable volume with
+**`--read-only`, `--cap-drop=ALL` and `no-new-privileges`**, walks start → healthcheck
+→ stop → restart, proves data survives the restart, runs a backup from *inside* the
+container and brings the archive back out. Thirteen assertions in all. It runs in the
+project's Docker CI job on a Linux runner.
+
+**What is still missing for that deployment** is the parts a container cannot answer:
+the media and TURN topology reachable from a real network, the fault injections the
+master plan lists (full disk, termination, slow clients, network faults), and the
+monitoring and alert delivery that M5 requires. `docs/host-qualification.md` §2 has
+the procedure for each.
+
+**Blocked on the owner.** `docs/host-qualification.md` is written step by step so both
+required deployments can be qualified the moment hosts exist. This environment has no
+Docker, no PowerShell, no Windows host and no Tailscale peer, so **none of it has been
+run** — the Docker script included.
 
 ### M5 — operations, capacity and public release (in progress)
 
