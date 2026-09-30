@@ -10,12 +10,12 @@ import (
 	"brrpbrrp/internal/db"
 )
 
-// A timeout suspends an account without changing its roles, so expiry restoring the
-// recorded assignments is the whole contract. The interesting case is not "a timeout
-// ends" but "a role removed *during* a timeout stays removed", because re-deriving
-// the current roles instead of replaying the snapshot gets that exactly wrong.
+// A timeout suspends an account. It does not change what the account holds, so expiry
+// has nothing to undo — and the interesting case is exactly the one a snapshot gets
+// wrong: a role revoked through the supported route while the timeout ran must still
+// be revoked when it ends (completion review 14, V14-03).
 
-func TestTimeoutSuspendsAndLiftsAtExpiryRestoringOnlyTheRecordedRoles(t *testing.T) {
+func TestTimeoutSuspendsAndLiftsAtExpiryLeavingRolesAlone(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
 	_, memberCookie := moderationMember(t, s, handler, admin, "timeout_member", []string{"message.send"})
@@ -60,17 +60,18 @@ func TestTimeoutSuspendsAndLiftsAtExpiryRestoringOnlyTheRecordedRoles(t *testing
 	}
 }
 
-// The contract is that expiry restores *the recorded snapshot* and nothing else. The
-// case that distinguishes replaying it from re-deriving it is a role removed *after*
-// the snapshot was taken: replaying puts it back, because that is what the account held
-// when the timeout was applied; re-deriving would read the current assignments and
-// quietly discard it.
+// A role revoked *during* a timeout stays revoked.
 //
-// That is a real cost, and it is the right one. A timeout freezes authority at the
-// moment it was applied so that nothing done during it — including a role change — is
-// silently reversed when it ends. Lifting a timeout early, or removing the role again,
-// is a moderator's deliberate act rather than a side effect of waiting.
-func TestTimeoutExpiryReplaysTheSnapshotRecordedWhenItWasApplied(t *testing.T) {
+// This test previously asserted the opposite, and the comment above it called that
+// "a real cost, and it is the right one". It is not. The recorded snapshot predated
+// the revocation, so replaying it put the revoked role back — an operator's decision,
+// made through the supported route while a timeout ran, undone by a maintenance sweep
+// nobody was watching. Reproduced before the fix: the assignment count after expiry
+// was 1.
+//
+// A snapshot is a statement about the past and authority is a statement about the
+// present. Expiry removes the row and touches nothing else.
+func TestARoleRevokedDuringATimeoutStaysRevoked(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
 	_, memberCookie := moderationMember(t, s, handler, admin, "trimmed_member", []string{"message.send"})
@@ -80,14 +81,15 @@ func TestTimeoutExpiryReplaysTheSnapshotRecordedWhenItWasApplied(t *testing.T) {
 	setRoles(t, s, handler, admin, account, kept, dropped)
 	recorded := recordedRolesString(t, s, account)
 	if !strings.Contains(recorded, dropped) {
-		t.Fatalf("the snapshot does not include the role under test: %q", recorded)
+		t.Fatalf("the recorded value does not include the role under test: %q", recorded)
 	}
 
+	// An expired timeout, so lifting it is what the rest of the journey exercises.
 	if _, err := s.store.Exec(`INSERT INTO account_timeouts(user_id,restores,reason,applied_by,applied_at,expires_at) VALUES(?,?,'',?,?,?)`,
 		account, recorded, memberIDOf(t, s, "admin"), db.Now(), db.Timestamp(time.Now().UTC().Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	// While the timeout ran, the role was removed.
+	// While the timeout ran, the role was revoked.
 	if _, err := s.store.Exec(`DELETE FROM role_assignments WHERE user_id=? AND role_id=?`, account, dropped); err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +97,13 @@ func TestTimeoutExpiryReplaysTheSnapshotRecordedWhenItWasApplied(t *testing.T) {
 		t.Fatal("the expired timeout was still live")
 	}
 	after := assignedRoles(t, s, handler, admin, account)
+	// The role that was kept is still there: expiry restored nothing *or* everything, it
+	// changed nothing.
 	if !slices.Contains(after, kept) {
-		t.Fatalf("expiry did not restore the recorded roles: %v", after)
+		t.Fatalf("expiry disturbed a role nobody revoked: %v", after)
 	}
-	// The snapshot is replayed, so the role the account held at the moment the timeout
-	// was applied comes back with it.
-	if !slices.Contains(after, dropped) {
-		t.Fatalf("expiry did not replay the recorded snapshot: %v", after)
+	if slices.Contains(after, dropped) {
+		t.Fatalf("A ROLE REVOKED DURING THE TIMEOUT CAME BACK WHEN IT EXPIRED: %v", after)
 	}
 	// And the account is working again.
 	if w := request(t, handler, "GET", "/api/channels", nil, memberCookie); w.Code != 200 {

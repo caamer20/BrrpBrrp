@@ -103,18 +103,34 @@ func (s *Server) assignReport(w http.ResponseWriter, r *http.Request, user db.Us
 	respond(w, http.StatusOK, report)
 }
 
-// applyTimeout suspends an account until a time, recording what to restore. The
-// snapshot is the whole point: expiry replays the capabilities the account held, so
-// an account whose role was removed during the timeout returns to what it had and
-// not to a default (ADR 0018).
+// applyTimeout suspends an account until a time. It changes the account's ability to
+// act and nothing else: roles are not touched, so expiry has nothing to restore and a
+// role revoked while the timeout runs stays revoked (ADR 0018).
 func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.User) {
 	var input struct {
+		// Accepted for compatibility with the interface that sent it, and deliberately
+		// not authoritative. Two targets for one action is how a request ends up
+		// timing out an account the operator did not name, and the two fields do not
+		// have to agree.
 		UserID    string `json:"user_id"`
 		Minutes   int    `json:"minutes"`
 		Reason    string `json:"reason"`
 		ExpiresAt string `json:"expires_at"`
 	}
 	if !decode(w, r, &input) {
+		return
+	}
+	// The route names the account. A body that names a different one is refused rather
+	// than silently resolved, because "I timed out the account in the link" and "I
+	// timed out the account in the form" are different actions and only one of them
+	// was displayed to the operator.
+	target := r.PathValue("id")
+	if target == "" {
+		problem(w, http.StatusNotFound, "Name the account in the address.")
+		return
+	}
+	if input.UserID != "" && input.UserID != target {
+		problem(w, 400, "The account in the address and the account in the request disagree. Send the one you meant.")
 		return
 	}
 	input.Reason = strings.TrimSpace(input.Reason)
@@ -161,7 +177,7 @@ func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.Us
 	// The same downward-only rule every other account change uses. It is checked
 	// against current authority inside this transaction: a demotion that lands between
 	// the route and the write must not complete against the older level.
-	if err := s.mayTimeout(r.Context(), tx, principal, input.UserID); err != nil {
+	if err := s.mayTimeout(r.Context(), tx, principal, target); err != nil {
 		if errors.Is(err, authz.ErrUnavailable) {
 			hidden(w)
 			return
@@ -169,7 +185,7 @@ func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.Us
 		problem(w, 403, err.Error())
 		return
 	}
-	restores, err := s.recordedCapabilities(r.Context(), tx, input.UserID)
+	restores, err := s.recordedCapabilities(r.Context(), tx, target)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -177,7 +193,17 @@ func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.Us
 	now := db.Now()
 	if _, err := tx.ExecContext(r.Context(), `INSERT INTO account_timeouts(user_id,restores,reason,applied_by,applied_at,expires_at) VALUES(?,?,?,?,?,?)
 		ON CONFLICT(user_id) DO UPDATE SET restores=excluded.restores,reason=excluded.reason,applied_by=excluded.applied_by,applied_at=excluded.applied_at,expires_at=excluded.expires_at`,
-		input.UserID, restores, input.Reason, principal.UserID, now, db.Timestamp(expiresAt)); err != nil {
+		target, restores, input.Reason, principal.UserID, now, db.Timestamp(expiresAt)); err != nil {
+		s.failed(w, err)
+		return
+	}
+	// The revision has to advance here, before the commit that publishes it. The
+	// commit protocol *reads* the revision the change produces; it does not create one.
+	// A timeout that reached the protocol without this call reported success, committed
+	// the row, audited it, and left the revision where it was — so work already queued
+	// for the account was still admissible, and a writer that decided afterwards could
+	// not tell the difference (completion review 14, V14-03: 1 -> 1).
+	if _, err := db.BumpAuthorizationRevision(r.Context(), tx); err != nil {
 		s.failed(w, err)
 		return
 	}
@@ -185,16 +211,17 @@ func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.Us
 	// rather than a bare write: the revision advances under the fence, the account's
 	// own connections are invalidated, and queued work resolved against the older
 	// revision is refused.
-	if err := s.commitAuthorityChange(r.Context(), tx, "account.timed_out", input.UserID); err != nil {
-		s.failed(w, err)
-		return
-	}
-	if err := tx.Commit(); err != nil {
+	// `commitAuthorityChange` commits. Calling `tx.Commit` again afterwards is not a
+	// redundant safety net: the second call fails, and the handler reports a 500 for
+	// work that already succeeded. A moderator sees "the server couldn't complete that
+	// request" for a timeout that is in force, and retries — and the retry is a second
+	// authority change on top of the first.
+	if err := s.commitAuthorityChange(r.Context(), tx, "account.timed_out", target); err != nil {
 		s.failed(w, err)
 		return
 	}
 	respond(w, http.StatusOK, map[string]any{
-		"user_id": input.UserID, "expires_at": db.Timestamp(expiresAt), "reason": input.Reason,
+		"user_id": target, "expires_at": db.Timestamp(expiresAt), "reason": input.Reason,
 	})
 }
 
@@ -229,11 +256,16 @@ func (s *Server) liftTimeout(w http.ResponseWriter, r *http.Request, user db.Use
 		hidden(w)
 		return
 	}
-	if err := s.commitAuthorityChange(r.Context(), tx, "account.timeout_lifted", r.PathValue("id")); err != nil {
+	// Lifting restores the account's access, so it advances the revision for the same
+	// reason applying did. A lift that leaves the revision where it was tells a writer
+	// that nothing changed when something did.
+	if _, err := db.BumpAuthorizationRevision(r.Context(), tx); err != nil {
 		s.failed(w, err)
 		return
 	}
-	if err := tx.Commit(); err != nil {
+	// Commits, as above; a second `tx.Commit` here reported 500 for a lift that had
+	// already been applied and audited.
+	if err := s.commitAuthorityChange(r.Context(), tx, "account.timeout_lifted", r.PathValue("id")); err != nil {
 		s.failed(w, err)
 		return
 	}
@@ -257,10 +289,12 @@ func (s *Server) mayTimeout(ctx context.Context, q db.Queryer, principal authz.P
 	return s.mayAdminister(ctx, q, principal, target)
 }
 
-// recordedCapabilities snapshots what an account holds, for expiry to replay. It
-// reads the assignments rather than the roles' permissions, because a role's
-// permissions can be edited while a timeout runs and the account's position at the
-// time is what a timeout is about.
+// recordedCapabilities records what an account held when the timeout was applied.
+//
+// The value is still written, for an installation upgrading from a build whose expiry
+// did replay it, and for an operator reading a row to see what was true at the time.
+// Nothing replays it any more, and that is the point: a snapshot is a statement about
+// the past, and authority is a statement about the present.
 func (s *Server) recordedCapabilities(ctx context.Context, q db.Queryer, userID string) (string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT role_id FROM role_assignments WHERE user_id=? ORDER BY role_id`, userID)
 	if err != nil {
@@ -304,36 +338,23 @@ func (s *Server) expireTimeouts(ctx context.Context, tx *sql.Tx) (int, error) {
 		return 0, err
 	}
 	for _, row := range expired {
-		// The recorded snapshot is what is restored, not the current assignments.
-		// Re-deriving them would be wrong in the one case that matters: a role
-		// removed *during* the timeout must stay removed.
-		if err := s.restoreAssignments(ctx, tx, row.id, row.restores); err != nil {
-			return 0, err
-		}
+		// Nothing is restored, because a timeout never took anything away.
+		//
+		// This used to replay a snapshot of the account's role assignments, on the
+		// reasoning that a role removed *during* the timeout must stay removed. It did
+		// the opposite: the snapshot predated the removal, so restoring it put the role
+		// back. Reproduced — a role revoked through `/api/admin/users/{id}/roles` while
+		// a timeout ran came back when the timeout expired, with the operator's
+		// revocation silently undone by a maintenance sweep nobody was watching.
+		//
+		// A timeout suspends an account. It does not change what the account holds, so
+		// expiry has nothing to undo. The snapshot is kept in the column for rows written
+		// by older builds and is simply not acted on.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM account_timeouts WHERE user_id=?`, row.id); err != nil {
 			return 0, err
 		}
 	}
 	return len(expired), nil
-}
-
-func (s *Server) restoreAssignments(ctx context.Context, tx *sql.Tx, userID, recorded string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE user_id=?`, userID); err != nil {
-		return err
-	}
-	if recorded == "" {
-		return nil
-	}
-	now := db.Now()
-	for _, roleID := range strings.Split(recorded, ",") {
-		if roleID == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO role_assignments(user_id,role_id,created_at) VALUES(?,?,?)`, userID, roleID, now); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // timeoutState reports whether an account is inside a timeout, and lifts an expired
@@ -357,13 +378,9 @@ func (s *Server) timeoutState(ctx context.Context, userID string) (suspended boo
 		return false, ""
 	}
 	if expires <= db.Now() {
-		var restores string
-		if err := tx.QueryRowContext(ctx, `SELECT restores FROM account_timeouts WHERE user_id=?`, userID).Scan(&restores); err != nil {
-			return false, ""
-		}
-		if err := s.restoreAssignments(ctx, tx, userID, restores); err != nil {
-			return false, ""
-		}
+		// Lifting the row is the whole action. See `expireTimeouts` for why nothing is
+		// restored, and why replaying the recorded snapshot put back roles that had
+		// been revoked while the timeout ran.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM account_timeouts WHERE user_id=?`, userID); err != nil {
 			return false, ""
 		}

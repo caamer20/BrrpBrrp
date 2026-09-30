@@ -855,3 +855,45 @@ reviewer* must be refused. Those asserted the defect, so they were corrected rat
 satisfied: the evidence capability is now the granting one, and every case checks both
 directions, because a policy only ever tested in the denying direction is a policy
 nobody has confirmed still works. ADR 0013 records the decision and its reasoning.
+
+
+**V14-03, timeouts.** Four defects, all reproduced before being fixed.
+
+*The route the interface calls did not exist.* The server registered
+`/api/admin/accounts/{id}/timeout` and the interface called
+`/api/admin/users/{id}/timeout` — a 405 for every timeout a moderator applied. The
+`accounts/` path was the only one in the family; it is now `users/`, like every other
+account route.
+
+*500 after committing.* `commitAuthorityChange` commits. Both handlers committed again,
+so a moderator saw "the server couldn't complete that request" for a timeout that was
+in force and audited — and a retry applied a second authority change on top of the
+first. The lift had the same double commit and the same 500 for work already done.
+
+*Two targets.* `applyTimeout` read its account from the request body while `liftTimeout`
+read it from the path, so the two halves of the feature disagreed about which account
+they were acting on. The route is authoritative now, and a body naming a different
+account is refused with both accounts asserted untouched.
+
+*The revision did not advance.* The authority commit protocol reads the revision a
+change produces; it does not create one. A timeout reached it without bumping first, so
+the revision stayed at 1 → 1: the row committed, the audit was written, and work already
+queued for the account was still admissible. Applying and lifting both advance it.
+
+*Expiry replayed a role snapshot, and the ADR said to.* A role revoked through
+`/api/admin/users/{id}/roles` while a timeout ran came back when the timeout expired —
+reproduced, and the existing test asserted the outcome and called the cost "real". A
+timeout does not touch role assignments, so expiry restores nothing; the recorded value
+is still written for an operator reading a row, and nothing replays it. ADR 0018
+corrected.
+
+*Community scope.* A timeout was enforced on every route, so a community moderator's
+timeout denied private conversations, private activity and private calls. `BeyondCommunity`
+now marks the surfaces a timeout does not close, defaulting closed so a new route is
+suspended until somebody says which kind it is. A timeout also does not mark the account
+banned or deactivated and does not end its sessions.
+
+The operator-facing copy claimed the account "regains exactly the access it had when
+the timeout started" — true of the defect, false of the fix. It now describes what a
+timeout does and does not reach, and the duration is a set of named choices rather than
+a number box, which had no input bound to it at all.

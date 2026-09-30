@@ -16,18 +16,63 @@ current capability**, never the assignment. An assignment to an account that has
 lost the capability is a stale claim, not a grant, and the report it names stays
 reviewable by whoever still holds the capability.
 
-## A timeout restores only the powers the account otherwise has
+## A timeout changes nothing, so expiry restores nothing
 
-A timeout suspends an account until a time. When it expires, the account gets back
-**precisely what it had before** — its roles, its channel access, its positions — and
-nothing else. A timeout is not a role change that happens to be undone, and it must
-not be implemented as one: an account that was banned before a timeout, or had a role
-removed during it, returns to the state that was recorded, not to a default.
+A timeout suspends an account until a time. It is **not** a role change that happens
+to be undone, and it is not implemented as one: it does not touch role assignments at
+all. When it expires the account has **precisely what it has now** — its roles, its
+channel access, its positions — because nothing was taken away.
 
-Because that is easy to get subtly wrong, expiry restores the recorded snapshot and
-**clears the timeout row in the same transaction**, so there is no window in which an
-account is both suspended and unsuspended, and a re-login mid-expiry cannot observe one
-without the other.
+Expiry clears the timeout row and nothing else, in the same transaction as the read, so
+there is no window in which an account is both suspended and unsuspended and a re-login
+mid-expiry cannot observe one without the other.
+
+This section previously specified that expiry **replays a recorded snapshot** of the
+account's role assignments, on the reasoning that "a role removed during the timeout must
+stay removed". It did the opposite. The snapshot predated the removal, so replaying it
+put the role back: reproduced with a role revoked through
+`/api/admin/users/{id}/roles` while a timeout ran, which came back when the timeout
+expired. A moderator's revocation was undone by a maintenance sweep nobody was
+watching, and the test asserted the outcome and called the cost "real".
+
+A snapshot is a statement about the past. Authority is a statement about the present.
+The recorded value is still written — for an operator reading a row to see what was
+true when the timeout was applied, and for installations upgrading from a build whose
+expiry acted on it — and nothing replays it.
+
+**The revision has to advance.** The authority commit protocol *reads* the revision a
+change produces; it does not create one. A timeout that reached the protocol without
+bumping it first reported success, committed the row, audited it, and left the
+revision at 1 → 1 — so work already queued for the account was still admissible, and a
+writer that decided afterwards could not tell the difference. Applying and lifting
+both advance it, because lifting restores the account's access.
+
+**One target, one commit.** `commitAuthorityChange` commits. The handlers committed
+again, so a moderator saw 500 for a timeout that was in force and audited, and a retry
+applied a second authority change on top of the first. The route was registered under
+`/api/admin/accounts/{id}/timeout` while the interface calls `/api/admin/users/{id}/timeout`,
+and `applyTimeout` read its target from the request body while `liftTimeout` read it
+from the path — the two halves of the feature disagreed about which account they were
+acting on. The route is now the one the interface calls, the route is authoritative,
+and a body naming a different account is refused rather than silently resolved.
+
+## A community timeout is not an installation ban
+
+A timeout is a **community** moderation decision. It suspends an account from the
+community and nothing else: not its direct conversations, not its private activity, not
+a private call, and not any role it holds. An installation-wide ban is a separate
+authority with its own route and its own rules.
+
+Routes say which kind they are. `BeyondCommunity` on a route policy marks a surface a
+timeout must not close, and the default is closed — a new route is suspended until
+somebody has said which kind it is. That asymmetry is deliberate: adding a private route
+that forgets the mark leaves it suspended, which is recoverable. Forgetting it on a
+route that has it leaves a community moderator holding somebody's private life
+hostage, which is not.
+
+A timeout does not mark the account banned or deactivated, and does not end its
+sessions. A ban does; one that arrives as a side effect of a timeout is a ban nobody
+decided to apply.
 
 ## Hierarchy is decided by authority level, not by who is asking
 

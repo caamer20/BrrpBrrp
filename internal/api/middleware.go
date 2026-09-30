@@ -31,6 +31,18 @@ type routePolicy struct {
 	// Note records why a non-obvious policy is correct, so the inventory reads as
 	// a review document rather than a list of names.
 	Note string
+	// BeyondCommunity marks a route a moderation timeout must not close. A community
+	// timeout suspends an account's ability to participate in the community; it is not
+	// an installation ban, and it must not read as one by denying private history,
+	// direct conversations or a private call. An installation ban is a separate
+	// authority with its own rules and its own routes (ADR 0018, completion review 14,
+	// V14-03).
+	//
+	// The default is closed — a timeout stops the account everywhere — because a new
+	// route should be suspended until somebody has said which kind it is. Getting that
+	// wrong in this direction is recoverable; getting it wrong in the other direction
+	// is a community moderator holding somebody's private conversations hostage.
+	BeyondCommunity bool
 }
 
 // administrativeCapabilities reach administration surfaces. Mutations behind
@@ -71,8 +83,13 @@ func (s *Server) protect(policy routePolicy, next authenticatedHandler) http.Han
 		// timeout is a decision about what the account may do and its session is still
 		// valid, so 403 with an explanation is the honest answer.
 		if principal.Inactive {
-			if suspended, _ := s.timeoutState(r.Context(), user.ID); suspended {
+			if suspended, _ := s.timeoutState(r.Context(), user.ID); suspended && !policy.BeyondCommunity {
 				problem(w, http.StatusForbidden, "This account is suspended until a moderation timeout expires. Contact a moderator if you think this is a mistake.")
+			} else if suspended {
+				// Suspended, but this route is beyond what a community timeout reaches.
+				// The person is not signed out and not banned; they cannot participate in
+				// the community until the timeout ends.
+				w.Header().Set("X-Brrpbrrp-Timeout", "community")
 			} else {
 				problem(w, http.StatusUnauthorized, "Please sign in again.")
 			}

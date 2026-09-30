@@ -267,8 +267,8 @@ func (s *Server) routes() []route {
 		{http.MethodDelete, "/api/threads/{id}/follow", routePolicy{Note: "unfollowing never touches messages or read state"}, s.unfollowThreadRoute},
 		{http.MethodPut, "/api/threads/{id}/state", routePolicy{Capability: authz.ChannelManage, Note: "archiving, reopening and locking a thread change what the whole channel can write"}, s.setThreadState},
 		{http.MethodPost, "/api/admin/reports/{id}/assign", routePolicy{Capability: authz.MessageDeleteAny, Note: "a claim about who reviews, not a grant; the reviewer still needs their own current capability"}, s.assignReport},
-		{http.MethodPost, "/api/admin/accounts/{id}/timeout", routePolicy{Capability: authz.MemberManage, Note: "the downward-only hierarchy check runs inside the transaction against current authority"}, s.applyTimeout},
-		{http.MethodDelete, "/api/admin/accounts/{id}/timeout", routePolicy{Capability: authz.MemberManage, Note: "lifting early is a recorded decision, distinct from expiry"}, s.liftTimeout},
+		{http.MethodPost, "/api/admin/users/{id}/timeout", routePolicy{Capability: authz.MemberManage, Note: "the downward-only hierarchy check runs inside the transaction against current authority"}, s.applyTimeout},
+		{http.MethodDelete, "/api/admin/users/{id}/timeout", routePolicy{Capability: authz.MemberManage, Note: "lifting early is a recorded decision, distinct from expiry"}, s.liftTimeout},
 		// A member's own data. Gated on recent strong authentication because the file
 		// leaves the building, which is the only read path in the application that does
 		// (ADR 0019b).
@@ -277,11 +277,11 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/api/me/export/{id}", routePolicy{Note: "authority is re-read at download, not only at build: a file must not outlive the permission that made it"}, s.downloadExport},
 		{http.MethodDelete, "/api/me/export/{id}", routePolicy{Note: "the member's own deletion of a produced file"}, s.deleteExport},
 		{http.MethodGet, "/api/admin/alerts", routePolicy{Capability: authz.OperatorBackup, Note: "answered by what was delivered, not by what is configured; a destination that has never delivered is worse than none"}, s.alertStatusHandler},
-		{http.MethodGet, "/api/directs", routePolicy{Note: "own consented conversations and contact requests only; gated"}, s.listDirectConversations},
-		{http.MethodPost, "/api/directs", routePolicy{Note: "current consent/contact policy; new requests recheck message.send"}, s.createDirectConversation},
-		{http.MethodPost, "/api/directs/{id}/accept", routePolicy{Note: "only intended recipient may accept a direct request"}, s.acceptDirectConversation},
-		{http.MethodPost, "/api/directs/{id}/reject", routePolicy{Note: "recipient rejects or requester withdraws a pending direct request"}, s.rejectDirectConversation},
-		{http.MethodPut, "/api/directs/{id}/visibility", routePolicy{Note: "hides or reopens only caller conversation list entry"}, s.setDirectVisibility},
+		{http.MethodGet, "/api/directs", routePolicy{BeyondCommunity: true, Note: "own consented conversations and contact requests only; gated"}, s.listDirectConversations},
+		{http.MethodPost, "/api/directs", routePolicy{BeyondCommunity: true, Note: "current consent/contact policy; new requests recheck message.send"}, s.createDirectConversation},
+		{http.MethodPost, "/api/directs/{id}/accept", routePolicy{BeyondCommunity: true, Note: "only intended recipient may accept a direct request"}, s.acceptDirectConversation},
+		{http.MethodPost, "/api/directs/{id}/reject", routePolicy{BeyondCommunity: true, Note: "recipient rejects or requester withdraws a pending direct request"}, s.rejectDirectConversation},
+		{http.MethodPut, "/api/directs/{id}/visibility", routePolicy{BeyondCommunity: true, Note: "hides or reopens only caller conversation list entry"}, s.setDirectVisibility},
 		{http.MethodGet, "/api/me/contact-preferences", routePolicy{Note: "own contact preferences"}, s.contactPreferences},
 		{http.MethodPut, "/api/me/contact-preferences", routePolicy{Note: "own contact preferences"}, s.setContactPreferences},
 		{http.MethodGet, "/api/me/blocks", routePolicy{Note: "own blocked contacts only"}, s.listBlocks},
@@ -342,31 +342,31 @@ func (s *Server) routes() []route {
 		// Recipient-only reporting of a pending request, and the durable command
 		// receipt that makes it retryable (ADR 0014). Neither route consults
 		// accepted-history access: a pending recipient has none, which is the point.
-		{http.MethodGet, "/api/directs/{id}/report-preview", routePolicy{Note: "the exact introduction a report would save, for the recipient of the current attempt only"}, s.previewRequestEvidence},
-		{http.MethodPost, "/api/directs/{id}/report-and-block", routePolicy{Note: "stores introduction evidence, rejects the request, clears it and blocks the sender in one transaction; never accepts contact"}, s.reportRequestAndBlock},
+		{http.MethodGet, "/api/directs/{id}/report-preview", routePolicy{BeyondCommunity: true, Note: "the exact introduction a report would save, for the recipient of the current attempt only"}, s.previewRequestEvidence},
+		{http.MethodPost, "/api/directs/{id}/report-and-block", routePolicy{BeyondCommunity: true, Note: "stores introduction evidence, rejects the request, clears it and blocks the sender in one transaction; never accepts contact"}, s.reportRequestAndBlock},
 		{http.MethodGet, "/api/me/report-receipt", routePolicy{Note: "the caller's own minimal outcome for their own operation key; never reviewer or evidence data"}, s.ownReportReceipt},
 		// Durable account activity is the caller's own record of what it was told
 		// about, and is readable only about the signed-in account. It is not a
 		// privileged view of anyone else's inbox, and a row is filtered against
 		// current access before it is returned (ADR 0015).
-		{http.MethodGet, "/api/me/activity", routePolicy{Capability: capabilityForActivity(), Note: "the caller's own activity, filtered by current access; never another account's"}, s.listActivity},
-		{http.MethodPost, "/api/me/activity/acknowledge", routePolicy{Capability: capabilityForActivity(), Note: "monotonic acknowledgment of the caller's own activity; separate from reading so a failed read cannot consume it"}, s.acknowledgeActivity},
-		{http.MethodGet, "/api/me/notification-preferences", routePolicy{Note: "the caller's own private notification preferences, defaulting to the documented quiet defaults"}, s.privateNotificationPreference},
+		{http.MethodGet, "/api/me/activity", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "the caller's own activity, filtered by current access; never another account's"}, s.listActivity},
+		{http.MethodPost, "/api/me/activity/acknowledge", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "monotonic acknowledgment of the caller's own activity; separate from reading so a failed read cannot consume it"}, s.acknowledgeActivity},
+		{http.MethodGet, "/api/me/notification-preferences", routePolicy{BeyondCommunity: true, Note: "the caller's own private notification preferences, defaulting to the documented quiet defaults"}, s.privateNotificationPreference},
 		// Groups are the shared conversation model with kind='group' and membership,
 		// not a second message service. Listing is the caller's own groups; inviting
 		// and accepting are separate acts, and only the recipient may accept
 		// (ADR 0016).
-		{http.MethodGet, "/api/groups", routePolicy{Capability: capabilityForActivity(), Note: "groups the caller has accepted; a group they were only invited to is not listed"}, s.listGroups},
-		{http.MethodPost, "/api/groups", routePolicy{Capability: capabilityForActivity(), Note: "open a group; the creator is its owner and first member"}, s.createGroup},
-		{http.MethodGet, "/api/groups/{id}/members", routePolicy{Capability: capabilityForActivity(), Note: "the membership list of a group the caller has joined, for the three actions ownership governs"}, s.listGroupMembers},
-		{http.MethodPost, "/api/groups/{id}/invite", routePolicy{Capability: capabilityForActivity(), Note: "invite one person to a group; owner only, and the invitation names the history rule"}, s.inviteToGroup},
-		{http.MethodPost, "/api/groups/{id}/leave", routePolicy{Capability: capabilityForActivity(), Note: "leave a group; an owner must transfer or name a successor in the same act"}, s.leaveGroup},
-		{http.MethodPost, "/api/groups/{id}/members/{user}/remove", routePolicy{Capability: capabilityForActivity(), Note: "remove a member; owner only, and what they read before stays theirs"}, s.removeGroupMember},
-		{http.MethodPost, "/api/groups/{id}/transfer", routePolicy{Capability: capabilityForActivity(), Note: "move group ownership atomically to an accepted member"}, s.transferGroupOwnership},
+		{http.MethodGet, "/api/groups", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "groups the caller has accepted; a group they were only invited to is not listed"}, s.listGroups},
+		{http.MethodPost, "/api/groups", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "open a group; the creator is its owner and first member"}, s.createGroup},
+		{http.MethodGet, "/api/groups/{id}/members", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "the membership list of a group the caller has joined, for the three actions ownership governs"}, s.listGroupMembers},
+		{http.MethodPost, "/api/groups/{id}/invite", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "invite one person to a group; owner only, and the invitation names the history rule"}, s.inviteToGroup},
+		{http.MethodPost, "/api/groups/{id}/leave", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "leave a group; an owner must transfer or name a successor in the same act"}, s.leaveGroup},
+		{http.MethodPost, "/api/groups/{id}/members/{user}/remove", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "remove a member; owner only, and what they read before stays theirs"}, s.removeGroupMember},
+		{http.MethodPost, "/api/groups/{id}/transfer", routePolicy{BeyondCommunity: true, Capability: capabilityForActivity(), Note: "move group ownership atomically to an accepted member"}, s.transferGroupOwnership},
 		{http.MethodGet, "/api/group-invitations", routePolicy{Capability: capabilityForActivity(), Note: "invitations addressed to the caller, plus the ones their own groups have sent"}, s.listGroupInvitations},
 		{http.MethodPost, "/api/group-invitations/{id}/accept", routePolicy{Capability: capabilityForActivity(), Note: "the recipient's act alone; the inviter cannot accept for them"}, s.acceptGroupInvitation},
 		{http.MethodPost, "/api/group-invitations/{id}/reject", routePolicy{Capability: capabilityForActivity(), Note: "the recipient declining; recorded rather than deleted"}, s.rejectGroupInvitation},
-		{http.MethodPut, "/api/me/notification-preferences", routePolicy{Note: "interruption preferences only; grants no access and changes no history"}, s.setPrivateNotificationPreference},
+		{http.MethodPut, "/api/me/notification-preferences", routePolicy{BeyondCommunity: true, Note: "interruption preferences only; grants no access and changes no history"}, s.setPrivateNotificationPreference},
 		{http.MethodGet, "/api/admin/request-reports", routePolicy{Capability: authz.ReportReviewPrivate, Note: "submitted request-introduction evidence only; the conversation is omitted and cannot be opened"}, s.listRequestEvidence},
 		{http.MethodPatch, "/api/admin/request-reports/{id}", routePolicy{Capability: authz.ReportReviewPrivate, Note: "nonpunitive triage of one request evidence record"}, s.reviewRequestEvidence},
 		{http.MethodGet, "/api/admin/private-reports/audit", routePolicy{Capability: authz.ReportReviewPrivate, Note: "the restricted audit feed: who reported private evidence and who reviewed it. It names reporter and reviewer, so it is read under the evidence capability rather than the community audit one — an account refused the evidence is not told the evidence exists (V14-01)"}, s.privateEvidenceAuditLogs},

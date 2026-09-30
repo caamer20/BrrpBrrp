@@ -21,6 +21,15 @@
   let confirm = $state('');
   let reason = $state('');
   let timeoutMinutes = $state('60');
+  // Named durations rather than a number box. A moderator applying a timeout is
+  // choosing between "an hour", "tomorrow", "next week" and "a month", and a field
+  // expecting 10080 is a field they get wrong.
+  const TIMEOUT_PRESETS = [
+    { minutes: 60, label: '1 hour' },
+    { minutes: 60 * 24, label: '1 day' },
+    { minutes: 60 * 24 * 7, label: '7 days' },
+    { minutes: 60 * 24 * 30, label: '30 days (the maximum)' }
+  ];
   // Role assignment is its own panel: it replaces a set rather than confirming a
   // single destructive action, so it does not fit the confirm-by-username flow.
   let roleTarget = $state<User | null>(null);
@@ -132,7 +141,7 @@
           action === 'Remove second factor'
             ? 'Second factor removed. Tell them to enroll a new one as soon as they sign in.'
             : action === 'Suspend for a while'
-              ? `Account suspended. It regains exactly the access it had when the timeout started, in ${timeoutMinutes} minutes.`
+              ? `Account suspended from the community for ${timeoutMinutes} minutes. Private conversations, messages and their roles are not affected, and a role you remove while the timeout runs stays removed.`
               : action === 'End timeout early'
                 ? 'Timeout ended. The account can act again.'
                 : 'Account updated.';
@@ -215,6 +224,20 @@
       {#if action === 'Ban'}<label
           >Reason (optional)<input bind:value={reason} maxlength={300} /></label
         >{/if}
+      {#if action === 'Suspend for a while'}
+        <label
+          >How long<select bind:value={timeoutMinutes}>
+            {#each TIMEOUT_PRESETS as preset}<option value={String(preset.minutes)}
+                >{preset.label}</option
+              >{/each}
+          </select></label
+        ><label>Reason (optional)<input bind:value={reason} maxlength={300} /></label>
+        <p class="muted">
+          A timeout suspends this account from the community. It does not close their private
+          conversations, read their messages, or change any role they hold. If you remove a role
+          while the timeout is running, it stays removed when it ends.
+        </p>
+      {/if}
       <label
         >Type {target?.username} to confirm<input
           bind:value={confirm}
