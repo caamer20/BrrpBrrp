@@ -1,15 +1,15 @@
 {
   "milestone": "M5 — both-host operations, capacity qualification, public release engineering",
-  "source_commit": "abe5537749c598db80234f972e93b7f02942ebc8",
+  "source_commit": "01ed1f58db4c6821df45aab59c46af96525d5d06",
   "schema": 21,
   "backup_format": 2,
   "race": {
     "command": ".tools/go/bin/go test -race -count=1 -timeout 40m ./...",
     "result": "PASS",
     "packages": 10,
-    "api_seconds": 2031.621,
+    "api_seconds": 1959.611,
     "data_races": 0,
-    "note": "An earlier run reported a race in a test added for the screen forwarder, which read a peer output list without the SFU lock while a connection-state callback could remove that peer. It reproduced only sometimes, which is the property of a race. Fixed by reading under the lock through a named helper; the full suite is green."
+    "note": "An earlier run reported a race in a test added for the screen forwarder, which read a peer output list without the SFU lock while a connection-state callback could remove that peer. It reproduced only sometimes, which is the property of a race. Fixed by reading under the lock through a named helper."
   },
   "capacity": {
     "tooling": [
@@ -41,5 +41,21 @@
     "No container runtime qualification: static Dockerfile checks are not Docker runtime.",
     "No signed Windows download, no canonical public repository or registry identity, and no Git remote configured in this environment.",
     "No independent security or accessibility review, no physical-device observation, and no beta."
-  ]
+  ],
+  "media": {
+    "decision": "docs/adr/0019-media-architecture.md",
+    "measurement": "planning/m4-checkpoint/video-forwarding.json",
+    "measured": "one publisher to nine viewers at 2500 kbit/s, 15s, 16-core development host: 36369 packets forwarded, mean egress 23.28 Mbit/s against the plan arithmetic of 22.50, peak heap 37.4 MiB",
+    "not_the_reference_allocation": true,
+    "gaps_found": [
+      "MaxParticipants bounds the whole server at ten where the plan targets twenty serverwide — a capacity decision for the owner, not a benchmark",
+      "a client could not ask to watch a screen without being treated as a publisher — now fixed, with the refusal for an unmarked offer kept"
+    ],
+    "not_established": [
+      "synthetic RTP in one process: the forwarding path, not an encoded video pipeline, network, browser or codec",
+      "loopback: no NIC and no TURN relay",
+      "no decoder and no client, so nothing says a picture arrives intact",
+      "not run on the reference allocation or on either required deployment"
+    ]
+  }
 }
