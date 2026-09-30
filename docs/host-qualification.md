@@ -184,6 +184,39 @@ Record the **actual candidate type chosen** (host / srflx / relay) for each case
 "Tailscale and HTTPS both worked" does not establish that media worked; it establishes
 that the page loaded.
 
+### 3.1 Two bounds the local measurement exposed
+
+The video-forwarding measurement (`planning/m4-checkpoint/video-forwarding.json`)
+found two gaps between the plan's targets and the product's current limits. Both are
+qualified here, on real hardware, rather than in a local benchmark:
+
+- **The server-wide media bound is ten; the plan targets twenty.** `MaxParticipants`
+  counts the whole server, so two publishers with nine viewers each is not reachable
+  today regardless of how much forwarding headroom exists. Confirm the *intended* bound
+  with the owner before changing it: raising it is a product decision about a
+  community's capacity, not a performance one.
+- **A client cannot yet ask to watch a screen without being treated as a second
+  publisher.** A second offer with no publication name is refused. A real two-client
+  screen-share run is what shows whether a viewer receives anything, because the local
+  harness counts the server's writes rather than a client's receipt.
+
+### 3.2 The video forwarding measurement, on the reference allocation
+
+The local run measured 23.28 Mbit/s of egress and 37.4 MiB of heap for one publisher
+to nine viewers, on a **sixteen-core development host**. That is not the reference
+allocation. Repeat it on the four-core, 8 GiB target and record CPU, RSS and egress:
+
+```sh
+BRRP_VIDEO_LOAD_SECONDS=120 \
+BRRP_VIDEO_LOAD_REPORT=check-results/video-forwarding.json \
+go test -count=1 -timeout 10m -run TestVideoForwardingLoad -v ./internal/rtc/
+```
+
+Compare against the master plan's budgets — mean CPU ≤65%, one-minute p95 ≤85%, RSS
+≤2 GiB, egress below 70% of the reference link. A figure that fails there is a reason
+to reduce the qualified media profile or to raise the documented link requirement
+**before** release, not afterwards.
+
 ---
 
 ## 4. Evidence template
