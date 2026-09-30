@@ -128,18 +128,50 @@ message from carrying a private conversation's scope on a channel row; the same
 separation applies to media, and a private room must not be reachable by guessing a
 channel id.
 
-## 6. The measurement this decision is conditional on
+## 6. The measurement this decision is conditional on — now made, and what it changed
 
 `docs/v1-implementation-plan.md:812-815` records the arithmetic: two 2.5 Mbit/s screen
 shares forwarded to nine viewers is roughly **45 Mbit/s of egress** from one process that
-is also serving HTTP, SQLite and WebSocket.
+is also serving HTTP, SQLite and WebSocket. The plan also says: "Do not label this
+arithmetic a load-test result."
 
-Before committing to the embedded path for *video*, measure the rewritten core under
-the reference allocation (four cores, 8 GiB) with real encoded video at the planned
-bitrates, and record CPU, RSS and egress. If the forwarding cost is not comfortably
-inside the master plan's budgets, **revisit this ADR** — the point at which an external
-SFU stops being a rewrite of the same logic and starts being a different deployment is
-exactly this measurement.
+**The measurement has now been made** and is recorded in
+`planning/m4-checkpoint/video-forwarding.json`. One publisher to nine viewers at
+2,500 kbit/s for fifteen seconds on a sixteen-core development host: 36,369 packets
+forwarded, **mean egress 23.28 Mbit/s** against the plan's arithmetic of 22.50 for the
+same combination, peak server heap 37.4 MiB, mean 1,114 goroutines. The measured rate
+lands 3.5% above the estimate, which is what a path that copies every packet should
+look like.
+
+**The decision stands for audio and for the forwarding shape of video, on three
+grounds that the measurement supports:**
+
+- The forwarding cost is not a bottleneck at this scale. Twenty-two Mbit/s through one
+  Go process's RTP path, with the heap under forty megabytes, leaves the HTTP, SQLite
+  and WebSocket work room on the allocation the plan names.
+- The measurement is the *server's* work, which is exactly the work an external SFU
+  would move off this host. So the measurement is a reason to keep the work here.
+- Nothing in it favours a different deployment: an external SFU would add a network
+  hop and a process to do work this one is measured doing cheaply.
+
+**Two capacity gaps it found, which are targets in the plan and not limits in the
+product yet:**
+
+- `MaxParticipants` bounds the **whole server** at ten. The plan targets twenty
+  serverwide, at most ten in one room. Two publishers with nine viewers each is
+  therefore not reachable today, and no amount of forwarding headroom changes that —
+  it is a bound, not a cost.
+- A client cannot currently ask to *watch* a screen: a second offer with no
+  publication name is refused as an unnamed publication, so a viewer is treated as a
+  second publisher.
+
+**What the measurement does not establish**, and says inside the report itself:
+synthetic RTP in one process, so the forwarding path rather than an encoded video
+pipeline, a network, a browser or a codec; loopback, so no NIC and no TURN relay; no
+decoder, so nothing here says a picture arrives intact; and **not on the reference
+allocation** (four cores, 8 GiB) or on either required deployment. A rerun there is
+required before the video profile is qualified, and it is listed with the host
+qualification in `docs/host-qualification.md` §3.
 
 Two things cannot be measured here and are not claimed:
 
