@@ -161,9 +161,27 @@ product yet:**
   serverwide, at most ten in one room. Two publishers with nine viewers each is
   therefore not reachable today, and no amount of forwarding headroom changes that —
   it is a bound, not a cost.
-- A client cannot currently ask to *watch* a screen: a second offer with no
+- A client cannot currently ask to *watch* a screen. A second offer with no
   publication name is refused as an unnamed publication, so a viewer is treated as a
   second publisher.
+
+**On that second gap — what is known and what is not.** A fix was attempted and
+**did not work**, and the reason is worth recording because it is not obvious. The
+server must distinguish a viewer (adding only a receiving track) from a publisher
+(adding a sending one), and the text of the offer cannot make the distinction: a
+transceiver created with `AddTransceiverFromKind` produces a media section with *no
+direction attribute*, which the SDP default makes `sendrecv`, so a viewer and a
+publisher can produce byte-identical offers. The negotiated transceivers are the
+only reliable source — and Pion **reuses a same-kind transceiver** rather than
+creating a second one, so a bare `recvonly` video offer matches the server's existing
+`sendonly` screen output and the direction stays `sendonly`. Detecting the viewer
+therefore needs the client's track to carry a distinct stream id so it lands on its
+own m-line, which is what a real browser does and what the harness did not.
+
+That is understood but **not yet fixed and not tested**, so nothing here claims a
+viewer can watch a screen. The attempt and its revert are visible in the history. A
+screen share today reaches the server's forwarders — which is what the measurement
+above measures — and a *client's* receipt of it is unproven.
 
 **What the measurement does not establish**, and says inside the report itself:
 synthetic RTP in one process, so the forwarding path rather than an encoded video
