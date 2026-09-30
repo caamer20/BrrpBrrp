@@ -1,0 +1,56 @@
+{
+  "milestone": "M3 — threads, moderation and everyday polish",
+  "candidate": "0.4.0-alpha.7",
+  "source_commit": "bd1e49f3b489b0da02375d0319e94ddcbbe049e0",
+  "schema": 20,
+  "backup_format": 2,
+  "closed": {
+    "WP-13 named threads": "created from a message, titled, followed, lock/archive, root tombstone, channel-inherited authorization, bounded cursor navigation, 1000-reply fixture reachable with no duplicates",
+    "WP-15 moderation": "report assignment as a claim, expiring timeouts restoring the recorded snapshot, bounded multi-use expiring revocable invitations, downward-only hierarchy inside the transaction",
+    "WP-16 composer": "message tokenizer: code blocks are literal, only http/https become links, mentions must be whole tokens and not email local parts, no raw HTML"
+  },
+  "rehearsals": {
+    "schema13_to_current": {
+      "result": "PASS",
+      "note": "expected 14,15,16,17,18,19,20 beyond 13; none skipped, none reordered"
+    },
+    "community_recovery": {
+      "checks": 23,
+      "passed": true,
+      "schema": 20
+    },
+    "private_recovery": {
+      "checks": 113,
+      "passed": true
+    },
+    "rollback": {
+      "checks": 57,
+      "passed": true,
+      "from": "0.4.0-alpha.6 (schema 12)",
+      "to": "0.4.0-alpha.7 (schema 20)"
+    },
+    "browser": {
+      "default_off": 15,
+      "private_enabled": 25,
+      "passed": true
+    },
+    "go": {
+      "packages": 10,
+      "passed": true
+    },
+    "frontend": {
+      "tests": 163,
+      "svelte_files": 142,
+      "errors": 0,
+      "warnings": 0,
+      "passed": true
+    }
+  },
+  "not_established": [
+    "No host qualification: Windows native/Tailscale and Linux Docker are unexercised.",
+    "No physical-device, screen-reader or assistive-technology testing.",
+    "No independent security or accessibility review.",
+    "No distribution: dist/brrpbrrp is a development build and the alpha.7 archives under dist/releases remain historical schema-14 packages.",
+    "No G0-G8 gate is passed and no publication approval exists."
+  ]
+}
