@@ -135,6 +135,24 @@ export interface ReplyPage {
   has_older: boolean;
 }
 
+// What a participant is sending (ADR 0019, §4). A publication is an object with an
+// identity, not a position in a fixed list of tracks, so a screen share and a
+// microphone are separate things that can exist at the same time and be stopped
+// independently.
+export type PublicationKind = 'microphone' | 'screen_video' | 'screen_audio';
+
+export interface VoicePublication {
+  id: string;
+  owner: string;
+  kind: PublicationKind;
+  /** The effective state: the participant's own choice and the server's permission
+   * decision combined. A muted publication is still published. */
+  muted: boolean;
+  /** Increments on every stop and restart, so a client reconnecting mid-publication
+   * can tell a resume from a new publication that reused the slot. */
+  generation: number;
+}
+
 export interface VoiceState {
   user_id: string;
   channel_id: string;
