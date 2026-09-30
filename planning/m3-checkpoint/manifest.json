@@ -1,8 +1,8 @@
 {
   "milestone": "M3 — threads, moderation and everyday polish",
   "candidate": "0.4.0-alpha.7",
-  "source_commit": "bd1e49f3b489b0da02375d0319e94ddcbbe049e0",
-  "schema": 20,
+  "source_commit": "bde9ab8f3eb575cadb6a40ad160e04644d33838e",
+  "schema": 21,
   "backup_format": 2,
   "closed": {
     "WP-13 named threads": "created from a message, titled, followed, lock/archive, root tombstone, channel-inherited authorization, bounded cursor navigation, 1000-reply fixture reachable with no duplicates",
@@ -52,5 +52,43 @@
     "No independent security or accessibility review.",
     "No distribution: dist/brrpbrrp is a development build and the alpha.7 archives under dist/releases remain historical schema-14 packages.",
     "No G0-G8 gate is passed and no publication approval exists."
-  ]
+  ],
+  "member_export": {
+    "implemented": true,
+    "schema": 21,
+    "contract": "docs/adr/0019b-member-export.md",
+    "route": "POST/GET /api/me/export, GET/DELETE /api/me/export/{id}",
+    "properties": [
+      "a snapshot read in one transaction, not a query over moving state",
+      "only conversations the account can read *now*, resolved through the same rules as a message list",
+      "no credentials: password hashes, sessions, second-factor secrets, recovery codes and stored filenames are structurally absent from the account block",
+      "bounded on the write (50,000 messages, 2,000 attachments, 256 MiB) and the bound is recorded in the file and in the interface",
+      "gated on recent strong authentication, and authority is re-read at download as well as at build",
+      "a queued export does not run for an erased account",
+      "a seven-day server lifetime, and the member can delete theirs sooner"
+    ],
+    "tests": 7,
+    "evidence": "internal/api/export_test.go covers the membership, credential, bound, key-identity, ownership and fresh-authentication properties. An existing route-enumeration test caught the new recent-auth route when it was added."
+  },
+  "recovery_at_this_schema": {
+    "schema_13_to_current": {
+      "result": "PASS",
+      "note": "expected 14,15,16,17,18,19,20,21 beyond 13"
+    },
+    "community": {
+      "checks": 23,
+      "passed": true,
+      "schema": 21
+    },
+    "private": {
+      "checks": 113,
+      "passed": true
+    },
+    "rollback": {
+      "checks": 57,
+      "passed": true,
+      "from": "0.4.0-alpha.6 (schema 12)",
+      "to": "0.4.0-alpha.7 (schema 21)"
+    }
+  }
 }

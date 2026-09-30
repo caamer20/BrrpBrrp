@@ -2,7 +2,7 @@
 
 **Last updated:** 28 September 2026 (P10 tranche; review 11)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.7** (schema **20**, backup format **2**)
+**Candidate:** **0.4.0-alpha.7** (schema **21**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
 **Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
 **Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
@@ -21,7 +21,7 @@ rehearsal, platform acceptance or review. The finding-by-finding record, includi
 the evidence level of each claim and the acceptance test that pins it, is in
 [the remediation ledger](completion-remediation-2026-09-24.md). The dated completion reviews remain historical evidence; the release record above is the current implementation checkpoint.
 
-### M3 — threads, moderation and everyday polish (schema 19–20)
+### M3 — threads, moderation, export and everyday polish (schema 19–21)
 
 **Organized discussion (WP-13).** A thread is a channel conversation with a subject,
 not a second message store. It inherits the channel's authorization wholesale, so a
@@ -48,9 +48,24 @@ sample URL into a link; only `http` and `https` become links; a mention must be 
 token and is never the local part of an email address; and nothing is ever handed to
 the DOM as markup.
 
-**Recovery at schema 20.** All three consumers pass — 23 community, 113 private, and
-57 rollback from alpha.6 (schema 12) to alpha.7 (schema 20). The schema-13 rehearsal
-derives the pending set from the registry and reports "expected 14…20 beyond 13".
+**A member's own data export (WP-12).** The requirement named a bounded per-user
+export and the product had none. There is one now, and the contract is in
+`docs/adr/0019b-member-export.md`. It is a **snapshot**, not a query: every row is
+read in one transaction, so the file holds what the account could read at the moment
+it asked. It contains **only permitted personal data** — the conversation list is
+resolved through the same rules a message list uses, so it cannot contain a direct
+pair whose acceptance was withdrawn after the messages were written, and the account
+block carries five non-secret fields with password hashes, sessions, second-factor
+secrets and recovery codes structurally absent. The bounds (50,000 messages, 2,000
+attachments, 256 MiB) are applied **while it is built**, and when one is reached the
+export stops and says so, in the file and in the interface. It is gated on recent
+strong authentication because it is the one read path whose output leaves the
+building, and authority is re-read at download as well as at build. A produced file
+has a seven-day server lifetime, and the member can delete theirs sooner.
+
+**Recovery at schema 21.** All three consumers pass — 23 community, 113 private, and
+57 rollback from alpha.6 (schema 12) to alpha.7 (schema 21). The schema-13 rehearsal
+derives the pending set from the registry and reports "expected 14…21 beyond 13".
 
 ### M4 — voice, calls, screen sharing and relay paths (schema 20)
 
