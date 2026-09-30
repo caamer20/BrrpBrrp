@@ -132,8 +132,25 @@ run**.
   TURN. Latency cannot distinguish those, and the case this project is most likely to
   hit is a relay behind NAT that connects on the host and fails for everyone else.
 
-**What is not established.** No host qualification, no capacity or soak measurement,
-no monitoring or alert delivery, no container runtime, no signed Windows download, and
+- **A capacity harness exists and has been run once, on a development host.**
+  `scripts/capacity-fixture.mjs` builds a population through the public API — a
+  fixture written straight into the database would skip authorization, receipts, the
+  outbox, search indexing, retention and the revision, and would report numbers for a
+  system nobody ships. `scripts/capacity-load.mjs` measures delivery and search latency
+  over the real WebSocket, and `make capacity-fixture` / `make capacity-load` are
+  defaulted to the master plan's own figures.
+
+  The recorded run is annotated with what it does not establish: one host, loopback
+  clients, 30 messages, delivery p95 9 ms and search p95 4 ms. **No budget is claimed
+  as met** — the reference profile is 250 accounts, 100 channels and a million
+  messages, and this measured a few dozen on an idle developer machine. There is no
+  ramp, no two-hour peak, no 24-hour soak, no mixed private traffic under load, and no
+  media in the measurement. The tool reports a `null` verdict when it measured nothing
+  rather than `true`, because a run that measured nothing must not read as a run that
+  passed.
+
+**What is not established.** No qualifying capacity or soak measurement, no
+monitoring or alert delivery, no container runtime, no signed Windows download, and
 no canonical public repository or registry identity. There is no Git remote
 configured in this environment. The recorded race figure predates this schema.
 
