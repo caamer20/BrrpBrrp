@@ -846,3 +846,67 @@ func TestAHundredShareCyclesLeaveNothingBehind(t *testing.T) {
 		t.Fatalf("after %d cycles the connection is %v, want connected", cycles, sfu.connectionStateOf("ana"))
 	}
 }
+
+// Withdrawing permission must reach the person who had it, and it must take their
+// screen with it.
+//
+// The server can stop forwarding on its own, but the *capture* is the browser's. A
+// client that is not told keeps its sharing indicator lit, keeps a rectangle of its
+// owner's desktop in memory, and keeps publishing a screen nobody receives — and the
+// person has no way to tell those apart, because from where they sit the app looks
+// exactly as it did when it was working.
+func TestWithdrawingPermissionWithdrawsTheShareAndSaysSo(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.announcePublication(peer, Publication{ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.mu.Unlock()
+
+	// The event the client acts on, collected from what the server actually emitted.
+	events := make(chan string, 8)
+	sfu.setEmitter("ana", func(kind string, data any) {
+		if kind != "voice.authority_changed" {
+			return
+		}
+		payload, _ := data.(map[string]any)
+		reason, _ := payload["reason"].(string)
+		events <- reason
+	})
+
+	sfu.SetSpeakAllowed("ana", "ana", false)
+
+	select {
+	case reason := <-events:
+		if reason == "" {
+			t.Fatal("the client was told its permission changed but not why")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("withdrawing permission told the client nothing; their capture is still running")
+	}
+	if got := len(sfu.Publications("room")); got != 0 {
+		t.Fatalf("a peer whose permission was withdrawn still has %d publications", got)
+	}
+}
+
+// The withdrawal is about *sharing*. A member who may no longer share is still in the
+// call and still hears it — a fix that dropped them from the room would pass the test
+// above and break every moderated channel.
+func TestWithdrawingSharingPermissionDoesNotRemoveTheMember(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.SetSpeakAllowed("ana", "ana", false)
+	if sfu.connectionStateOf("ana") != webrtc.PeerConnectionStateConnected {
+		t.Fatal("losing sharing permission disconnected the member from the call")
+	}
+	if len(sfu.States()) != 2 {
+		t.Fatalf("losing sharing permission left %d people in the room, want 2", len(sfu.States()))
+	}
+}

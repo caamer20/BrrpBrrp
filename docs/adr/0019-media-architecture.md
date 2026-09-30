@@ -504,3 +504,37 @@ the browser's own behaviour across a hundred real prompts. A stop that leaks a
 transceiver on the *client* — rather than a publication on the server — would not be
 seen here, because the client half is a test peer. That is the device observation,
 and it is still open.
+
+## 12. Authority withdrawal now reaches the browser, and takes the capture with it
+
+WP-21 asks for authority withdrawal to "clear capture and indicators for cooperative
+clients". The server cleared its half and the client had no idea.
+
+`SetSpeakAllowed` marked the peer muted and stopped forwarding — which is the half it
+can enforce alone — and said nothing. So a moderator withdrew a member's permission
+and the browser kept its sharing indicator lit, kept a rectangle of that person's
+desktop in memory, and kept publishing a screen the server was discarding. From where
+they sat, nothing had happened: the app looked exactly as it did while it worked.
+The browser's own capture prompt was the only place the truth was visible, and it
+shows *"you are sharing"*.
+
+The server now withdraws the peer's publications from the room's registry and emits
+`voice.authority_changed` with a reason. The client releases the capture before it
+shows anything, so the browser's indicator goes off even if the rest of the handler
+fails.
+
+Withdrawn means **withdrawn, not removed**. A member who may no longer share is still
+in the call and still hears it; a fix that dropped them from the room would satisfy the
+obvious test and break every moderated channel. Both halves are asserted: the share
+goes and the reason arrives, and the person stays.
+
+Whether the publication is withdrawn is read from the room's registry rather than from
+a flag on the peer. A flag that can disagree with the room's own record is how the
+removed-member defect in §7.2 happened, and the same shape would reproduce it here.
+
+**The server half is not enough, and this is why.** Everything above is the server
+telling a cooperative client to stop. A non-cooperative client keeps capturing and
+keeps publishing, and the server discards it — the media never reaches the room. That
+is the intended shape: the guarantee is that nothing is *delivered*, not that nothing
+is *captured*. Only the browser can end a capture it started, and only a cooperative
+client will.

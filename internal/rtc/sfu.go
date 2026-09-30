@@ -511,11 +511,42 @@ func (s *SFU) SetState(userID, owner string, muted, deafened, speaking bool) {
 // whatever state its own client reports next.
 func (s *SFU) SetSpeakAllowed(userID, owner string, allowed bool) {
 	s.mu.Lock()
-	if peer := s.peers[userID]; peer != nil && (owner == "" || peer.owner == owner) {
+	peer := s.peers[userID]
+	withdrawn := false
+	if peer != nil && (owner == "" || peer.owner == owner) {
 		peer.speakDenied = !allowed
 		peer.refreshState()
+		// Derived from the registry rather than a flag: a flag that can disagree with
+		// the room's own record is how this went wrong before. The registry is the
+		// truth, and it is already under this lock.
+		if !allowed {
+			registry := s.existingRoom(peer.state.ChannelID)
+			for _, publication := range registry.list() {
+				if publication.Owner == userID {
+					if _, ok := registry.remove(publication.ID); ok {
+						withdrawn = true
+					}
+				}
+			}
+		}
+		// The server stops forwarding the moment the permission goes, which is the half
+		// it can enforce alone. The *capture* is the other half, and only the client can
+		// release it — so the client is told. Without this the browser keeps its sharing
+		// indicator lit, keeps a rectangle of somebody's desktop in memory, and keeps
+		// publishing a screen the server is discarding: the person thinks they are
+		// sharing, the room is not, and the browser's own capture prompt is the only
+		// place the truth is visible. That is the "clear capture and indicators for
+		// cooperative clients" half of ADR 0019 §8.
+	} else {
+		peer = nil
 	}
 	s.mu.Unlock()
+	if peer != nil && withdrawn {
+		peer.emit("voice.authority_changed", map[string]any{
+			"may_share": false,
+			"reason":    "A moderator withdrew your permission to share in this conversation.",
+		})
+	}
 	s.publish()
 }
 

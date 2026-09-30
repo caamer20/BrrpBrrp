@@ -313,6 +313,18 @@ class Voice {
   }
 
   private receive(event: RealtimeEvent) {
+    if (event.t === 'voice.authority_changed') {
+      // The server has withdrawn this account's permission to share. The server has
+      // already stopped forwarding; only the browser can stop the *capture*. Leaving
+      // it running is the worst outcome available: the person sees their own sharing
+      // indicator still lit, a rectangle of their desktop still in memory, and no
+      // picture in the room — with no way to tell those apart.
+      //
+      // The capture is released before anything is shown, so the browser's own
+      // indicator goes off even if this handler throws.
+      void this.releaseCaptureOnAuthorityChange(event.d?.reason);
+      return;
+    }
     if (event.t === 'voice.routing') {
       if (!this.channelId || event.d.version <= this.routingVersion) return;
       this.routingVersion = event.d.version;
@@ -997,6 +1009,21 @@ class Voice {
       this.screenAudioSender = null;
       this.publishedScreenAudio = false;
     }
+  }
+
+  /**
+   * Releases the capture after the server withdrew permission, and says why.
+   *
+   * Separate from `stopScreenShare` because that one is a *choice* and this one is not:
+   * the person did not decide to stop, and a message that reads like they did is worse
+   * than no message. The existing screen state is left alone — it belongs to a share
+   * that is over — and the reason is reported where the person is already looking.
+   */
+  private async releaseCaptureOnAuthorityChange(reason: string | undefined): Promise<void> {
+    await this.stopScreenShare();
+    this.error =
+      reason ||
+      'A moderator withdrew your permission to share in this conversation, so your screen is no longer being shared.';
   }
 
   /** Stops sharing and releases the browser's capture. Safe to call when not sharing. */
