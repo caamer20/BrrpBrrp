@@ -569,3 +569,27 @@ keeps publishing, and the server discards it — the media never reaches the roo
 is the intended shape: the guarantee is that nothing is *delivered*, not that nothing
 is *captured*. Only the browser can end a capture it started, and only a cooperative
 client will.
+
+
+## A packet is forwarded only for the connection that owns the publication
+
+The forwarding boundary asked "does this room have a publication of this kind?"
+rather than "does *this connection* own one here". Those are different questions, and
+the difference is the whole boundary.
+
+A second member of a room — one who was refused a share, or never asked for one —
+could therefore advance every viewer's screen output under another member's
+publication. The room's allowance was legitimate, the publication was legitimate, and
+the packet was not: forwarding is where a non-cooperative client is stopped, so a
+check that another peer's grant can satisfy is not a check.
+
+The registry answers the narrower question directly. `ownedBy` is deliberately not
+`countOfKind`: the first asks whether *this* account holds a live publication of *this*
+kind in *this* room, which is the only question a forwarding decision can be justified
+by. Verified by running the packet path both ways — the owner's packet reaches the
+viewer, and a member who owns nothing here does not.
+
+This is a bound, not a whole authorization model. It does not stop a member who
+*does* hold a publication from forwarding it, and it is not a substitute for the
+server refusing the publication in the first place. It closes the case where the
+publication was correctly refused and the packets were not.

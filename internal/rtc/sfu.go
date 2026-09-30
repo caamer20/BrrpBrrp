@@ -1001,11 +1001,18 @@ func (s *SFU) forwardPublication(source *Peer, kind PublicationKind, packet *rtp
 	// Everything beyond the microphone is a registered publication, so a stopped one
 	// has nothing to forward to and its packets stop here. That is what makes a stop
 	// a stop rather than a silent track a viewer has to notice.
+	//
+	// The check is *whose* publication, not merely whether one exists. "Does this room
+	// have a screen" is the wrong question: it lets a second member — one who was
+	// refused a share, or never asked for one — advance viewer output under somebody
+	// else's publication, because the room's allowance is theirs and the packet is not.
+	// Forwarding is the boundary, so the boundary asks whether *this connection* owns a
+	// live publication of this kind here.
 	// A read, so it must not create the room. This runs on *every* screen packet, so
 	// the read-and-create version left a registry behind for any room a stopped
 	// screen's packets kept arriving for — once per room, which is bounded, but it is
 	// the same mistake as the read path above and the fix belongs in one place.
-	if s.existingRoom(source.state.ChannelID).countOfKind(kind) == 0 {
+	if !s.existingRoom(source.state.ChannelID).ownedBy(source.state.UserID, kind) {
 		s.mu.Unlock()
 		return
 	}

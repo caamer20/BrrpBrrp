@@ -910,3 +910,111 @@ func TestWithdrawingSharingPermissionDoesNotRemoveTheMember(t *testing.T) {
 		t.Fatalf("losing sharing permission left %d people in the room, want 2", len(sfu.States()))
 	}
 }
+
+// A peer that owns no publication in this room must not have its packets forwarded
+// under somebody else's.
+//
+// The check was "does any publication of this kind exist in this room", so a second
+// member — one who was refused a share, or never asked for one — could advance viewer
+// output under another member's publication: the room's allowance was theirs, and the
+// packet was not. Forwarding is the boundary, so the boundary asks whether *this
+// connection* owns a live publication of this kind here.
+func TestAPacketIsForwardedOnlyForThePeerThatOwnsThePublication(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeerWithCapacity(t, sfu, "ana", "room", 3)
+	connectPeerWithCapacity(t, sfu, "bo", "room", 3)
+	connectPeerWithCapacity(t, sfu, "cy", "room", 3)
+	for _, who := range []string{"ana", "bo", "cy"} {
+		id := who
+		waitFor(t, id+" to connect", func() bool {
+			return sfu.connectionStateOf(id) == webrtc.PeerConnectionStateConnected
+		})
+	}
+	// Everybody is a viewer, so a forwarded packet is visible on all of them. A viewer
+	// only has a screen output once it has negotiated one, which is what a viewer
+	// actually does — so the observer is given its own.
+	sfu.mu.Lock()
+	owner := sfu.peers["ana"]
+	outsider := sfu.peers["bo"]
+	observer := sfu.peers["cy"]
+	if err := observer.addScreenOutput(); err != nil {
+		sfu.mu.Unlock()
+		t.Fatal(err)
+	}
+	sfu.announcePublication(owner, Publication{
+		ID: "owned", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+
+	packet := &rtp.Packet{
+		Header:  rtp.Header{Version: 2, PayloadType: 102, Timestamp: videoClockRate / 30, SequenceNumber: 1},
+		Payload: []byte{0x00, 0x00, 0x00, 0x01},
+	}
+	before := screenWrites(t, sfu, "cy")
+
+	// A packet arriving on the owner's connection is the owner's content.
+	sfu.forwardPublication(owner, PublicationScreenVideo, packet)
+	// A packet arriving on a member who owns nothing here is not.
+	sfu.forwardPublication(outsider, PublicationScreenVideo, packet)
+
+	written := screenWrites(t, sfu, "cy") - before
+	if written != 1 {
+		t.Fatalf("the viewer's screen forwarder took %d packets, want exactly the owner's one", written)
+	}
+}
+
+// A publication belongs to its owner for as long as it lives. A different connection
+// in the same room cannot forward under it, which is the same boundary as above seen
+// from the room's side: one share, one source.
+func TestOnlyTheOwnerCanFeedAPublishedScreen(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeerWithCapacity(t, sfu, "ana", "room", 3)
+	connectPeerWithCapacity(t, sfu, "bo", "room", 3)
+	connectPeerWithCapacity(t, sfu, "cy", "room", 3)
+	for _, who := range []string{"ana", "bo", "cy"} {
+		id := who
+		waitFor(t, id+" to connect", func() bool {
+			return sfu.connectionStateOf(id) == webrtc.PeerConnectionStateConnected
+		})
+	}
+	sfu.mu.Lock()
+	owner := sfu.peers["ana"]
+	outsider := sfu.peers["bo"]
+	observer := sfu.peers["cy"]
+	if err := observer.addScreenOutput(); err != nil {
+		sfu.mu.Unlock()
+		t.Fatal(err)
+	}
+	sfu.announcePublication(owner, Publication{
+		ID: "owned", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+
+	packet := &rtp.Packet{
+		Header:  rtp.Header{Version: 2, PayloadType: 102, Timestamp: videoClockRate / 30, SequenceNumber: 2},
+		Payload: []byte{0x00, 0x00, 0x00, 0x02},
+	}
+	before := screenWrites(t, sfu, "cy")
+	sfu.forwardPublication(outsider, PublicationScreenVideo, packet)
+	if screenWrites(t, sfu, "cy") != before {
+		t.Fatal("A MEMBER WHO OWNS NO PUBLICATION FED A VIEWER'S SCREEN OUTPUT")
+	}
+	// The owner's own packets still flow. A fix that dropped everything would pass the
+	// case above and break the share.
+	sfu.forwardPublication(owner, PublicationScreenVideo, packet)
+	if screenWrites(t, sfu, "cy") == before {
+		t.Fatal("the publication's own packets are not reaching the viewer")
+	}
+}
+
+// screenWrites sums the packets a member's video outputs have accepted.
+func screenWrites(t *testing.T, sfu *SFU, userID string) uint64 {
+	t.Helper()
+	var total uint64
+	for _, output := range viewerScreens(sfu, userID) {
+		output.mu.Lock()
+		total += output.written
+		output.mu.Unlock()
+	}
+	return total
+}

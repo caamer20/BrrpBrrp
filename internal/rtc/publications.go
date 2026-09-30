@@ -100,8 +100,8 @@ var ErrWrongPublicationKind = errors.New("publication is not of that kind")
 
 // Publication is one participant's live track, as the server understands it.
 type Publication struct {
-	ID    PublicationID  `json:"id"`
-	Owner string         `json:"owner"`
+	ID    PublicationID   `json:"id"`
+	Owner string          `json:"owner"`
 	Kind  PublicationKind `json:"kind"`
 	// Muted is the *effective* state, which is the account's own choice AND the
 	// server's permission decision combined. Keeping them apart is what lets a
@@ -333,4 +333,21 @@ func MarkViewOnly(offer string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// ownedBy reports whether this account holds a live publication of this kind in this
+// room.
+//
+// It is the forwarding boundary's question, and it is deliberately narrower than
+// countOfKind. "Does the room have a screen" is not the same question as "does this
+// connection own the screen": the first lets any member of the room forward under
+// somebody else's publication, which both delivers media the server never authorized
+// and hides it behind a legitimate share (completion review 14, V14-01).
+func (r *publicationRegistry) ownedBy(userID string, kind PublicationKind) bool {
+	for _, publication := range r.list() {
+		if publication.Owner == userID && publication.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
