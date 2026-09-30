@@ -705,3 +705,21 @@ func TestRemovingOneMemberLeavesTheRestSharing(t *testing.T) {
 		t.Fatal("removing one member disconnected another")
 	}
 }
+
+// Reading a room must not create one. `s.room(id)` returned a registry for any id
+// and stored it, so every publication lookup for a room that does not exist left a
+// permanent empty map behind. A server that has served a long-dead channel — or one
+// whose name an attacker chose — accumulates an entry per name, and nothing ever
+// removes it.
+func TestReadingARoomDoesNotCreateOne(t *testing.T) {
+	sfu := newTestSFU(t)
+	for i := 0; i < 50; i++ {
+		_ = sfu.Publications("room-that-never-existed")
+	}
+	sfu.mu.Lock()
+	rooms := len(sfu.publications)
+	sfu.mu.Unlock()
+	if rooms != 0 {
+		t.Fatalf("reading one nonexistent room %d times left %d registries behind", 50, rooms)
+	}
+}

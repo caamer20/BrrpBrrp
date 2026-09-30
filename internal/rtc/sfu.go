@@ -771,10 +771,24 @@ func (s *SFU) room(id string) *publicationRegistry {
 	return registry
 }
 
+// existingRoom returns a room's registry without creating one.
+//
+// The two are separate because "what is in this room" and "make this room" are
+// different questions, and a read that quietly makes one turns every lookup for a
+// room that does not exist into a permanent map entry. Nothing ever removed them, so
+// a server accumulated one per name it had been asked about — which for a room id an
+// attacker chooses is unbounded, and for a deleted channel is just a slow leak.
+func (s *SFU) existingRoom(id string) *publicationRegistry {
+	if registry, ok := s.publications[id]; ok {
+		return registry
+	}
+	return newPublicationRegistry()
+}
+
 func (s *SFU) publicationsFor(id string) []Publication {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.room(id).list()
+	return s.existingRoom(id).list()
 }
 
 // serverPublicationCount counts a kind across every room. It is a capacity fact rather
@@ -901,7 +915,11 @@ func (s *SFU) forwardPublication(source *Peer, kind PublicationKind, packet *rtp
 	// Everything beyond the microphone is a registered publication, so a stopped one
 	// has nothing to forward to and its packets stop here. That is what makes a stop
 	// a stop rather than a silent track a viewer has to notice.
-	if s.room(source.state.ChannelID).countOfKind(kind) == 0 {
+	// A read, so it must not create the room. This runs on *every* screen packet, so
+	// the read-and-create version left a registry behind for any room a stopped
+	// screen's packets kept arriving for — once per room, which is bounded, but it is
+	// the same mistake as the read path above and the fix belongs in one place.
+	if s.existingRoom(source.state.ChannelID).countOfKind(kind) == 0 {
 		s.mu.Unlock()
 		return
 	}

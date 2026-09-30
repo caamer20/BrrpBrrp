@@ -327,7 +327,23 @@ Every lifecycle path already called `leaveVoice` — session close, sign-out,
 deactivation, ban, erasure, group removal — so this sits on the live revocation path
 rather than beside it.
 
-### 7.3 One more defect this work found in passing
+### 7.3 Reading a room created one
+
+`s.room(id)` returned a registry for any id and stored it. Two call sites were
+*reads* — "what is in this room" and "does this room still have a screen" — so every
+lookup for a room that did not exist left a permanent empty map behind, and nothing
+ever removed one.
+
+The per-packet read is the one that matters. "A stopped screen has nothing to forward
+to" is checked on **every packet**, so that one is bounded by the number of rooms
+rather than by nothing at all — but it is the same mistake, and the read-and-create
+version is the kind of thing that gets copied into the next accessor.
+
+The two questions are now separate functions. `room` makes a room; `existingRoom`
+reads one. The distinction is one word at every call site, which is the right size
+for a mistake this easy to repeat.
+
+### 7.4 One more defect this work found in passing
 
 `ice_servers` was a nil slice, which marshals to JSON `null`, not `[]`. The client
 iterates that list, so `ice_servers.map(...)` threw a `TypeError` and the call failed
