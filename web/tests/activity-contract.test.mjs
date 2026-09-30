@@ -85,7 +85,7 @@ test('a preference change writes through and adopts the server answer', () => {
   // quiet and are not.
   assert.match(
     source,
-    /this\.preferences = this\.preferences\.map\(\(entry\) => \(entry\.kind === result\.kind \? result : entry\)\)/,
+    /this\.preferences = this\.preferences\.map\(\(entry\)\s*=>\s*entry\.kind === result\.kind \? result : entry/,
     'a preference change does not adopt the server answer'
   );
 });

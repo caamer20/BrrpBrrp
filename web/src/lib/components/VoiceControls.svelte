@@ -49,7 +49,18 @@
             aria-pressed={voice.deafened}
             disabled={voice.ownState?.admin_deafened}
             onclick={() => voice.toggleDeafen()}><Icon name="headphones" size={18} /></button
-          ><button
+          >{#if workspace.can('voice.share_screen')}
+            <button
+              class="icon-button"
+              class:danger-text={voice.screenState === 'sharing'}
+              aria-label={voice.screenState === 'sharing' ? 'Stop sharing screen' : 'Share screen'}
+              aria-pressed={voice.screenState === 'sharing'}
+              disabled={voice.screenState === 'asking'}
+              onclick={() =>
+                voice.screenState === 'sharing'
+                  ? voice.stopScreenShare()
+                  : voice.startScreenShare()}><Icon name="hash" size={18} /></button
+            >{/if}<button
             class="icon-button danger-text"
             aria-label="Leave voice"
             onclick={() => voice.leave()}><Icon name="leave" size={18} /></button
@@ -58,6 +69,13 @@
           <button class="secondary" onclick={() => voice.leave()}>Cancel</button>
         {/if}
       </div>
+      {#if voice.screenMessage}
+        <small
+          class="voice-quality"
+          class:screen-error={voice.screenState === 'failed' || voice.screenState === 'unsupported'}
+          role="status">{voice.screenMessage}</small
+        >
+      {/if}
       {#if voice.quality}<small class="voice-quality">{voice.quality}</small>{/if}
       {#if voice.movingTo}<small class="voice-quality" role="status">Switching rooms…</small>{/if}
       {#if voice.pushToTalk && voice.channelId}<button
@@ -99,3 +117,11 @@
     {/if}
   </div>
 {/if}
+
+<style>
+  /* A share that did not happen needs to read as an explanation rather than as a
+     status, because the person is looking for why nothing changed. */
+  .screen-error {
+    color: var(--danger);
+  }
+</style>

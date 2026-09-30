@@ -904,13 +904,14 @@ class Workspace {
         return false;
       // A channel's view is the channel's own messages. A thread reply belongs to the
       // thread and is read from there, and the server's page already excludes it — but
-      // a message injected by a live event that arrived while this page was in flight
-      // is not filtered by the server. Filtering once, here, means every branch below
-      // inherits the same rule: the older-page merge, the new-page replace, and the
-      // pending reconciliation. Doing it in one place is also what stops the two views
-      // from disagreeing about the same message, which is how a thread reply came to
-      // appear in the channel it was branched off from.
-      if (this.channel) loaded = loaded.filter((message) => !message.thread_id);
+      // a message folded in by the in-flight reconciliation below is not filtered by
+      // the server, so it has to be excluded here too.
+      //
+      // The filter sits *after* the reconciliation, not before. Placing it before let a
+      // thread reply that arrived while the page was loading slip straight back in,
+      // which is the same defect the filter was added for, reappearing one step
+      // later.
+      //
       // Reconcile events received while this snapshot was in flight before displaying it.
       const known = new Set(loaded.map((message) => message.id));
       const changed = [...this.snapshotChanges.entries()].filter(
@@ -957,6 +958,15 @@ class Workspace {
       }
       if (id !== this.activeId || version !== this.loadVersion || !this.admitted(request))
         return false;
+      // A channel's view is the channel's own messages. A thread reply belongs to the
+      // thread and is read from there, and the server's page already excludes it — but
+      // a message folded in by the in-flight reconciliation above is not something the
+      // server filtered, so it is excluded here too.
+      //
+      // The filter sits *after* the reconciliation, not before. Placed before it, a
+      // thread reply that arrived while the page was loading slipped straight back in:
+      // the same defect the filter exists to prevent, reappearing one step later.
+      if (this.channel) loaded = loaded.filter((message) => !message.thread_id);
       if (older) {
         this.viewingHistory = true;
         const known = new Set(this.messages.map((message) => message.id));
@@ -1644,6 +1654,16 @@ class Workspace {
     if (change) change.message = message;
     const view = channel === this.activeId ? this : this.views.get(channel);
     if (!view) return;
+    // A thread reply does not belong in a channel's view. The server's page excludes
+    // one, and the page filter in loadMessages excludes one, but this path is a
+    // different one: it fetches a single message by id in response to a live event and
+    // has never passed through either. It is the one place every live event ends up,
+    // so the check belongs here — and filtering in the two other places left this
+    // route to put a thread reply back into the channel it was branched off from.
+    //
+    // A null message (a deletion) is still applied: content that has been removed
+    // must be able to disappear from anywhere it was shown.
+    if (message?.thread_id && this.channel?.id === channel) return;
     const existing = view.messages.some(
       (item) =>
         item.id === id ||

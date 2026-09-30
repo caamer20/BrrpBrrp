@@ -77,10 +77,19 @@ test('the reply control follows the thread, not just the draft', () => {
 // stored message is correctly filed.
 test('a thread reply is not added to the channel it was branched off from', () => {
   const source = readSource('src/lib/workspace.svelte.ts');
-  // Filtered once, where the page is accepted, so the older-page merge, the new-page
-  // replace and the pending reconciliation all inherit the same rule. Filtering in one
-  // of the branches is how the other two end up disagreeing about the same message.
+  // Filtered once, after the in-flight events are folded in and before the page is
+  // split into its merge/replace branches. Before the reconciliation, a thread reply
+  // that arrived while the page was loading slipped straight back in; in only one of
+  // the branches, the other two disagree about the same message.
   assert.match(source, /loaded = loaded\.filter\(\(message\) => !message\.thread_id\)/);
+  const filter = source.indexOf('loaded = loaded.filter((message) => !message.thread_id)');
+  const reconcile = source.indexOf('change.message)');
+  assert.ok(filter > reconcile, 'the filter runs before the in-flight events are folded in');
+  // And at the one place every *live* event ends up. The page filter above cannot
+  // cover this route: it fetches a single message by id and never passes through the
+  // page. Two filters in the wrong two places left this third one to put a thread
+  // reply back into its channel.
+  assert.match(source, /if \(message\?\.thread_id && this\.channel\?\.id === channel\) return;/);
 });
 
 test('the server sends the thread id with a live message event', () => {

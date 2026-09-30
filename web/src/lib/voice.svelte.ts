@@ -3,6 +3,14 @@ import { workspace } from './workspace.svelte';
 import { errorMessage } from './api';
 import type { RealtimeEvent } from './types';
 import { VoiceChime } from './voice-chime';
+import {
+  canShareScreen,
+  onCaptureEnded,
+  requestScreen,
+  screenShareMessage,
+  stopScreen,
+  type ScreenShareState
+} from './screen-share';
 
 class Voice {
   channelId = $state('');
@@ -18,6 +26,15 @@ class Voice {
   inputLevel = $state(0);
   changingMicrophone = $state(false);
   quality = $state('');
+  // Screen sharing. The state is the *share's* state rather than the call's, because
+  // somebody can be connected and not sharing, sharing and muted, or neither — and
+  // collapsing them into one flag is how "I stopped sharing" ends up meaning "I left
+  // the call".
+  screenState = $state<ScreenShareState>('idle');
+  screenLabel = $state('');
+  screenMessage = $state('');
+  private screenStream: MediaStream | null = null;
+  private releaseScreenWatch: (() => void) | null = null;
   microphone = $state(storage.getItem('brrp.microphone') || '');
   pushToTalk = $state(storage.getItem('brrp.push-to-talk') === 'true');
   talkHeld = $state(false);
@@ -634,6 +651,59 @@ class Voice {
         /* A closing peer no longer has statistics. */
       }
     }, 3000);
+  }
+
+  /**
+   * Starts sharing a screen into the call already joined.
+   *
+   * It never throws and never blocks: a refusal, a dismissal, an insecure page and a
+   * genuine failure are all states, not exceptions, because all four are ordinary and a
+   * caller that had to catch them would eventually catch one it did not handle.
+   */
+  async startScreenShare(): Promise<void> {
+    if (this.screenState === 'asking' || this.screenState === 'sharing') return;
+    if (!this.channelId) {
+      // Sharing into no call is not a thing, and saying so is more useful than a
+      // capture prompt that leads nowhere.
+      this.screenState = 'failed';
+      this.screenMessage = 'Join a voice conversation before sharing your screen.';
+      return;
+    }
+    this.screenState = 'asking';
+    this.screenMessage = screenShareMessage('asking');
+    const result = await requestScreen();
+    this.screenState = result.state;
+    this.screenLabel = result.label ?? '';
+    this.screenMessage = result.error || screenShareMessage(result.state);
+    if (result.state !== 'sharing' || !result.stream) return;
+
+    this.screenStream = result.stream;
+    // The browser can end a share without telling us through any path we control:
+    // the user stops it in their own UI, the tab closes, or the browser revokes the
+    // capture. This is the only signal for all three, and without it a stopped share
+    // keeps the indicator off and the stream running.
+    this.releaseScreenWatch?.();
+    this.releaseScreenWatch = onCaptureEnded(result.stream, () => {
+      void this.stopScreenShare();
+    });
+  }
+
+  /** Stops sharing and releases the browser's capture. Safe to call when not sharing. */
+  async stopScreenShare(): Promise<void> {
+    this.releaseScreenWatch?.();
+    this.releaseScreenWatch = null;
+    if (this.screenStream) {
+      stopScreen(this.screenStream);
+      this.screenStream = null;
+    }
+    this.screenState = 'idle';
+    this.screenLabel = '';
+    this.screenMessage = '';
+  }
+
+  /** Whether this browser can share at all — decides whether the control is offered. */
+  screenShareAvailable(): boolean {
+    return canShareScreen();
   }
 }
 

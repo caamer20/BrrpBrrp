@@ -3,6 +3,7 @@ import {
   assignOnly,
   createAccount,
   createRole,
+  OWNER,
   setRolePermissions,
   signIn,
   signInOverApi
@@ -250,4 +251,69 @@ test('withdrawing voice.speak stops the forwarded audio, and returning it resume
     if (listenerContext) await listenerContext.close().catch(() => {});
     await setRolePermissions(request, defaultRole.id, originalDefault);
   }
+});
+
+// A screen share is offered as a real control, and every way it can not happen leaves
+// the person with an explanation rather than a silent no-op. The capture itself is
+// stubbed — a browser's picker is not something a test can drive, and pretending
+// otherwise would test Playwright rather than this product — but the *decisions* the
+// application makes about capture are exactly what is under test here.
+test('a screen share is offered, and every refusal is explained', async ({ page }) => {
+  test.setTimeout(180000);
+  // Capture is decided by this stub so the journey can drive each browser outcome.
+  await page.addInitScript(() => {
+    let mode = 'cancelled';
+    window.__screenMode = (next) => {
+      mode = next;
+    };
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      if (mode === 'cancelled') {
+        const error = new Error('Permission denied');
+        error.name = 'NotAllowedError';
+        throw error;
+      }
+      if (mode === 'insecure') {
+        const error = new Error('needs a secure context');
+        error.name = 'SecurityError';
+        throw error;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 240;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#2f6f4f';
+      context.fillRect(0, 0, 320, 240);
+      return canvas.captureStream(15);
+    };
+  });
+
+  // The share control belongs to a joined call, so the journey joins one first.
+  await joinVoice(page, OWNER);
+  const share = sidebarVoice(page).getByRole('button', { name: 'Share screen' });
+  await expect(share).toBeVisible();
+
+  // Declining the picker is an ordinary answer, and the app says so rather than
+  // reporting a failure the person did not cause.
+  await page.evaluate(() => window.__screenMode('cancelled'));
+  await share.click();
+  await expect(sidebarVoice(page).getByText(/Nothing was shared/)).toBeVisible();
+  // And the control is not left in a sharing state.
+  await expect(sidebarVoice(page).getByRole('button', { name: 'Share screen' })).toBeVisible();
+
+  // An insecure page is named as such, because "sharing failed" sends somebody
+  // looking for a bug instead of for a missing https.
+  await page.evaluate(() => window.__screenMode('insecure'));
+  await sidebarVoice(page).getByRole('button', { name: 'Share screen' }).click();
+  await expect(sidebarVoice(page).getByText(/secure \(https\) connection/)).toBeVisible();
+
+  // A successful capture says that people can see it, and stopping it is offered.
+  await page.evaluate(() => window.__screenMode('share'));
+  await sidebarVoice(page).getByRole('button', { name: 'Share screen' }).click();
+  await expect(
+    sidebarVoice(page).getByText(/Everyone in the conversation can see it/)
+  ).toBeVisible();
+  const stop = sidebarVoice(page).getByRole('button', { name: 'Stop sharing screen' });
+  await expect(stop).toBeVisible();
+  await stop.click();
+  await expect(sidebarVoice(page).getByRole('button', { name: 'Share screen' })).toBeVisible();
 });

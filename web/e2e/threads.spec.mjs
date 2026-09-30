@@ -69,7 +69,9 @@ test('a named thread is started, answered, listed and locked', async ({ page, re
   // The channel did not gain the reply: a thread keeps a discussion together without
   // burying the channel it lives in, and neither view reads it twice.
   await thread.getByRole('button', { name: 'Close' }).click();
-  await expect(page.locator('article.message:has-text("One page in the docs")')).toHaveCount(0);
+  await expect(
+    page.locator('.message-list article.message:has-text("One page in the docs")')
+  ).toHaveCount(0);
 
   // The channel's thread list is a real surface, not an API.
   await page.getByRole('button', { name: 'Threads in this channel' }).click();
