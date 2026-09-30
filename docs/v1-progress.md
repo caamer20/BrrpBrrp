@@ -2,7 +2,7 @@
 
 **Last updated:** 28 September 2026 (P10 tranche; review 11)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.7** (schema **22**, backup format **2**)
+**Candidate:** **0.4.0-alpha.7** (schema **20**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
 **Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
 **Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
@@ -20,6 +20,89 @@ that order: "complete on this machine" means code plus local tests, never a host
 rehearsal, platform acceptance or review. The finding-by-finding record, including
 the evidence level of each claim and the acceptance test that pins it, is in
 [the remediation ledger](completion-remediation-2026-09-24.md). The dated completion reviews remain historical evidence; the release record above is the current implementation checkpoint.
+
+### M3 — threads, moderation and everyday polish (schema 19–20)
+
+**Organized discussion (WP-13).** A thread is a channel conversation with a subject,
+not a second message store. It inherits the channel's authorization wholesale, so a
+thread cannot become a way around a channel restriction, and a member's access to one
+changes exactly when their access to the channel does. A member starts one from any
+message, names it, is followed by default, can follow and unfollow, and a moderator
+locks or archives it. A locked thread is still readable and followed; an archived one
+is out of the list but not gone. A 1,000-reply fixture is walked one bounded page at a
+time and every reply is reached exactly once, in order, with no overlap between pages
+and no change to the channel listing.
+
+**Moderation (WP-15).** A report can be assigned, and the assignment is a claim about
+who is expected to look at it — reviewing still requires the reviewer's own current
+capability, so an assignment to someone who has since lost it is a stale claim rather
+than a way to review. A timeout suspends an account without touching its roles and
+restores exactly the assignments recorded when it was applied, so nothing a moderator
+did while it ran is silently reversed; it answers 403 and says what it is, where a ban
+answers 401. Invitations can admit a bounded number of people, expire, and be revoked,
+with the use count consumed by the write itself.
+
+**Composer (WP-16).** Message text is tokenized rather than split on a regex: a fenced
+code block is literal, so a pasted snippet cannot notify the wrong person or turn a
+sample URL into a link; only `http` and `https` become links; a mention must be a whole
+token and is never the local part of an email address; and nothing is ever handed to
+the DOM as markup.
+
+**Recovery at schema 20.** All three consumers pass — 23 community, 113 private, and
+57 rollback from alpha.6 (schema 12) to alpha.7 (schema 20). The schema-13 rehearsal
+derives the pending set from the registry and reports "expected 14…20 beyond 13".
+
+### M4 — voice, calls, screen sharing and relay paths (schema 20)
+
+**The decision is made and written down.** `docs/adr/0019-media-architecture.md`
+chooses to **extend the embedded Pion SFU and rewrite its publication model** rather
+than introduce a separately self-hosted SFU. The reasoning is visible in the code
+rather than preferred: the control plane that actually matters — per-channel
+publication limits, resume-token ownership, TURN credential issuance *and
+revocation*, non-cooperative speaker enforcement at the RTP boundary, moderated rooms
+— is already built and tested, and an external SFU would mean re-implementing all of
+it across a network boundary, each re-implementation a new way for authorization to
+disagree with itself. The one-binary deployment is also most of what makes the product
+approachable. **The decision is conditional on a video-forwarding measurement** that
+has not been made: the plan's own arithmetic puts two 2.5 Mbit/s shares to nine
+viewers at roughly 45 Mbit/s of egress from a process also serving HTTP, SQLite and
+WebSocket.
+
+**All five media capabilities are built.**
+
+- **Community voice** was already present and is unchanged.
+- **TURN TCP fallback.** The embedded relay listened on UDP only and forced
+  `transport=udp`, so a client behind a network that blocks UDP had *no path at all* —
+  the ordinary case on corporate networks, and invisible locally because nothing here
+  blocks UDP. The relay now offers UDP and TCP on one ICE server and advertises a
+  configurable host, because a relay behind NAT that advertises its listening address
+  produces a call that works locally and fails for everyone else.
+- **Screen sharing.** A publication is an object with a stable id, owner, kind and
+  lifecycle, replacing the fixed `voice-0..8` slot array that encoded "one track,
+  never changes, position is identity" — all three of which a screen share breaks.
+  Renegotiation is allowed, bounded, and gated on the same `voice.speak` decision as
+  the microphone. The screen is carried by a **separate forwarder on the video
+  clock**; the audio forwarder's constants are right for 20 ms of Opus and meaningless
+  for 90 kHz video, and reusing them turns a connected screen into noise. The client
+  explains every way a share does not happen, and a capture that ends on its own — the
+  user stopping it, the tab closing, the browser revoking it — stops forwarding.
+- **Private calls.** A room is a conversation, not a channel. A direct pair or a group
+  goes through the same membership resolver a private message uses, so a call ends
+  when that membership does. A call's participants go to its members and nobody else,
+  and the call is offered from the conversation header.
+
+**What is still not established.** No physical microphone, no real browser capture
+prompt, and no call across a network that actually blocks UDP — the browser suite
+substitutes a generated stream because a picker cannot be driven by a test, and
+synthetic RTP proves the forwarding path rather than the media. The 40-minute race
+suite has not been run for this schema. The recorded recovery and browser figures
+were taken at schema 20, before the publication model; the Go and frontend suites are
+current for schema 22.
+
+**Blocked on the owner.** `docs/host-qualification.md` is written step by step so
+both required deployments can be qualified the moment hosts exist. This environment
+has no Docker, no PowerShell, no Windows host and no Tailscale peer, so none of it has
+been run.
 
 ## Current private-message tranche
 

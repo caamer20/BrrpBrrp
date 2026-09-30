@@ -1,7 +1,7 @@
 {
-  "milestone": "M4 — voice reliability, private calls, screen sharing, relay paths",
+  "milestone": "M4 \u2014 voice reliability, private calls, screen sharing, relay paths",
   "source_commit": "f485732f48964422adaf0a4b9ebcc02de90d7967",
-  "schema": 22,
+  "schema": 20,
   "backup_format": 2,
   "architecture_decision": {
     "document": "docs/adr/0019-media-architecture.md",
@@ -15,18 +15,19 @@
     "TURN advertised host": "configurable, so a relay behind NAT does not advertise its listening address",
     "publication model": "a publication is an object with a stable id, owner, kind and lifecycle; screen video is H.264 at 90 kHz and audio is Opus at 48 kHz and the two are never written through the same forwarder",
     "renegotiation": "a second offer naming a screen is accepted, bounded, and gated on the same voice.speak decision as the microphone",
-    "H.264 registration": "baseline, main and high profiles"
+    "H.264 registration": "baseline, main and high profiles",
+    "private calls": "admission, membership resolver, member-only presence, and a client entry point from a conversation header; a rendered journey has two browsers hold a call in a direct conversation and a third account reach neither the conversation nor the call"
   },
   "not_delivered_yet": [
-    "The screen track is negotiated but not yet forwarded: the SFU still forwards audio by slot and no client calls getDisplayMedia.",
-    "Private calls: admission still resolves a db.Channel and refuses anything whose Type != voice, so a direct or group conversation cannot host a call.",
-    "The 24-hour race suite has not been run for this schema.",
-    "No physical microphone, capture, or restricted-network observation exists."
+    "No physical microphone, no real browser capture prompt, and no call across a network that actually blocks UDP. The browser suite substitutes a generated stream, which proves the forwarding path rather than the media.",
+    "The 40-minute race suite has not been run for this schema.",
+    "ADR 0019 is conditional on a video-forwarding measurement at the reference allocation, which has not been made.",
+    "No distribution: dist/brrpbrrp is a development build and the alpha.7 archives under dist/releases remain historical schema-14 packages."
   ],
   "rehearsals": {
     "schema13_to_current": {
       "result": "PASS",
-      "note": "expected 14..22 beyond 13"
+      "note": "expected 14,15,16,17,18,19,20 beyond 13; none skipped, none reordered"
     },
     "community_recovery": {
       "checks": 23,
