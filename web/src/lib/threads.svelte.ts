@@ -1,4 +1,5 @@
 import { api, APIError, errorMessage } from './api';
+import { workspace } from './workspace.svelte';
 import type { Message, RealtimeEvent } from './types';
 
 // A thread is a channel conversation with a subject (ADR 0017). This store holds one
@@ -116,22 +117,28 @@ export class ThreadView {
     }
   }
 
+  // A thread reply is sent through the workspace's own send, not through a private
+  // HTTP call. The private one had its own outbox (none), its own draft handling
+  // (none) and its own account fence (none), so a lost response, a refused send and
+  // an account switch all behaved differently in a thread than in the channel it
+  // lives in — three cases that ought to be one case.
+  //
+  // The caller's key is passed in rather than generated, because a thread composer
+  // freezes its key for the life of an unresolved send: rotating it after a caught
+  // failure is what turns a send that may have committed into a second message.
   async send(content: string, idempotencyKey: string) {
     if (this.sending || this.missing) return;
     const trimmed = content.trim();
-    if (!trimmed) return;
+    if (!trimmed || !this.thread) return;
     this.sending = true;
     this.sendError = null;
+    const key = idempotencyKey;
     try {
-      const message = await api<Message>(
-        `/threads/${encodeURIComponent(this.id)}/messages`,
-        'POST',
-        { content: trimmed, idempotency_key: idempotencyKey }
-      );
-      this.pending.delete(idempotencyKey);
-      if (!this.messages.some((existing) => existing.id === message.id)) {
+      const message = await workspace.sendIntoThread(this.id, trimmed, key);
+      if (!message) return;
+      this.pending.delete(key);
+      if (!this.messages.some((existing) => existing.id === message.id))
         this.messages = [...this.messages, message];
-      }
     } catch (error) {
       // A definite refusal wrote nothing, so the same key is still free. An unknown
       // outcome may well have committed, and the receipt is what says so — so the

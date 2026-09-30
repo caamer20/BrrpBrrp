@@ -14,6 +14,12 @@
   const view = new ThreadView(untrack(() => id));
   let log = $state<HTMLDivElement>();
   let atLatest = $state(true);
+  // The thread's own draft slot in the shared store, keyed by thread id. A panel's
+  // local state dies with the panel, so closing a thread to look at a channel and
+  // coming back used to lose an unsent reply. The store is already account-scoped and
+  // already survives a reload when drafts are saved, so a thread reply is now held
+  // the same way a channel message is.
+  const draftSlot = $derived(`thread:${id}`);
   let draft = $state('');
   // The send key is frozen for the life of an unresolved send. It is only replaced
   // after the server has said what happened, so a lost response is reconciled rather
@@ -22,6 +28,22 @@
   let reason = $state('');
   let stateError = $state('');
   let focusTarget: HTMLTextAreaElement | null = $state(null);
+
+  // Restored when the panel opens, and captured when it closes or unmounts, so the
+  // text is in the store for as long as it is unsent.
+  let capturedSlot = '';
+  $effect(() => {
+    // The slot follows the prop rather than being fixed at mount, so a panel reused
+    // for a different thread reads that thread's draft instead of the first one's.
+    if (draftSlot === capturedSlot) return;
+    capturedSlot = draftSlot;
+    draft = workspace.composerDrafts.get(draftSlot)?.text ?? workspace.drafts[draftSlot] ?? '';
+  });
+  function captureDraft() {
+    if (!draft.trim()) return;
+    workspace.composerDrafts.set(draftSlot, { text: draft, attachments: [] });
+    workspace.saveDraft(draftSlot, draft);
+  }
 
   const locked = $derived(view.thread?.state === 'locked');
   const sendState = $derived(threadSubmitState(view.sending, view.sendError));
@@ -58,12 +80,19 @@
     if (!canSend) return;
     const key = operationKey;
     const text = draft;
-    draft = '';
     view.sendError = null;
+    // The text is cleared *after* the outcome, not before. Clearing it first meant a
+    // refusal and a lost response both left an empty composer, and the key rotation
+    // below then made the lost response a second message on retry.
     await view.send(text, key);
-    // The key is only released once the outcome is known. A refusal wrote nothing, so
-    // the same key is still free and may be retried; anything else has been recorded
-    // and the next send is new work.
+    // Only a committed send clears the composer. Everything else keeps the text, so
+    // the author can copy it, and keeps the key, so a retry reconciles against the
+    // operation's receipt instead of becoming new work.
+    if (view.sendError) {
+      draft = text;
+      return;
+    }
+    draft = '';
     operationKey = crypto.randomUUID();
   }
 
@@ -115,7 +144,14 @@
 
   onMount(() => {
     void view.load();
-    return () => view.dispose();
+    return () => {
+      // The author keeps their unsent text when the panel closes. The store is
+      // account-scoped, so this cannot carry into the next account, and the key the
+      // reply was attempted under is not stored with it — an unsent reply is a draft,
+      // and the next send from this panel is a new key for new work.
+      captureDraft();
+      view.dispose();
+    };
   });
 </script>
 

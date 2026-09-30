@@ -104,3 +104,88 @@ test('a stored message carries the thread it belongs to', () => {
   assert.match(source, /COALESCE\(thread_id,''\)/);
   assert.match(source, /&message\.ThreadID/);
 });
+
+// A thread reply must go through the same machinery as a channel message.
+//
+// It used to have its own HTTP call, which meant its own outbox (none), its own draft
+// handling (none) and its own account fence (none). So a lost response, a refused
+// send and an account switch all behaved differently inside a thread than in the
+// channel it lives in — three cases that ought to be one case, and which a member
+// experiences as "threads are the place my messages get lost".
+//
+// These are assertions about the shape of the code path, not about rendered output:
+// the behaviour under test is *which* machinery a thread reply is handed to, and that
+// is only observable in the source. A browser test here would assert that a request
+// was made, not that it was made through the recoverable path.
+test('a thread reply is sent through the shared, recoverable send', () => {
+  const source = readSource('src/lib/threads.svelte.ts');
+  // It no longer issues its own request...
+  assert.doesNotMatch(
+    source,
+    /`\/threads\/\$\{[^}]+\}\/messages`/,
+    'the thread view still posts directly instead of using the shared send'
+  );
+  // ...it hands the caller's key to the workspace, which owns the receipt and outbox.
+  assert.match(
+    source,
+    /sendIntoThread\(/,
+    'the thread view does not route through the shared send'
+  );
+});
+
+test('the shared send routes a thread reply to the thread, not the channel', () => {
+  const source = readSource('src/lib/workspace.svelte.ts');
+  // One place decides where a message operation goes, and a thread is a destination
+  // like any other. Two places building a message URL is how they drift.
+  assert.match(
+    source,
+    /messagePath\(message\)/,
+    'the send no longer goes through one path builder'
+  );
+  assert.match(
+    source,
+    /message\.thread_id[\s\S]{0,120}\/threads\//,
+    'a thread reply is not routed to its thread'
+  );
+});
+
+test("the caller's key is used, so a retry reconciles rather than duplicating", () => {
+  const source = readSource('src/lib/workspace.svelte.ts');
+  // The workspace's own send generates a key; the thread path takes one. A thread
+  // composer freezes its key for the life of an unresolved send, and rotating it
+  // after a caught failure turns a send that may have committed into a second message.
+  const body = source.slice(source.indexOf('async sendIntoThread'));
+  const bounded = body.slice(0, body.indexOf('\n  async retryMessage'));
+  assert.doesNotMatch(
+    bounded,
+    /crypto\.randomUUID\(\)/,
+    "the shared thread send generates its own key instead of using the caller's"
+  );
+  assert.match(bounded, /idempotency_key: message\.idempotency_key/);
+});
+
+test('a thread composer clears its draft only after the outcome is known', () => {
+  const source = readSource('src/lib/components/NamedThreadPanel.svelte');
+  const body = source.slice(source.indexOf('async function send()'));
+  const bounded = body.slice(0, body.indexOf('\n  async function older'));
+  // Clearing before the await meant a refusal and a lost response both left an empty
+  // composer, and the rotation below then made the lost response a second message.
+  const clearAt = bounded.indexOf("draft = ''");
+  const sendAt = bounded.indexOf('await view.send(');
+  assert.ok(clearAt > sendAt, 'the composer clears its draft before the send completes');
+  // And a failed outcome puts the text back rather than discarding it.
+  assert.match(
+    bounded,
+    /if \(view\.sendError\) \{[\s\S]{0,80}draft = text/,
+    'a refused or uncertain send does not restore the text'
+  );
+});
+
+test('a thread draft is held in the shared, account-scoped store', () => {
+  const source = readSource('src/lib/components/NamedThreadPanel.svelte');
+  // Local panel state dies with the panel, so closing a thread to look at a channel
+  // and coming back lost an unsent reply. The store is already account-scoped, so this
+  // cannot carry into the next account.
+  assert.match(source, /workspace\.composerDrafts/, 'the thread draft is not in the shared store');
+  assert.match(source, /captureDraft\(\)/, 'the draft is never captured on close');
+});

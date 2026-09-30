@@ -151,3 +151,45 @@ is empty rather than presenting an unexplained hole. Two things it deliberately 
 The table is rebuilt rather than altered, because SQLite cannot drop a foreign key or
 widen a `NOT NULL` column in place, and that cascade is the whole problem. The unique
 root index becomes partial, since several tombstoned threads may have no root.
+
+
+## A thread reply is a recoverable send like any other
+
+A thread reply used to have its own HTTP call. That gave it its own outbox (none), its
+own draft handling (none) and its own account fence (none), so three ordinary cases
+behaved differently inside a thread than in the channel it lives in:
+
+- **A refusal** cleared the composer and rotated the key, so the text was gone and the
+  next send was new work.
+- **A lost response** did the same, which is the one outcome the whole receipt design
+  exists to prevent: the author retried under a new key and sent the message twice.
+- **An account switch or authority change** mid-send wrote its result into a view that
+  no longer belonged to that account, because nothing fenced the completion.
+
+A member's experience of all three is "threads are the place my messages get lost", and
+they are right.
+
+**One send path, and a thread is a destination like any other.** `messagePath` decides
+where a message operation goes, and a message carrying a `thread_id` goes to its
+thread. That is the whole change: one place builds a message URL, so a rename cannot
+make the two drift, and every thread send inherits the receipt, the outbox, the draft
+store and the account fence because it is now the *same* send rather than a copy of it.
+
+Two things the caller keeps:
+
+- **Its key.** `sendIntoThread` takes the operation key rather than generating one,
+  because a thread composer freezes its key for the life of an unresolved send.
+- **Its text.** The composer clears the draft *after* the outcome and restores it on a
+  failure, so a refusal and a lost response both leave the author with their words.
+
+**The draft lives in the shared, account-scoped store.** Panel-local state dies with the
+panel, so closing a thread to look at a channel and coming back used to lose an unsent
+reply. The store is already scoped to the account and already survives a reload when
+drafts are saved, so a thread reply is now held exactly the way a channel message is —
+  including not carrying into the next account.
+
+**What this does not establish.** These tests assert *which machinery* a thread reply
+is handed to, which is only observable in the source; a browser test would confirm a
+request was made, not that it was made through the recoverable path. The end-to-end
+consequence — a lost response reconciled rather than duplicated — is covered on the
+channel path and inherits here by construction, not by observation.

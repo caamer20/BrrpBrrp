@@ -15,6 +15,11 @@ import {
 } from './outbox';
 import type { Attachment, Channel, Message, RealtimeEvent, WorkspaceState } from './types';
 
+// resourceForMessages is the path segment every message operation uses. It is named
+// once because the two places that build a message URL are the two places that would
+// otherwise drift apart on a rename.
+const resourceForMessages = 'messages';
+
 export interface ScrollPosition {
   id: string;
   offset: number;
@@ -282,6 +287,21 @@ class Workspace {
   }
   conversationPath(id: string, resource: string) {
     return `/${this.isPrivate(id) ? 'conversations' : 'channels'}/${id}/${resource}`;
+  }
+  // messagePath is where one message's operation actually goes. A thread reply is a
+  // *destination* like any other: the same route, the same receipts, the same
+  // outbox, and a different place for the result to land.
+  //
+  // Thread sends used to have their own HTTP call, which meant they had their own
+  // outbox (none), their own draft handling (none) and their own account fence
+  // (none) — so a lost response, a refused send and an account switch all behaved
+  // differently in a thread than in the channel it lives in. Routing through the
+  // shared path is what makes those three cases the same case.
+  messagePath(message: Pick<Message, 'conversation_id' | 'channel_id' | 'thread_id'>) {
+    const conversation = this.conversationId(message);
+    if (message.thread_id)
+      return `/threads/${encodeURIComponent(message.thread_id)}/${resourceForMessages}`;
+    return this.conversationPath(conversation, resourceForMessages);
   }
   conversationURL(id: string) {
     return `/?${this.isPrivate(id) ? 'conversation' : 'channel'}=${encodeURIComponent(id)}`;
@@ -1258,6 +1278,93 @@ class Workspace {
     await this.retryMessage(message);
   }
 
+  /**
+   * Sends one reply into a named thread, through the same machinery as a channel
+   * message: the same operation key, the same receipt, the same outbox, the same
+   * account and authority fence.
+   *
+   * The caller's key is supplied rather than generated, because a thread composer
+   * freezes it for the life of an unresolved send. That is the whole reason this
+   * exists: rotating a key after a caught failure turns a send that may well have
+   * committed into a second message, which is the one outcome a recoverable send
+   * exists to prevent.
+   *
+   * The result is the stored message, or nothing if the request was dropped because
+   * the account, session or authority moved under it. Nothing is thrown, because the
+   * throw case — an unknown outcome that may have committed — is exactly the one the
+   * caller must show rather than swallow.
+   */
+  async sendIntoThread(threadID: string, content: string, idempotencyKey: string) {
+    if (!this.user || this.authorizationUnverified || !this.can('message.send')) return;
+    if (!threadID) return;
+    const key = idempotencyKey;
+    const thread = await api<{ conversation_id: string } | null>(
+      `/threads/${encodeURIComponent(threadID)}`,
+      'GET'
+    ).catch(() => null);
+    const conversationID = thread?.conversation_id || this.activeId;
+    if (!conversationID) return;
+    const message: Message = {
+      id: key,
+      idempotency_key: key,
+      channel_id: this.isPrivate(conversationID) ? '' : conversationID,
+      conversation_id: conversationID,
+      thread_id: threadID,
+      user_id: this.user.id,
+      content,
+      attachments: [],
+      reactions: [],
+      embeds: [],
+      created_at: new Date().toISOString(),
+      pending: 'sending'
+    };
+    const request = this.identity();
+    this.pending[key] = message;
+    this.trackOutbox(message, []);
+    try {
+      const saved = await api<Message>(
+        `/threads/${encodeURIComponent(threadID)}/messages`,
+        'POST',
+        {
+          content: message.content,
+          idempotency_key: message.idempotency_key
+        }
+      );
+      // A completion that arrives after the account, session or authority moved
+      // belongs to a view that no longer exists. The message is on the server and
+      // returns with the refetched history if this account may still read it, so
+      // nothing is written into the cleared view — and the outbox entry is released
+      // rather than left retryable, because the operation did complete.
+      if (!this.admitted(request)) {
+        this.releaseOutbox(key);
+        return;
+      }
+      this.releaseOutbox(key);
+      delete this.pending[key];
+      this.onConversationEvent?.({ t: 'message.created', d: saved });
+      return saved;
+    } catch (error) {
+      if (!this.admitted(request)) {
+        // Same rule as the channel path: keep the author's operation retryable under
+        // its own key rather than leaving it in `sending` forever, and do not apply an
+        // answer that belongs to a view that has been cleared.
+        if (this.pending[key]) this.pending[key] = { ...message, pending: 'failed' };
+        return;
+      }
+      const status = error instanceof APIError ? error.status : 0;
+      if (!retryableStatus(status)) {
+        // The server will answer this operation the same way again, so it is not
+        // retried: the text is handed back to the person with what happened, in the
+        // server's own words.
+        this.finishUnsendable(message, outcomeExplanation(status, errorMessage(error)));
+        return;
+      }
+      this.showToast(errorMessage(error));
+      this.pending[key] = { ...message, pending: 'failed' };
+      throw error;
+    }
+  }
+
   async retryMessage(message: Message) {
     if (!this.user || message.user_id !== this.user.id || this.authorizationUnverified) return;
     if (this.outbox.some((entry) => entry.key === message.idempotency_key && entry.recovery))
@@ -1291,16 +1398,12 @@ class Workspace {
       item.id === message.id ? { ...item, pending: 'sending' } : item
     );
     try {
-      const saved = await api<Message>(
-        this.conversationPath(this.conversationId(message), 'messages'),
-        'POST',
-        {
-          content: message.content,
-          reply_to_id: message.reply_to_id || '',
-          idempotency_key: message.idempotency_key,
-          attachment_ids: this.outboxAttachments(message)
-        }
-      );
+      const saved = await api<Message>(this.messagePath(message), 'POST', {
+        content: message.content,
+        reply_to_id: message.reply_to_id || '',
+        idempotency_key: message.idempotency_key,
+        attachment_ids: this.outboxAttachments(message)
+      });
       if (this.user?.id !== sender || request.session !== this.sessionVersion) return;
       if (request.generation !== this.authorizationGeneration) {
         delete this.pending[message.idempotency_key];
