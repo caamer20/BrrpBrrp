@@ -6,11 +6,34 @@ Text channels, persistent messages, replies, pins, file sharing, reactions, ment
 
 This is an alpha candidate. Automated integration and race checks and local browser checks are recorded in [acceptance.md](docs/acceptance.md). Production sign-off also requires voice, push and service tests on the actual deployment machine and network.
 
-For an ordered rollout and sign-off record covering both Windows and Docker, use the [production release runbook](docs/production-readiness.md).
+For an ordered rollout and sign-off record covering both Windows and Docker, use the
+[production release runbook](docs/production-readiness.md). The
+[host qualification procedures](docs/host-qualification.md) are the per-host checklists;
+they are written and have not been run, because this development environment has no
+Windows host, no Docker, no PowerShell and no Tailscale peer.
 
 The packaged **0.4.0-alpha.5** checkpoint adds message reporting, channel slow mode, per-channel notification muting, explicit recovery for failed sends, and account removal that keeps conversation history under “Deleted member.” It includes focused reply discussions, a keyboard channel picker, roles and channel access controls. See the [community guide](docs/community-guide.md), [alpha.5 release record](docs/releases/0.4.0-alpha.5.md) and [verification](docs/acceptance.md).
 
-The current source candidate **0.4.0-alpha.7** builds on opt-in consented direct messaging, adding private message evidence and incoming-request discovery (schema 13). See the [alpha.7 record](docs/releases/0.4.0-alpha.7.md), the [private conversation policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md) and the [private evidence policy](docs/adr/0013-private-message-evidence-and-request-discovery.md). Every private feature remains default-off pending privacy acceptance.
+The current source candidate **0.4.0-alpha.7** is at **schema 21**. It adds, on top of
+opt-in consented direct messaging, groups and group chat, an activity inbox with
+notification preferences, named community threads, private calls and screen sharing,
+member moderation (report assignment and expiring timeouts), a member's own data
+export, and operator alerts that report whether they were *delivered* rather than
+merely configured.
+
+**Read [the alpha.7 record](docs/releases/0.4.0-alpha.7.md) first, and its "Known
+issues" section above all.** It is the shortest honest account of what this candidate
+is: what has been verified, and what has not. In summary — the private features remain
+**default-off and have never been qualified on either required deployment**, no
+capacity or soak measurement exists, no physical microphone or blocked-UDP call has
+been exercised, and no independent review or beta has happened. Nothing here has been
+published.
+
+Policies worth reading before changing any of it: the [private conversation
+policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md), the
+[groups policy](docs/adr/0016-groups.md), the [media architecture
+decision](docs/adr/0019-media-architecture.md) and the [member export
+contract](docs/adr/0019b-member-export.md).
 
 ## Start a server
 
