@@ -2,7 +2,7 @@
 
 **Last updated:** 28 September 2026 (P10 tranche; review 11)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.7** (schema **20**, backup format **2**)
+**Candidate:** **0.4.0-alpha.7** (schema **22**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
 **Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
 **Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
