@@ -833,7 +833,27 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 	// The publication is announced only after the description that carries it has been
 	// accepted locally. A viewer told about a publication the connection does not have
 	// would wait forever for it.
+	//
+	// And the allowance is re-asked *here*, under this lock, rather than trusted from the
+	// read that happened before the SDP exchange above. That read released the lock, so
+	// a second peer negotiating in between saw the same count this one did and passed
+	// too: the room ended up carrying two screens against a bound of one, the second
+	// consuming bandwidth and a viewer's output for an offer the server should have
+	// refused. The reservation is now taken by the transaction that registers the
+	// publication, which is the only point close enough to the write to be about it.
 	s.mu.Lock()
+	roomNow, serverNow := 0, 0
+	for _, each := range s.publications {
+		serverNow += each.countOfKind(signal.Publication)
+	}
+	roomNow = s.existingRoom(room).countOfKind(signal.Publication)
+	if err := limits.admits(signal.Publication, roomNow, serverNow); err != nil {
+		s.mu.Unlock()
+		// The description has already been accepted, so the *offer* is answered; it is
+		// the publication that is refused, and the client is told so rather than left
+		// with a negotiated track that carries nothing.
+		return err
+	}
 	s.announcePublication(peer, Publication{
 		ID: publicationID, Owner: peer.state.UserID, Kind: signal.Publication,
 		Started: time.Now().UTC(),

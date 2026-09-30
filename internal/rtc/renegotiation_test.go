@@ -1018,3 +1018,74 @@ func screenWrites(t *testing.T, sfu *SFU, userID string) uint64 {
 	}
 	return total
 }
+
+// The room's screen allowance is one, and the check that enforces it must be the one
+// that *registers* the publication — not an earlier read.
+//
+// The bound was read under the lock, the lock released for the SDP exchange, and the
+// publication registered afterwards. A second peer arriving in that window read the
+// same count the first did, passed, and the room ended up carrying two screens against
+// a bound of one: the second consuming bandwidth and a viewer's output for an offer
+// the server should have refused. The comment above the check claimed one critical
+// section; the lock said otherwise.
+//
+// What is asserted is the behaviour, through the real signal path: the first member's
+// screen is published, the second member's is refused, and the room ends with one.
+func TestTheScreensAllowanceIsTakenWhenThePublicationIsRegistered(t *testing.T) {
+	sfu := newTestSFU(t)
+	first := connectPeerWithCapacity(t, sfu, "ana", "room", 3)
+	second := connectPeerWithCapacity(t, sfu, "bo", "room", 3)
+	for _, who := range []string{"ana", "bo"} {
+		id := who
+		waitFor(t, id+" to connect", func() bool {
+			return sfu.connectionStateOf(id) == webrtc.PeerConnectionStateConnected
+		})
+	}
+
+	// Each member adds a real screen track and offers it, the way a browser does.
+	offerScreen := func(peer *testPeer) *webrtc.SessionDescription {
+		track, err := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}, "screen", peer.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := peer.pc.AddTransceiverFromTrack(track,
+			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+			t.Fatal(err)
+		}
+		description, err := peer.pc.CreateOffer(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := peer.pc.SetLocalDescription(description); err != nil {
+			t.Fatal(err)
+		}
+		return &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: peer.pc.LocalDescription().SDP}
+	}
+
+	if err := sfu.Signal("ana", "ana", Signal{
+		ConnectionID: firstConnectionID(t, sfu, "ana"),
+		SDP:          offerScreen(first), Publication: PublicationScreenVideo,
+	}); err != nil {
+		t.Fatalf("the first share was refused: %v", err)
+	}
+	if err := sfu.Signal("bo", "bo", Signal{
+		ConnectionID: firstConnectionID(t, sfu, "bo"),
+		SDP:          offerScreen(second), Publication: PublicationScreenVideo,
+	}); err == nil {
+		t.Fatal("A SECOND MEMBER TOOK THE ROOM'S ONLY SCREEN")
+	}
+	if got := len(sfu.Publications("room")); got != 1 {
+		t.Fatalf("the room carries %d publications, want 1", got)
+	}
+	// The owner is unaffected by the refusal: a fix that also dropped the first share
+	// would satisfy the bound and break the feature.
+	if got := sfu.Publications("room")[0].Owner; got != "ana" {
+		t.Fatalf("the room publishes %q after the refusal, want the member who was admitted", got)
+	}
+}
+
+func firstConnectionID(t *testing.T, sfu *SFU, userID string) string {
+	t.Helper()
+	return sfu.connectionIDFor(userID)
+}

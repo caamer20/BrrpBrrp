@@ -593,3 +593,28 @@ This is a bound, not a whole authorization model. It does not stop a member who
 *does* hold a publication from forwarding it, and it is not a substitute for the
 server refusing the publication in the first place. It closes the case where the
 publication was correctly refused and the packets were not.
+
+
+## The allowance is taken by the transaction that registers the publication
+
+The room's screen bound was read under the lock, the lock released for the SDP
+exchange, and the publication registered afterwards. A second peer arriving in that
+window read the same count the first did and passed too, so the room could end up
+carrying two screens against a bound of one — the second consuming bandwidth and a
+viewer's output for an offer the server should have refused.
+
+The comment above the check claimed one critical section for the whole decision. The
+lock said otherwise, and the lock is what the code does.
+
+The reservation is now re-asked **at registration, under the same lock that inserts**.
+That is the only point close enough to the write to be about it: an earlier check is a
+statement about the room before the exchange, and the exchange is exactly the window in
+which another peer can take the allowance.
+
+**What this does not prove.** There is no test here that interleaves two real
+negotiations, because there cannot be one in this harness: Pion's answer blocks on ICE
+gathering, and two overlapping offers on one connection are refused outright. The test
+asserts the behaviour through the real signal path — the first member's screen is
+published, the second's is refused, and the owner is unaffected — which is the
+observable contract. It does not demonstrate the interleaving, and the ADR says so
+rather than implying a race test that was never run.
