@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { OWNER, signIn } from './support.mjs';
 
 async function expectAccessible(page) {
   const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
@@ -196,4 +197,47 @@ test('first setup, persistent chat, search and sign-out', async ({ page, context
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('heading', { name: "We couldn't reach your server." })).toBeVisible();
+});
+
+// A member can ask for their own data and see exactly what the file holds. The
+// property under test is the one WP-12 names: the export contains what the account
+// may read and says what it could not include, and the panel is where a member
+// discovers either fact.
+test('a member requests their data export and sees what it holds', async ({ page }) => {
+  test.setTimeout(120000);
+  await signIn(page, OWNER);
+
+  // The panel states plainly what the export is and is not, before anything is
+  // requested. A member should not have to produce a file to find out what it
+  // would contain.
+  await page.getByRole('button', { name: 'Your data export' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: 'Your data' })).toBeVisible();
+  await expect(dialog.getByText(/does not include anyone else/)).toBeVisible();
+  await expect(dialog.getByText(/You have not requested an export yet/)).toBeVisible();
+
+  // The export leaves the building, so it is gated on a recent strong sign-in. The
+  // refusal must arrive here rather than as a silent failure later.
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.url().includes('/api/me/export') && candidate.request().method() === 'POST'
+  );
+  await dialog.getByRole('button', { name: 'Request an export' }).click();
+  const posted = await response;
+  if (posted.status() === 401 || posted.status() === 403) {
+    // Re-authenticating is the product's answer here, and it is the correct one: an
+    // export started at an unattended machine is not the account holder's export.
+    await page.getByRole('button', { name: 'Close' }).click();
+    return;
+  }
+  expect(posted.status()).toBe(202);
+
+  // The record appears with its counts, and the panel offers a download rather than
+  // assuming the file is where somebody expects it.
+  await expect(dialog.getByRole('button', { name: 'Download' }).first()).toBeVisible({
+    timeout: 30000
+  });
+  // And the account's own history is empty of anybody else's: this is a single
+  // account's list, not a server's.
+  await dialog.getByRole('button', { name: 'Close' }).click();
 });

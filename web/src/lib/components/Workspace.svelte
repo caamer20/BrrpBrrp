@@ -280,6 +280,12 @@
       </div>
       <button
         class="icon-button"
+        aria-label="Your data export"
+        title="Your data export"
+        onclick={() => (workspace.exportOpen = true)}><Icon name="download" size={18} /></button
+      >
+      <button
+        class="icon-button"
         aria-label="Your preferences"
         onclick={() => (workspace.settingsOpen = true)}><Icon name="settings" size={18} /></button
       ><button class="icon-button" aria-label="Sign out" onclick={() => workspace.logout()}
