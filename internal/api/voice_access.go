@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"sync"
 
 	"brrpbrrp/internal/authz"
@@ -65,7 +67,12 @@ func (s *Server) publishVoiceChannel(channelID string, participants []rtc.State)
 	ctx := context.Background()
 	payload := map[string]any{"channel_id": channelID, "states": participants}
 	if _, err := s.store.Channel(ctx, s.store, channelID); err != nil {
-		// A deleted channel is gone; the next snapshot removes it everywhere.
+		// A private call's room id is a conversation, not a channel, so this lookup
+		// fails for it. That is the right refusal for a *channel* — a deleted channel
+		// is gone, and the next snapshot removes it everywhere — but a private call's
+		// participants are exactly the people on the line, so they go to the members
+		// and to nobody else.
+		s.publishPrivateVoiceRoom(ctx, channelID, payload)
 		return
 	}
 	// The audience and the revision it is delivered under come from one coherent
@@ -207,4 +214,177 @@ func (s *Server) evictVoice(actor, reason string, state rtc.State) {
 	s.leaveVoice(state.UserID, "")
 	s.hub.SendUser(state.UserID, "voice.access_revoked", map[string]any{"channel_id": state.ChannelID, "reason": reason})
 	s.audit(actor, "voice.access_revoked", state.UserID)
+}
+
+// voiceRoom is a place a call can happen: a community voice channel, or a private
+// conversation (ADR 0019, §5).
+//
+// It is deliberately a small value rather than either kind of row. A call does not
+// need a channel's topic, position or capacity, and a private conversation has no
+// channel row at all — it is a `conversations` row with `channel_id IS NULL`. Reading
+// one as the other is the mistake this type exists to prevent, and the message-scope
+// trigger in migration 11 already forbids a conversation masquerading as a channel.
+type voiceRoom struct {
+	// ID is the room's identity in the SFU. It is a channel id for a community call
+	// and a conversation id for a private one, and the SFU treats it as opaque.
+	ID string
+	// Kind is "channel", "direct" or "group", and decides the authorization path.
+	Kind string
+	// Capacity is how many participants the room carries, or 0 for the default.
+	Capacity int
+	// DisplayName is what a participant list shows. A private call names the other
+	// member, not a channel, because there is no channel.
+	DisplayName string
+	// Private is true for a direct or group call. It gates every event the room
+	// publishes: a private call's participants are as private as its messages.
+	Private bool
+}
+
+// maxPrivateCallParticipants bounds a private call. A group has up to ten members, and
+// a call where everybody is already present is not a call. Two is the number that
+// makes a private call private: one other person.
+const maxPrivateCallParticipants = 2
+
+// resolveVoiceRoom admits a caller to a call in `roomID`, which may be a community
+// voice channel or a private conversation.
+//
+// The two go through different authorization on purpose. A channel uses the channel's
+// own read and post rules, exactly as its messages do. A private conversation uses the
+// membership resolver at conversation_access.go, so a direct pair needs its accepted
+// partner and a group needs its accepted members — and a call ends when that
+// membership does, rather than on a timer.
+//
+// Both refusals are the same sentence. A caller must not be able to learn whether a
+// private conversation exists by being told it is the wrong kind of thing.
+func (s *Server) resolveVoiceRoom(ctx context.Context, q db.Queryer, principal authz.Principal, roomID string) (voiceRoom, string) {
+	if roomID == "" {
+		return voiceRoom{}, "Voice room not found."
+	}
+	// A channel conversation is a voice channel, admitted by the channel's own rules.
+	var kind string
+	err := q.QueryRowContext(ctx, `SELECT kind FROM conversations WHERE id=?`, roomID).Scan(&kind)
+	switch {
+	case err == nil && kind == "channel":
+		// Resolved through the caller's queryer rather than through `channelAccess`,
+		// which reads through the store: the store is one connection, so asking it while
+		// a transaction is open waits for the connection that transaction is holding.
+		channel, err := s.store.Channel(ctx, q, roomID)
+		if err != nil {
+			return voiceRoom{}, "Voice room not found."
+		}
+		lists, err := s.store.ChannelAccessLists(ctx, q, channel.ID)
+		if err != nil {
+			return voiceRoom{}, "Voice room not found."
+		}
+		access := lists[channel.ID]
+		// The channel's own read rule, exactly as its messages use. A voice channel is
+		// not readable because it is a call: it is readable because the caller may read
+		// the channel.
+		if !principal.MayReadChannel(channel, access) || channel.Type != "voice" {
+			return voiceRoom{}, "Voice room not found."
+		}
+		return voiceRoom{
+			ID: channel.ID, Kind: "channel", Capacity: channel.MaxVoiceUsers, DisplayName: channel.Name,
+		}, ""
+	case err == nil:
+		// A private conversation. The same membership decision a private message
+		// makes, resolved now rather than when the message is read.
+		if !s.config.PrivateConversations {
+			return voiceRoom{}, "Voice room not found."
+		}
+		scope, err := s.conversationAccess(ctx, q, principal, roomID, false)
+		if err != nil {
+			return voiceRoom{}, "Voice room not found."
+		}
+		// A call is available on the direct pair or the group, and not on anything
+		// else — which today means not on a channel, handled above.
+		if scope.Kind != "direct" && scope.Kind != "group" {
+			return voiceRoom{}, "Voice room not found."
+		}
+		return voiceRoom{
+			ID: roomID, Kind: scope.Kind, Capacity: maxPrivateCallParticipants,
+			DisplayName: s.privateRoomName(ctx, q, scope, principal.UserID), Private: true,
+		}, ""
+	case errors.Is(err, sql.ErrNoRows):
+		return voiceRoom{}, "Voice room not found."
+	default:
+		return voiceRoom{}, "Voice room not found."
+	}
+}
+
+// privateRoomName names a private call for a participant list. A direct pair is named
+// for the *other* member and a group for its own name — a person reading "calling Ada"
+// knows who is on the line, which a channel's name never told them. The caller's own
+// id is passed in because a direct pair is a name relative to whoever is looking.
+func (s *Server) privateRoomName(ctx context.Context, q db.Queryer, scope messageScope, viewerID string) string {
+	if scope.Kind == "group" {
+		// The group's name is read from the same row a member sees in their
+		// conversation list, not from a second copy that could disagree with it.
+		var name string
+		if err := q.QueryRowContext(ctx, `SELECT d.name FROM group_details d JOIN conversations c ON c.id=d.conversation_id
+			WHERE d.conversation_id=? AND c.kind='group'`, scope.ID).Scan(&name); err == nil && name != "" {
+			return name
+		}
+		return "group call"
+	}
+	var name string
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(u.display_name,''),u.username,'member')
+		FROM conversation_members m JOIN users u ON u.id=m.user_id
+		WHERE m.conversation_id=? AND m.state='accepted' AND m.user_id<>? LIMIT 1`,
+		scope.ID, viewerID).Scan(&name); err == nil {
+		return name
+	}
+	return "direct call"
+}
+
+// publishPrivateVoiceRoom delivers a private call's participant list to the members of
+// that conversation and to no one else.
+//
+// This is the one place a private call's existence could leak. A channel's presence
+// goes to whoever can read the channel, which is a correct answer for a channel; the
+// same audience for a conversation would tell an account that cannot read a single
+// message in it who is on a call. The audience is the conversation's accepted,
+// usable members, resolved now — so a member removed during a call stops receiving
+// its participant list on the next change, which is the same rule their messages
+// follow.
+func (s *Server) publishPrivateVoiceRoom(ctx context.Context, roomID string, payload map[string]any) {
+	if !s.config.PrivateConversations {
+		return
+	}
+	var kind string
+	if err := s.store.QueryRowContext(ctx, `SELECT kind FROM conversations WHERE id=?`, roomID).Scan(&kind); err != nil {
+		// Not a conversation and not a channel: a deleted room. The next snapshot
+		// removes it everywhere.
+		return
+	}
+	if kind != "direct" && kind != "group" {
+		return
+	}
+	rows, err := s.store.QueryContext(ctx, `SELECT m.user_id FROM conversation_members m
+		JOIN users u ON u.id=m.user_id JOIN conversations c ON c.id=m.conversation_id
+		WHERE m.conversation_id=? AND m.state='accepted' AND c.state='active'
+		  AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0`, roomID)
+	if err != nil {
+		s.log.Warn("private voice audience lookup failed", "error", err)
+		return
+	}
+	defer rows.Close()
+	recipients := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return
+		}
+		recipients = append(recipients, id)
+	}
+	if len(recipients) == 0 {
+		return
+	}
+	// The participant list is published alongside the room's identity, so a client can
+	// tell a private call from a channel one — the payload is otherwise identical and
+	// a client that could not tell would render a conversation's participants in a
+	// channel sidebar.
+	payload["private"] = true
+	revision := s.authorizationRevision(ctx)
+	s.hub.BroadcastToRevision(recipients, revision, "voice.state_updated", payload)
 }

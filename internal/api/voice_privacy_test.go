@@ -158,13 +158,13 @@ func TestVoicePresenceFollowsChannelAccess(t *testing.T) {
 	if err := wsjson.Write(ctx, outsiderConn, map[string]any{"t": "voice.join", "d": map[string]string{"channel_id": channel.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	if message := voiceError(t, ctx, outsiderConn); message != "Voice channel not found." {
+	if message := voiceError(t, ctx, outsiderConn); message != "Voice room not found." {
 		t.Fatalf("join refusal = %q", message)
 	}
 	if err := wsjson.Write(ctx, outsiderConn, map[string]any{"t": "voice.move", "d": map[string]string{"channel_id": channel.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	if message := voiceError(t, ctx, outsiderConn); message != "Voice channel not found." {
+	if message := voiceError(t, ctx, outsiderConn); message != "Voice room not found." {
 		t.Fatalf("move refusal = %q", message)
 	}
 	for _, state := range s.voice.States() {
@@ -387,7 +387,7 @@ func TestRevocationReachesAnActiveVoiceStream(t *testing.T) {
 	if err := wsjson.Write(ctx, insiderConn, map[string]any{"t": "voice.join", "d": map[string]string{"channel_id": channel.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	if message := voiceError(t, ctx, insiderConn); message != "Voice channel not found." {
+	if message := voiceError(t, ctx, insiderConn); message != "Voice room not found." {
 		t.Fatalf("join after revocation = %q", message)
 	}
 	if w := request(t, handler, "GET", "/api/channels/"+channel.ID+"/messages", nil, insider); w.Code != http.StatusNotFound {

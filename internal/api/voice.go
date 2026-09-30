@@ -88,13 +88,13 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 			client.Send("voice.move.error", map[string]string{"error": "Your authority could not be resolved. Try again."})
 			return
 		}
-		channel, refusal := s.voiceJoin(ctx, principal, input.ChannelID)
+		room, refusal := s.voiceJoin(ctx, principal, input.ChannelID)
 		if refusal != "" {
 			s.voiceGate.Unlock()
 			client.Send("voice.move.error", map[string]string{"error": refusal})
 			return
 		}
-		err = s.voice.Move(user.ID, client.ID, channel.ID, channel.MaxVoiceUsers)
+		err = s.voice.Move(user.ID, client.ID, room.ID, room.Capacity)
 		if err == nil {
 			s.voice.SetSpeakAllowed(user.ID, client.ID, principal.Allowed(authz.VoiceSpeak))
 		}
@@ -103,7 +103,7 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 			client.Send("voice.move.error", map[string]string{"error": err.Error()})
 			return
 		}
-		client.Send("voice.moved", map[string]string{"channel_id": channel.ID})
+		client.Send("voice.moved", map[string]string{"channel_id": room.ID})
 	case "voice.join":
 		if !s.Settings().Voice {
 			report("Voice is disabled by an administrator.")
@@ -121,13 +121,17 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 			report("Your authority could not be resolved. Try again.")
 			return
 		}
-		channel, refusal := s.voiceJoin(ctx, principal, input.ChannelID)
+		room, refusal := s.voiceJoin(ctx, principal, input.ChannelID)
 		if refusal != "" {
 			s.voiceGate.Unlock()
 			report(refusal)
 			return
 		}
-		err = s.voice.Join(user.ID, client.ID, channel.ID, channel.MaxVoiceUsers, client.Send)
+		// The room's capacity is the bound the SFU enforces, and it is the room's own:
+		// a voice channel's configured maximum, and a private call's two. The SFU
+		// treats the id as opaque, so a private conversation needs no special casing
+		// here beyond the admission decision that got us to this point.
+		err = s.voice.Join(user.ID, client.ID, room.ID, room.Capacity, client.Send)
 		if err == nil {
 			s.voice.SetSpeakAllowed(user.ID, client.ID, principal.Allowed(authz.VoiceSpeak))
 		}
@@ -141,7 +145,11 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 		if enabled {
 			iceServers = append(iceServers, turn)
 		}
-		client.Send("voice.join.accept", map[string]any{"channel_id": channel.ID, "connection_id": s.voice.ConnectionID(user.ID, client.ID), "resume_token": s.voice.ResumeToken(user.ID, client.ID), "ice_servers": iceServers, "turn_enabled": enabled, "bitrate": s.Settings().VoiceBitrate * 1000, "receive_slots": rtc.MaxParticipants - 1, "may_speak": principal.Allowed(authz.VoiceSpeak)})
+		// `private` is in the acceptance so the client can tell a call from a
+		// conversation. A private call's events must not be broadcast to a channel
+		// audience, and the client needs to know which it is in to avoid rendering a
+		// conversation's participants in a channel sidebar.
+		client.Send("voice.join.accept", map[string]any{"channel_id": room.ID, "private": room.Private, "display_name": room.DisplayName, "connection_id": s.voice.ConnectionID(user.ID, client.ID), "resume_token": s.voice.ResumeToken(user.ID, client.ID), "ice_servers": iceServers, "turn_enabled": enabled, "bitrate": s.Settings().VoiceBitrate * 1000, "receive_slots": rtc.MaxParticipants - 1, "may_speak": principal.Allowed(authz.VoiceSpeak)})
 	case "voice.leave":
 		s.leaveVoice(user.ID, client.ID)
 	case "voice.state", "voice.speaking":
@@ -223,15 +231,28 @@ func (s *Server) voiceAuthorityInGate(ctx context.Context, user db.User) (authz.
 // a hidden channel must not be confirmable while a visible channel with a missing
 // grant is a clear refusal rather than a mysterious absence. A listen-only role
 // holds voice.connect without voice.speak and is admitted, muted.
-func (s *Server) voiceJoin(ctx context.Context, principal authz.Principal, channelID string) (db.Channel, string) {
-	channel, readable := s.voiceChannel(ctx, principal, channelID)
-	if !readable {
-		return db.Channel{}, "Voice channel not found."
-	}
+// voiceJoin admits a caller to a call. The room may be a community voice channel or a
+// private conversation; the capability that gates the microphone gates both, because
+// speaking in a private call is the same act as speaking in a channel.
+func (s *Server) voiceJoin(ctx context.Context, principal authz.Principal, roomID string) (voiceRoom, string) {
 	if !principal.Allowed(authz.VoiceConnect) {
-		return db.Channel{}, "Your role does not include voice.connect."
+		// Checked before the room is resolved, so a caller without the capability is
+		// not told whether the room exists.
+		return voiceRoom{}, "Your role does not include voice.connect."
 	}
-	return channel, ""
+	tx, err := s.store.BeginTx(ctx, nil)
+	if err != nil {
+		return voiceRoom{}, "The call could not be started."
+	}
+	defer tx.Rollback()
+	room, refusal := s.resolveVoiceRoom(ctx, tx, principal, roomID)
+	if refusal != "" {
+		return voiceRoom{}, refusal
+	}
+	if err := tx.Commit(); err != nil {
+		return voiceRoom{}, "The call could not be started."
+	}
+	return room, ""
 }
 
 // voiceModerationAllowed applies the moderation hierarchy: voice moderation is
