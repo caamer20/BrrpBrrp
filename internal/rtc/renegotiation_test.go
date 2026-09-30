@@ -37,6 +37,18 @@ func newTestSFU(t *testing.T) *SFU {
 	return sfu
 }
 
+// viewerScreens copies a peer's video outputs under the SFU lock, so a test never
+// reaches into a peer's fields while a connection-state callback may be replacing it.
+func viewerScreens(sfu *SFU, userID string) []*screenForwarder {
+	sfu.mu.Lock()
+	defer sfu.mu.Unlock()
+	peer, ok := sfu.peers[userID]
+	if !ok {
+		return nil
+	}
+	return append([]*screenForwarder(nil), peer.screens...)
+}
+
 // waitFor polls briefly rather than sleeping a fixed time. A fixed sleep makes the
 // test either slow or flaky, and a flaky media test is worse than no media test.
 func waitFor(t *testing.T, what string, ready func() bool) {
@@ -396,15 +408,15 @@ func TestAStoppedScreenForwardsNothing(t *testing.T) {
 	})
 	sfu.mu.Unlock()
 	sharer := sfu.peers["ana"]
-	viewer := sfu.peers["bo"]
 
 	// While live, the packet reaches the viewer's forwarder.
 	sfu.forwardPublication(sharer, PublicationScreenVideo, &rtp.Packet{
 		Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 0},
 	})
-	viewer.screens[0].mu.Lock()
-	written := viewer.screens[0].sequence
-	viewer.screens[0].mu.Unlock()
+	screenOutputs := viewerScreens(sfu, "bo")
+	screenOutputs[0].mu.Lock()
+	written := screenOutputs[0].sequence
+	screenOutputs[0].mu.Unlock()
 	if written == 0 {
 		t.Fatal("a live screen's first packet was not forwarded")
 	}
@@ -413,9 +425,10 @@ func TestAStoppedScreenForwardsNothing(t *testing.T) {
 	sfu.forwardPublication(sharer, PublicationScreenVideo, &rtp.Packet{
 		Header: rtp.Header{Version: 2, SequenceNumber: 2, Timestamp: 3000},
 	})
-	viewer.screens[0].mu.Lock()
-	after := viewer.screens[0].sequence
-	viewer.screens[0].mu.Unlock()
+	afterScreens := viewerScreens(sfu, "bo")
+	afterScreens[0].mu.Lock()
+	after := afterScreens[0].sequence
+	afterScreens[0].mu.Unlock()
 	if after != written {
 		t.Fatalf("a stopped screen kept forwarding: %d writes, want %d", after, written)
 	}
@@ -442,9 +455,15 @@ func TestAVideoPacketNeverReachesTheAudioForwarder(t *testing.T) {
 	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, &rtp.Packet{
 		Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 0},
 	})
-	// The audio outputs are untouched by a video packet.
+	// The audio outputs are untouched by a video packet. The peer list is read under
+	// the SFU lock: a connection-state callback can remove a peer while this test
+	// looks at it, and reaching past the lock races with that.
+	sfu.mu.Lock()
+	viewer := sfu.peers["bo"]
+	audioOutputs := append([]*forwarder(nil), viewer.outputs...)
+	sfu.mu.Unlock()
 	before := 0
-	for _, output := range sfu.peers["bo"].outputs {
+	for _, output := range audioOutputs {
 		output.mu.Lock()
 		before += int(output.sequence)
 		output.mu.Unlock()
