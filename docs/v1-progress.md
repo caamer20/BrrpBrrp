@@ -993,3 +993,41 @@ only for people who have not already joined.
 The `voice.connect` capability check stayed, and a pre-existing test caught its removal
 during this work. The resolver answers "may this account be in this room", not "may this
 account make calls at all", and those are different questions.
+
+
+**V14-10, the schema-13 rehearsal had no baseline to run against.** The CI step
+unzipped `dist/releases/brrpbrrp-0.3.0-linux-amd64.zip` from the workspace. Two
+problems, and the second is the serious one:
+
+- `/dist/` is in `.gitignore`, so that archive is never in the repository. The step
+  depends on a file that exists only if somebody ran a release build first.
+- **0.3.0 is not schema 13.** Verified by running the archived Darwin 0.3.0 binary
+  against an empty data directory: it reports `BrrpBrrp 0.3.0` and writes a database
+  whose `schema_migrations` maximum is **2**, with no `conversations` and no
+  `private_message_reports` tables. It predates private conversations entirely, so it
+  cannot seed a rehearsal whose whole subject is a consenting direct conversation and a
+  pending request. The rehearsal would have failed its own checks — or, worse, passed
+  against a fixture that was never what it claimed to be.
+
+Checked every archived release this repository still holds, by running each one and
+reading the schema it actually writes:
+
+| Archive | Schema it writes |
+| --- | --- |
+| 0.3.0, 0.3.1 | 2 |
+| 0.4.0-alpha.3 | 2 |
+| 0.4.0-alpha.5 | 10 |
+| 0.4.0-alpha.6 | 12 |
+| 0.4.0-alpha.7 | 21 |
+
+**No archived release in this repository writes schema 13.** The rehearsal therefore
+has no baseline here, and the CI step is left failing rather than being made to pass by
+pointing it at a different archive: a rehearsal that runs against the wrong bytes
+qualifies nothing, and a rehearsal that silently skips is the exact failure this gate
+exists to prevent.
+
+**What is needed:** the schema-13 release's own archive, added to
+`scripts/baseline-releases.json` with its real SHA-256 and made available through
+`BRRP_BASELINE_RELEASE_DIR` or `BRRP_BASELINE_RELEASE_URL`, the way the alpha.5 and
+alpha.3 baselines already are. The acquisition path and its digest verification already
+exist and are exercised by the self-test; what is missing is the bytes.
