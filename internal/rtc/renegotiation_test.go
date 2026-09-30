@@ -19,8 +19,18 @@ func newTestSFU(t *testing.T) *SFU {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The peer map is read under the SFU's lock. Iterating it directly raced with the
+	// connection-state callback that removes a peer as its connection closes, which the
+	// race detector correctly flagged: the production code holds this lock and the
+	// test was reaching past it.
 	t.Cleanup(func() {
+		sfu.mu.Lock()
+		peers := make([]*Peer, 0, len(sfu.peers))
 		for _, peer := range sfu.peers {
+			peers = append(peers, peer)
+		}
+		sfu.mu.Unlock()
+		for _, peer := range peers {
 			_ = peer.pc.Close()
 		}
 	})
