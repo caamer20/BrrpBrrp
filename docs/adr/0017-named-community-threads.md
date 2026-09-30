@@ -193,3 +193,30 @@ is handed to, which is only observable in the source; a browser test would confi
 request was made, not that it was made through the recoverable path. The end-to-end
 consequence — a lost response reconciled rather than duplicated — is covered on the
 channel path and inherits here by construction, not by observation.
+
+
+## A thread has its own reading position
+
+Read state was keyed by conversation, so every message in a channel — a thread reply
+included — shared one cursor. That is the wrong shape for a thread, and it fails in both
+directions at once:
+
+- A member who read forty replies in a thread and then opened the channel had, on the
+  only cursor that existed, read the channel as far as the thread's newest reply.
+- A member who read the *channel* had marked a thread they never opened as read.
+
+Schema 24 adds `thread_reads`, keyed by thread, with its own position. A thread is a
+conversation with a subject and it moves at its own rate: a quiet thread beside a busy
+channel, or a busy thread nobody has opened, are the ordinary cases rather than the edge
+ones. Reading a thread now moves that thread's position and nothing else, which is the
+sentence the interface has to be able to make truthfully.
+
+The position is **scoped to the thread it is set on**. A cursor in one thread pointing
+at a message in another would make the next unread count meaningless, so the write
+resolves the message *within* that thread and refuses anything else. And the channel's
+own access rule still decides, because a thread is only as restricted as the channel it
+inherits from: a member who has lost the channel has lost the thread and cannot move a
+cursor in it.
+
+The table cascades from `threads`, so a deleted thread takes its readers' cursors with
+it and leaves nothing reachable through a thread id that no longer resolves.

@@ -559,3 +559,62 @@ func (s *Server) recordThreadReplyActivity(ctx context.Context, tx *sql.Tx, scop
 	_, err = tx.ExecContext(ctx, `UPDATE threads SET updated_at=? WHERE id=?`, db.Timestamp(now), threadID)
 	return err
 }
+
+// markThreadRead moves the reader's position in one thread, and only in that thread.
+//
+// A thread is a conversation with a subject, and it moves at its own rate: a quiet
+// thread beside a busy channel, or a busy thread nobody has opened, are the ordinary
+// cases rather than the edge ones. Sharing the channel's cursor made both
+// unanswerable — a member who read forty replies in a thread had, on the only cursor
+// that existed, read the channel as far as the thread's newest reply, and a member who
+// read the channel had marked a thread they never opened as read.
+//
+// The position is personal, so a request admitted before sign-out or account removal
+// cannot recreate it after the identity cleanup committed, exactly as for a channel.
+func (s *Server) markThreadRead(w http.ResponseWriter, r *http.Request, user db.User) {
+	var input struct {
+		MessageID string `json:"last_read_message_id"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer tx.Rollback()
+	principal, err := s.authorizeInTx(r.Context(), tx, user)
+	if err != nil {
+		s.authorityFailed(w, err)
+		return
+	}
+	// The channel's own access rule still decides: a thread is only as restricted as
+	// the channel it inherits from, so a member who has lost the channel has lost the
+	// thread and cannot move a cursor in it.
+	thread, _, err := s.threadAccess(r.Context(), tx, principal, r.PathValue("id"), false)
+	if err != nil {
+		s.scopeFailed(w, err)
+		return
+	}
+	// The position may only be a message of *this* thread. A cursor in one thread that
+	// points at a message in another would make the next unread count meaningless.
+	var id string
+	err = tx.QueryRowContext(r.Context(),
+		`SELECT id FROM messages WHERE id=? AND thread_id=?`, input.MessageID, thread.ID).Scan(&id)
+	if !s.found(w, err) {
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(),
+		`INSERT INTO thread_reads(user_id,thread_id,last_read_message_id,last_read_at) VALUES(?,?,?,?)
+		 ON CONFLICT(user_id,thread_id) DO UPDATE SET last_read_message_id=max(last_read_message_id,excluded.last_read_message_id),last_read_at=excluded.last_read_at`,
+		user.ID, thread.ID, id, db.Now()); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	respond(w, 200, map[string]string{"thread_id": thread.ID, "last_read_message_id": id})
+}

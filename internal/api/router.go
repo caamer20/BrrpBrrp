@@ -290,6 +290,7 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/api/threads/{id}", routePolicy{Note: "resolves the thread's channel access before returning anything"}, s.getThread},
 		{http.MethodGet, "/api/threads/{id}/messages", routePolicy{Note: "bounded cursor page of one thread; the channel's read rule applies"}, s.listThreadMessages},
 		{http.MethodPost, "/api/threads/{id}/messages", routePolicy{Capability: authz.MessageSend, Note: "re-establishes channel post authority and the thread's own state inside the transaction"}, s.createThreadMessage},
+		{http.MethodPost, "/api/threads/{id}/read", routePolicy{Note: "the reader's own position in this thread; a thread's reading position is independent of the channel it lives in, so reading a thread never marks unrelated channel content read"}, s.markThreadRead},
 		{http.MethodPost, "/api/threads/{id}/follow", routePolicy{Note: "personal subscription, bounded on the write"}, s.followThreadRoute},
 		{http.MethodDelete, "/api/threads/{id}/follow", routePolicy{Note: "unfollowing never touches messages or read state"}, s.unfollowThreadRoute},
 		{http.MethodPut, "/api/threads/{id}/state", routePolicy{Capability: authz.ChannelManage, Note: "archiving, reopening and locking a thread change what the whole channel can write"}, s.setThreadState},
