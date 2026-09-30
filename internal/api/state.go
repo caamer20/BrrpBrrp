@@ -6,6 +6,7 @@ import (
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/rtc"
 )
 
 // unreadCount is the storage layer's shape, aliased so the JSON contract has a
@@ -85,28 +86,62 @@ func (s *Server) adminUserStates(ctx context.Context, users []db.User) (map[stri
 // a channel it cannot read contributes neither a title, a count nor a cursor.
 func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 	principal := principalOf(r)
-	channels, err := s.store.AccessibleChannels(r.Context(), viewer(principal), "")
-	if err != nil {
-		s.failed(w, err)
-		return
+	// A member in a community timeout still gets a snapshot, because the snapshot is
+	// not only the channel list: it carries the server settings, the feature flags,
+	// this account's private conversations, groups and request counts — none of which
+	// the restriction touches. Refusing it left the client unable to finish signing
+	// in, which turned a community timeout into "you cannot use this account at all".
+	//
+	// The snapshot's own account is described to the caller, so it carries the caller's
+	// timeout state for the same reason sign-in and `/api/me` do: the client reads
+	// `user` from here rather than from a separate call, so without it the sidebar
+	// notice never appears for a member who was signed in before the timeout started.
+	s.describeOwnTimeout(r.Context(), &user)
+	// The community half is emptied rather than served: a timed-out member is told what
+	// is in force by the snapshot's own account and the sidebar notice, and must not be
+	// handed a readable channel list on the way past. Every other route still refuses.
+	channels := []db.Channel{}
+	if !principal.Suspended {
+		var err error
+		channels, err = s.store.AccessibleChannels(r.Context(), viewer(principal), "")
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
-	users, err := s.users(false)
-	if err != nil {
-		s.failed(w, err)
-		return
+	users := []db.User{}
+	if !principal.Suspended {
+		var err error
+		users, err = s.users(false)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
 	}
-	unread, err := s.store.UnreadCounts(r.Context(), viewer(principal))
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
-	// Category names are shared workspace structure, but the channel counts they
-	// carry are scoped to what the caller may read, so a category holding only
-	// restricted channels reports no count to an account that cannot open them.
-	categories, err := s.store.Categories(r.Context(), s.store, viewer(principal))
-	if err != nil {
-		s.failed(w, err)
-		return
+	// The remaining community-derived reads — unread counts, categories, presence and
+	// voice states — describe the community, so they are not read for a member in a
+	// community timeout. Presence in particular is not the timed-out member's to
+	// observe: they cannot enter a channel to be seen in one, so telling them who is
+	// around would describe a room they are not in.
+	unread := []db.UnreadCount{}
+	categories := []db.Category{}
+	presence := map[string]string{}
+	voiceStates := []rtc.State{}
+	if !principal.Suspended {
+		var err error
+		if unread, err = s.store.UnreadCounts(r.Context(), viewer(principal)); err != nil {
+			s.failed(w, err)
+			return
+		}
+		// Category names are shared workspace structure, but the channel counts they
+		// carry are scoped to what the caller may read, so a category holding only
+		// restricted channels reports no count to an account that cannot open them.
+		if categories, err = s.store.Categories(r.Context(), s.store, viewer(principal)); err != nil {
+			s.failed(w, err)
+			return
+		}
+		presence = s.visiblePresence()
+		voiceStates = s.visibleVoiceStates(r.Context(), principal)
 	}
 	directs := []directConversation{}
 	// Groups are the other kind of private conversation and are listed alongside the
@@ -146,8 +181,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {
 		"conversations": directs, "groups": groups, "features": map[string]bool{"private_conversations": s.config.PrivateConversations},
 		"requests": map[string]int{"outstanding_incoming": incomingRequests},
 		"user":     user, "channels": channels, "users": users, "settings": s.Settings(), "unread": unread,
-		"reaction_palette": reactionPalette, "presence": s.visiblePresence(), "push_public_key": s.vapidPublic,
-		"voice_states": s.visibleVoiceStates(r.Context(), principal), "categories": categories,
+		"reaction_palette": reactionPalette, "presence": presence, "push_public_key": s.vapidPublic,
+		"voice_states": voiceStates, "categories": categories,
 		"authorization": map[string]any{
 			"revision":     principal.Revision,
 			"is_owner":     principal.IsOwner,

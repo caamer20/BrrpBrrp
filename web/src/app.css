@@ -2700,6 +2700,39 @@ meter {
 .connection-banner strong {
   color: var(--text);
 }
+/* A live community timeout. It sits in the sidebar above the channel list, because
+   that is where a timed-out member lands: the community is empty, and without this
+   they see an empty workspace and no reason for it. The text names what still works,
+   because the restriction's whole content is that it is narrower than "you are
+   banned", and a member who has just lost their channels cannot guess that. */
+.timeout-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 12px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #d08700;
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.timeout-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.timeout-notice div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.timeout-notice strong {
+  color: var(--text);
+}
+.timeout-notice span {
+  color: var(--muted);
+}
 .message-load-error {
   display: flex;
   align-items: center;

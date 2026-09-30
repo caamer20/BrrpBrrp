@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -96,7 +97,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.failed(w, err)
 		return
 	}
+	// Sign-in is the one moment a timed-out member is told what is happening to them,
+	// because it is the moment they are looking for it: they know they were put in a
+	// timeout and they are checking whether it is over. Without this the interface
+	// signs them in and then fails every community request with no explanation.
+	s.describeOwnTimeout(r.Context(), &user)
 	respond(w, 200, user)
+}
+
+// describeOwnTimeout fills in the caller's own moderation-timeout state.
+//
+// It is deliberately a separate step rather than part of `scanUser`. Every other route
+// that scans a user — the administrator's account list, a message author, an audit
+// row — must keep these fields zero, because a timeout is moderation information about
+// one account and the ordinary readers of `users` are not entitled to it. Applying it
+// in the shared scanner would leak it into every response that mentions a person.
+func (s *Server) describeOwnTimeout(ctx context.Context, user *db.User) {
+	if suspended, until := s.timeoutState(ctx, user.ID); suspended {
+		user.InTimeout, user.TimeoutEndsAt = true, until
+	}
 }
 
 func (s *Server) newSession(w http.ResponseWriter, userID string) error {
@@ -155,7 +174,15 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, user db.User) {
 	respond(w, 200, map[string]bool{"ok": true})
 }
 
-func (s *Server) me(w http.ResponseWriter, r *http.Request, user db.User) { respond(w, 200, user) }
+// me describes the caller to themselves, so it reports the caller's own live
+// moderation timeout for the same reason sign-in does. The client refreshes this on
+// reconnect and after an authority change, which is when a member whose timeout
+// expires while they are signed in needs to learn that the community is open again —
+// without it, the interface keeps rendering the timeout until they sign out and in.
+func (s *Server) me(w http.ResponseWriter, r *http.Request, user db.User) {
+	s.describeOwnTimeout(r.Context(), &user)
+	respond(w, 200, user)
+}
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, user db.User) {
 	var input struct {

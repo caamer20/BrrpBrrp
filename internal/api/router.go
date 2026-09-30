@@ -272,7 +272,7 @@ func (s *Server) routes() []route {
 		{http.MethodDelete, "/api/me/sessions", routePolicy{BeyondCommunity: true, Note: "signs out the caller's other devices and keeps this one"}, s.revokeOtherSessions},
 		{http.MethodDelete, "/api/me/sessions/{id}", routePolicy{BeyondCommunity: true, Note: "revokes one of the caller's own sessions"}, s.revokeSession},
 		{http.MethodPost, "/api/me/reauth", routePolicy{BeyondCommunity: true, Note: "own recent authentication, needed because an export requires it"}, s.reauth},
-		{http.MethodGet, "/api/state", routePolicy{Note: "the snapshot is filtered to readable channels and own cursors"}, s.state},
+		{http.MethodGet, "/api/state", routePolicy{BeyondCommunity: true, Note: "filtered to readable channels and own cursors; a member in a community timeout still receives it with the community half emptied, because it also carries the settings, features, private conversations and request counts the restriction does not touch — refusing it left the client unable to finish signing in"}, s.state},
 		{http.MethodGet, "/api/unread", routePolicy{Note: "counts readable channels only, before aggregation"}, s.unreadState},
 		{http.MethodGet, "/api/channels", routePolicy{Note: "the handler returns only readable channels"}, s.listChannels},
 		{http.MethodPost, "/api/channels", routePolicy{Capability: authz.ChannelManage}, s.createChannel},

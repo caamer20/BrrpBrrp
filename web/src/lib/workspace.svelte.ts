@@ -211,6 +211,30 @@ class Workspace {
   get privateConversationsEnabled() {
     return this.state?.features?.private_conversations === true;
   }
+
+  // A live community timeout. The server reports this on sign-in and on `/api/me`, so
+  // it is the account's own state rather than something inferred from a failed request.
+  // Without it the interface shows an empty workspace with no explanation, because
+  // every community call is refused and the member has no way to know why.
+  //
+  // It gates only the community. Direct messages, groups and activity are untouched,
+  // which is the whole content of the restriction and is why the notice says so.
+  get inTimeout() {
+    return this.user?.in_timeout === true && !!this.user.timeout_ends_at;
+  }
+  // The end time, formatted for the member's locale and time zone. A raw timestamp
+  // here would be technically correct and practically useless.
+  get timeoutEndsLabel() {
+    const ends = this.user?.timeout_ends_at;
+    if (!ends) return '';
+    const when = new Date(ends);
+    if (Number.isNaN(when.getTime())) return '';
+    return when.toLocaleString(undefined, {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
   // The outstanding incoming-request count. It comes from the account snapshot and
   // is therefore durable: a cold start, a restart and a reconnect all agree. It
   // counts pending requests this account can still act on, and nothing else — an

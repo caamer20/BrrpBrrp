@@ -148,3 +148,39 @@ Assignment, timeouts and invitation management are moderator surfaces. A member'
 own view says only what is true about them: whether they are suspended, and until
 when. The *reason* and the *who* belong to the audit trail, which is gated on
 `audit.read` and classified by ADR 0002's rules.
+
+
+## A community timeout closes the community, not the account
+
+A moderation timeout is a decision about the *community*. The account stays signed in,
+stays a member, keeps every consent it was granted, and keeps the private
+conversations it was part of. Two things follow from that, and both were wrong.
+
+**The member has to be able to sign in.** The workspace snapshot is what the client
+loads after a successful sign-in, and it carries the server settings, the feature
+flags, this account's conversations, groups and request counts — none of which a
+community timeout touches. Refusing the snapshot did not make the community smaller; it
+made the account unusable, because the client treats a failed snapshot as a failed
+sign-in and the member was left on the sign-in form with a correct password. The
+snapshot is now served during a timeout with its **community half emptied**: no channels,
+no categories, no unread counts, no presence and no voice states. Presence is included
+deliberately — a member who cannot enter a channel is not entitled to be told who is in
+one. Every other community route still refuses them with a 403 that names the timeout.
+
+**The member has to be told.** `/me`, sign-in and the snapshot's own account each carry
+the caller's own `in_timeout` and `timeout_ends_at`. Without it the interface shows an
+empty workspace in which every community request is refused and nothing explains why —
+the member cannot distinguish "a moderator restricted me" from "the server is broken",
+and cannot tell whether the restriction has ended. These fields are applied by an
+explicit step rather than in the shared user scanner, because the administrator's
+account list, a message author and an audit row must never carry one account's
+moderation state; `TestTheSelfReportedTimeoutIsOnlyEverAboutTheCaller` asserts that.
+
+**What the tests had been proving.** Every timeout test asserted a denial. A
+restriction that refuses everything passes a denial-only suite perfectly, which is
+exactly the wrong thing for a feature whose whole content is *which* things it refuses.
+`TestATimedOutMemberStillUsesWhatTheTimeoutDidNotTakeAway` asserts the permitted half
+positively — a real sign-in, real private history, a DM that exists in storage
+afterwards, the account's own activity — and then the forbidden half exactly, including
+that a refused community write leaves no row behind. Reverting the enforcement check
+makes it fail, and so does a sign-in that reports the wrong account.

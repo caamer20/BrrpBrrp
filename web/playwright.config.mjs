@@ -37,7 +37,14 @@ export default defineConfig({
     { name: 'authority', testMatch: 'authority.spec.mjs', dependencies: ['release'] },
     { name: 'privacy', testMatch: 'privacy.spec.mjs', dependencies: ['release'] },
     ...(process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1'
-      ? [{ name: 'directs', testMatch: 'directs.spec.mjs', dependencies: ['release'] }]
+      ? [
+          { name: 'directs', testMatch: 'directs.spec.mjs', dependencies: ['release'] },
+          // A community timeout must not close the private half of the product, so
+          // this journey needs consented DMs and therefore the private feature mode.
+          // It runs after the release journey, which creates the installation and the
+          // community channel whose absence the journey asserts.
+          { name: 'timeout', testMatch: 'timeout.spec.mjs', dependencies: ['release'] }
+        ]
       : []),
     // Threads are a community feature, not a private one, so this journey runs in
     // both modes. It depends on the release journey for the installation and its

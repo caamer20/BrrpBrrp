@@ -10,6 +10,10 @@ export interface User {
   // Present only on the administrator's account list. A timeout is a moderation
   // state, not part of identity, so it is not on the user record other readers see.
   in_timeout?: boolean;
+  // The caller's own live timeout, on sign-in and on /api/me and nowhere else. The
+  // member is the only person entitled to be told when their community access
+  // returns, and they cannot be told by a screen of refusals.
+  timeout_ends_at?: string;
   is_deactivated: boolean;
   is_deleted?: boolean;
   avatar_color: string;

@@ -13,6 +13,20 @@ type User struct {
 	IsDeleted     bool   `json:"is_deleted"`
 	AvatarColor   string `json:"avatar_color"`
 	CreatedAt     string `json:"created_at"`
+
+	// InTimeout and TimeoutEndsAt are the member's own view of a live moderation
+	// timeout. They are here rather than only on the administrator's account list
+	// because a timeout closes the community to that member while leaving everything
+	// else they consented to working: without these, their interface shows an
+	// unexplained workspace in which every community request is refused and nothing
+	// says why. The client needs to be able to render "you are in a voice-only
+	// timeout until 14:05" instead of an empty screen.
+	//
+	// They are populated on the routes that describe the caller to themselves — sign-in
+	// and /api/me — and are always zero on every other account's row, so they cannot
+	// become a way to learn somebody else's moderation state.
+	InTimeout     bool   `json:"in_timeout"`
+	TimeoutEndsAt string `json:"timeout_ends_at,omitempty"`
 }
 
 type Channel struct {

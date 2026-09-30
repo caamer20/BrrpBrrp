@@ -201,6 +201,17 @@
             {/each}
           {/if}
         </div>{/if}
+      {#if workspace.inTimeout}
+        <div class="timeout-notice" role="status">
+          <Icon name="clock" size={16} />
+          <div>
+            <strong>You are in a voice-only timeout.</strong>
+            <span
+              >Your direct messages, groups and activity still work. The community reopens at {workspace.timeoutEndsLabel}.</span
+            >
+          </div>
+        </div>
+      {/if}
       {#each categories as category}<div class="channel-group">
           <h2>{category.name || 'TEXT CHANNELS'}</h2>
           {#each category.channels as channel (channel.id)}{@const unread = workspace.unreadFor(
