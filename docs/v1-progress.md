@@ -187,6 +187,31 @@ SFU's peer map without its lock while a connection-state callback removed a peer
 Production code holds that lock; the test reached past it. The recorded figure
 supersedes the older schema-14 one.
 
+- **Orphaned upload files are reclaimed, not just their rows.** Maintenance deleted an
+  attachment row whose message was gone and left the bytes on disk, so a server
+  reported free space while it filled. The sweep is file-first — a file is removed
+  only once no row claims it — and a *young* unclaimed file is left alone, because
+  an upload between the response and the message that claims it is exactly the case
+  that would otherwise be deleted out from under the person who just uploaded it.
+- **Right-to-left text is laid out in the direction it was written.** WP-16 lists RTL
+  and the handling was missing rather than wrong: a message beginning in Arabic and
+  ending in an English URL rendered its final full stop on the wrong side. The
+  composer gets the same treatment, where a caret in the wrong place is the most
+  disruptive form of the bug. **Not established by a rendered Arabic journey** — that
+  belongs with the device testing M6 already requires.
+- **The new surfaces are checked for detectable accessibility violations.** The
+  release journey had an axe check and no other did, so the export, alert, thread and
+  voice panels were correct and unchecked. The check reaches the thread list by
+  **keyboard rather than hover**, because a control that only exists under a pointer
+  is invisible to somebody using a keyboard. This is not a conformance claim: a
+  screen-reader, keyboard, zoom and reduced-motion pass find what no scanner can, and
+  M6 requires them from a person.
+- **CI parses every shipped script and checks the capacity fixture's routes against
+  the router.** The capacity and alert tooling needs a live server, which is exactly
+  when somebody reaches for it, so a script that rotted silently used to fail on a
+  real deployment. Both gates were run before being committed: a gate that fails on
+  arrival teaches people to ignore the one that matters.
+
 **What is not established.** No qualifying capacity or soak measurement, no
 container runtime, no signed Windows download, and
 no canonical public repository or registry identity. There is no Git remote
