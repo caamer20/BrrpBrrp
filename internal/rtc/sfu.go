@@ -36,6 +36,16 @@ type Signal struct {
 	ConnectionID string                     `json:"connection_id,omitempty"`
 	SDP          *webrtc.SessionDescription `json:"sdp,omitempty"`
 	ICE          *webrtc.ICECandidateInit   `json:"ice,omitempty"`
+	// Publication names what this offer is adding. It is empty for the initial join
+	// and for an ICE-only message. A later offer that names a publication is a
+	// *renegotiation* — a client adding a track to a call that is already up — which
+	// the previous code refused outright, so there was no way to share a screen into a
+	// live call at all.
+	Publication PublicationKind   `json:"publication,omitempty"`
+	// PublicationID is the id the new track is published under, chosen by the server
+	// and returned to the client so a reconnecting client can tell a resume from a
+	// new publication that reused a slot.
+	PublicationID PublicationID `json:"publication_id,omitempty"`
 }
 
 type JoinEvent struct {
@@ -94,12 +104,56 @@ type SFU struct {
 	peers          map[string]*Peer
 	changed        func([]State)
 	routingVersion uint64
+	// publications is keyed by room. A room is a channel for a community call and a
+	// conversation for a private one (ADR 0019, §5), so the key is an opaque room
+	// string and nothing here assumes a channel row exists.
+	publications map[string]*publicationRegistry
+	// limits is the room-and-server publication bound. It is read under mu and never
+	// changed after construction, so a peer cannot negotiate against a bound that
+	// moved underneath it.
+	limits PublicationLimits
+}
+
+// h264Codecs are the video profiles this build offers. Several are registered because
+// browsers disagree about which one a screen capture produces, and registering only
+// the preferred profile makes a share fail on a machine that would otherwise work.
+func h264Codecs() []webrtc.RTPCodecParameters {
+	profiles := []string{
+		"42e01f", // baseline
+		"4d001f", // main
+		"640c1f", // high
+	}
+	parameters := make([]webrtc.RTPCodecParameters, 0, len(profiles))
+	for index, profile := range profiles {
+		parameters = append(parameters, webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType: webrtc.MimeTypeH264, ClockRate: 90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=" + profile,
+			},
+			PayloadType: webrtc.PayloadType(102 + index),
+		})
+	}
+	return parameters
 }
 
 func New(options Options, changed func([]State)) (*SFU, error) {
 	media := &webrtc.MediaEngine{}
 	if err := media.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1;stereo=0;sprop-stereo=0"}, PayloadType: 111}, webrtc.RTPCodecTypeAudio); err != nil {
 		return nil, err
+	}
+	// Video is registered, not merely accepted. A second offer for a screen track
+	// fails at the media engine if the codec is unknown, so "the server tolerates a
+	// renegotiation" and "the server can carry a screen" are different claims and only
+	// the second one is useful.
+	//
+	// H.264 rather than VP8: it is what a browser's getDisplayMedia produces most
+	// reliably, and what the hardware encoders on the supported platforms accept. The
+	// profile-level-id is left to the default so a stream that does not match the
+	// preferred profile falls back rather than failing the whole connection.
+	for _, parameters := range h264Codecs() {
+		if err := media.RegisterCodec(parameters, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
 	}
 	registry := &interceptor.Registry{}
 	if err := webrtc.RegisterDefaultInterceptors(media, registry); err != nil {
@@ -115,7 +169,11 @@ func New(options Options, changed func([]State)) (*SFU, error) {
 		settings.SetNAT1To1IPs([]string{options.ExternalIP}, webrtc.ICECandidateTypeHost)
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(media), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settings))
-	return &SFU{api: api, options: options, peers: make(map[string]*Peer), changed: changed}, nil
+	return &SFU{
+		api: api, options: options, peers: make(map[string]*Peer), changed: changed,
+		publications: make(map[string]*publicationRegistry),
+		limits:       DefaultPublicationLimits(),
+	}, nil
 }
 
 func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(string, any)) error {
@@ -272,8 +330,16 @@ func (s *SFU) Signal(userID, owner string, signal Signal) error {
 	peer.signalMu.Lock()
 	defer peer.signalMu.Unlock()
 	if signal.SDP != nil {
-		if signal.SDP.Type != webrtc.SDPTypeOffer || len(signal.SDP.SDP) > 50000 || peer.pc.RemoteDescription() != nil {
+		if signal.SDP.Type != webrtc.SDPTypeOffer || len(signal.SDP.SDP) > 50000 {
 			return errors.New("invalid voice offer")
+		}
+		// A second offer is a renegotiation, and it is how a screen is added to a call
+		// that is already up. The first offer is the join and is unconditional; later
+		// ones carry a publication kind, are checked against the bounds and against
+		// this account's own ability to transmit, and go through a serialized queue so
+		// two clients renegotiating at once cannot interleave their SDP.
+		if peer.pc.RemoteDescription() != nil {
+			return s.renegotiate(peer, signal)
 		}
 		if err := peer.pc.SetRemoteDescription(*signal.SDP); err != nil {
 			return err
@@ -448,4 +514,206 @@ func (f *forwarder) write(source string, packet *rtp.Packet) {
 	forwarded := rtp.Packet{Header: rtp.Header{Version: 2, Marker: packet.Marker, SequenceNumber: f.sequence, Timestamp: f.timestamp}, Payload: packet.Payload}
 	// Keep sequence/timestamp continuity when a new participant reuses a slot.
 	_ = f.track.WriteRTP(&forwarded)
+}
+
+// renegotiate handles an offer that arrives on a call which is already negotiated —
+// in practice, a client adding a screen publication to a live conversation.
+//
+// Three things make this different from the join, and all three are what the previous
+// single-offer gate was refusing to allow:
+//
+//   - The publication is named, so the server knows what is being added and can check
+//     the room's and server's bounds before a single packet is forwarded.
+//   - The account's ability to transmit is re-checked, and it is the *same*
+//     `voice.speak` decision the microphone is gated on. A screen is a publication
+//     like any other, and a member who may not transmit may not publish one either.
+//   - Renegotiation is serialized per peer. Two clients adding a track at the same
+//     moment would otherwise interleave their offers and leave the connection in a
+//     state neither of them asked for.
+func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
+	// The caller holds peer.signalMu, so this runs one at a time per peer already.
+	// Holding it across the whole exchange is the point: an SDP exchange is a
+	// multi-step conversation and interleaving two of them corrupts both.
+	if signal.Publication == "" {
+		return errors.New("a second offer must name the publication it is adding")
+	}
+	if !signal.Publication.Valid() {
+		return ErrWrongPublicationKind
+	}
+	if _, ok := signal.Publication.Codec(); !ok {
+		// A kind this build does not carry is refused rather than negotiated, because
+		// an offer for a codec with no forwarder would connect and then send into
+		// nothing.
+		return errors.New("this server does not carry that publication kind")
+	}
+	// A microphone is the initial offer's own track, not something renegotiated in.
+	// A second microphone would be a second audio input on one connection, which the
+	// forwarder has nowhere to send.
+	if signal.Publication == PublicationMicrophone {
+		return errors.New("this connection already has a microphone")
+	}
+	// One critical section for the whole decision. Reading the permission, the room's
+	// publications and the server's totals separately would let another peer publish
+	// between the check and the announcement, which is how a bound of one becomes a
+	// bound of two.
+	s.mu.Lock()
+	if peer.speakDenied {
+		s.mu.Unlock()
+		// The same refusal the microphone gets, for the same reason: a member who may
+		// listen may not transmit, and a screen is a transmission.
+		return errors.New("you may listen but not share in this channel")
+	}
+	room := peer.state.ChannelID
+	registry := s.room(room)
+	limits := s.limits
+	roomScreens := registry.countOfKind(PublicationScreenVideo)
+	serverScreens := 0
+	for _, each := range s.publications {
+		serverScreens += each.countOfKind(PublicationScreenVideo)
+	}
+	s.mu.Unlock()
+
+	// The bound is applied on the write, and *before* the description is examined. A
+	// person refused because the room is full must be told that rather than told their
+	// offer was malformed, and a refusal is available without an SDP at all.
+	switch signal.Publication {
+	case PublicationScreenVideo:
+		if err := limits.admits(PublicationScreenVideo, roomScreens, serverScreens); err != nil {
+			return err
+		}
+	case PublicationScreenAudio:
+		// Screen audio is only meaningful alongside a screen. Publishing it without
+		// one is a client that captured system audio but not the display, and
+		// forwarding it would be sound from nowhere.
+		if roomScreens == 0 {
+			return errors.New("share a screen before sharing its audio")
+		}
+	}
+
+	if signal.SDP == nil || signal.SDP.SDP == "" {
+		// A nil description would reach Pion and panic, taking the process with it. The
+		// path is reachable from a malformed client, so it is guarded here rather than
+		// assumed away.
+		return errors.New("a renegotiation needs an offer")
+	}
+
+	publicationID := signal.PublicationID
+	if publicationID == "" {
+		publicationID = PublicationID(uuid.NewString())
+	}
+	if err := peer.pc.SetRemoteDescription(*signal.SDP); err != nil {
+		return err
+	}
+	answer, err := peer.pc.CreateAnswer(nil)
+	if err != nil {
+		return err
+	}
+	if err := peer.pc.SetLocalDescription(answer); err != nil {
+		return err
+	}
+	// The publication is announced only after the description that carries it has been
+	// accepted locally. A viewer told about a publication the connection does not have
+	// would wait forever for it.
+	s.mu.Lock()
+	s.announcePublication(peer, Publication{
+		ID: publicationID, Owner: peer.state.UserID, Kind: signal.Publication,
+		Started: time.Now().UTC(),
+	})
+	s.mu.Unlock()
+	peer.emit("rtc.signal", Signal{
+		SDP: peer.pc.LocalDescription(), ConnectionID: peer.connectionID,
+		Publication: signal.Publication, PublicationID: publicationID,
+	})
+	return nil
+}
+
+// room returns the publication registry for a room, creating it on first use. It is
+// called with mu held, or from a path that has already established the room exists.
+func (s *SFU) room(id string) *publicationRegistry {
+	registry, ok := s.publications[id]
+	if !ok {
+		registry = newPublicationRegistry()
+		s.publications[id] = registry
+	}
+	return registry
+}
+
+func (s *SFU) publicationsFor(id string) []Publication {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.room(id).list()
+}
+
+// serverPublicationCount counts a kind across every room. It is a capacity fact rather
+// than a room policy, which is why it is counted separately and reported separately
+// (publications.go, PublicationLimits).
+func (s *SFU) serverPublicationCount(kind PublicationKind) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	total := 0
+	for _, registry := range s.publications {
+		total += registry.countOfKind(kind)
+	}
+	return total
+}
+
+// announcePublication records a new publication. The caller holds mu, because the
+// registry and the peer map have to agree about who is in the room.
+func (s *SFU) announcePublication(peer *Peer, publication Publication) {
+	s.room(peer.state.ChannelID).add(&publication)
+}
+
+// Publications returns the live publications in a room, in announcement order. It is
+// how a client that joins mid-share finds the screen without having to be told about
+// it in the past.
+func (s *SFU) Publications(room string) []Publication {
+	return s.publicationsFor(room)
+}
+
+// StopPublication removes a publication and reports whether it was there.
+//
+// A stop removes rather than marks, because a viewer cannot tell a stopped publication
+// from somebody who stopped talking. The caller is responsible for the connection-side
+// work — closing the sender — because only it knows which transceiver carried it.
+func (s *SFU) StopPublication(room string, id PublicationID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, removed := s.room(room).remove(id)
+	return removed
+}
+
+// connectionIDFor reports the peer's current connection id, which a client must echo
+// in every signal so a message meant for a call somebody has already left is dropped
+// rather than applied to whatever replaced it.
+func (s *SFU) connectionIDFor(userID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	peer, ok := s.peers[userID]
+	if !ok {
+		return ""
+	}
+	return peer.connectionID
+}
+
+// connectionStateOf reports the peer's connection state, which is what a test (and
+// the operator diagnostics) needs to know without reaching into the peer.
+func (s *SFU) connectionStateOf(userID string) webrtc.PeerConnectionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	peer, ok := s.peers[userID]
+	if !ok {
+		return webrtc.PeerConnectionStateClosed
+	}
+	return peer.pc.ConnectionState()
+}
+
+// setEmitter replaces a peer's event sink. The production sink is set at Join; this
+// exists so a test can observe the answers a renegotiation produces without reaching
+// into the peer's unexported fields.
+func (s *SFU) setEmitter(userID string, send func(string, any)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if peer, ok := s.peers[userID]; ok {
+		peer.send = send
+	}
 }
