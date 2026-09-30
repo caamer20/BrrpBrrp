@@ -26,18 +26,22 @@ import (
 // subject, its state and when it last moved — because the channel list is loaded
 // whole and a thread's replies are not in it.
 type threadSummary struct {
-	ID           string    `json:"id"`
-	ConversationID string  `json:"conversation_id"`
-	RootMessageID string  `json:"root_message_id"`
-	Title        string    `json:"title"`
-	State        string    `json:"state"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    string    `json:"created_at"`
-	UpdatedAt    string    `json:"updated_at"`
-	ReplyCount   int       `json:"reply_count"`
-	LastReplyAt  string    `json:"last_reply_at"`
-	Followers    int       `json:"followers"`
-	Following    bool      `json:"following"`
+	ID             string `json:"id"`
+	ConversationID string `json:"conversation_id"`
+	RootMessageID  string `json:"root_message_id"`
+	// RootDeletedAt is when the thread's subject was removed. A thread without a root
+	// is a tombstone, not a broken record, and the interface says so rather than
+	// presenting an unexplained empty first line.
+	RootDeletedAt string `json:"root_deleted_at,omitempty"`
+	Title         string `json:"title"`
+	State         string `json:"state"`
+	CreatedBy     string `json:"created_by"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+	ReplyCount    int    `json:"reply_count"`
+	LastReplyAt   string `json:"last_reply_at"`
+	Followers     int    `json:"followers"`
+	Following     bool   `json:"following"`
 }
 
 // resolveThread finds a thread and the channel it inherits from. A thread that does
@@ -46,9 +50,12 @@ type threadSummary struct {
 func (s *Server) resolveThread(ctx context.Context, q db.Queryer, id string) (threadSummary, messageScope, error) {
 	var t threadSummary
 	var scope messageScope
-	err := q.QueryRowContext(ctx, `SELECT id,conversation_id,root_message_id,title,state,COALESCE(created_by,''),created_at,updated_at
+	// A tombstoned thread has no root, so the column is nullable: `COALESCE` keeps the
+	// scan total rather than failing a thread whose subject was withdrawn. The moment is
+	// read too, so the interface can say *why* there is no first message.
+	err := q.QueryRowContext(ctx, `SELECT id,conversation_id,COALESCE(root_message_id,''),title,state,COALESCE(created_by,''),created_at,updated_at,COALESCE(root_deleted_at,'')
 		FROM threads WHERE id=?`, id).
-		Scan(&t.ID, &t.ConversationID, &t.RootMessageID, &t.Title, &t.State, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+		Scan(&t.ID, &t.ConversationID, &t.RootMessageID, &t.Title, &t.State, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &t.RootDeletedAt)
 	if err != nil {
 		return t, scope, err
 	}
@@ -117,7 +124,7 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request, user db.Use
 		return
 	}
 	wantArchived := r.URL.Query().Get("archived") == "1"
-	clause := `SELECT t.id,t.conversation_id,t.root_message_id,t.title,t.state,COALESCE(t.created_by,''),t.created_at,t.updated_at,
+	clause := `SELECT t.id,t.conversation_id,COALESCE(t.root_message_id,''),t.title,t.state,COALESCE(t.created_by,''),t.created_at,t.updated_at,COALESCE(t.root_deleted_at,''),
 		(SELECT count(*) FROM messages m WHERE m.thread_id=t.id),
 		(SELECT COALESCE(max(m.created_at),'') FROM messages m WHERE m.thread_id=t.id),
 		(SELECT count(*) FROM thread_follows f WHERE f.thread_id=t.id),
@@ -137,7 +144,7 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request, user db.Use
 	threads := []threadSummary{}
 	for rows.Next() {
 		var t threadSummary
-		if err := rows.Scan(&t.ID, &t.ConversationID, &t.RootMessageID, &t.Title, &t.State, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt,
+		if err := rows.Scan(&t.ID, &t.ConversationID, &t.RootMessageID, &t.Title, &t.State, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &t.RootDeletedAt,
 			&t.ReplyCount, &t.LastReplyAt, &t.Followers, &t.Following); err != nil {
 			s.failed(w, err)
 			return
@@ -153,9 +160,9 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request, user db.Use
 // still resolves (ADR 0017, "Replies keep their identity").
 func (s *Server) createThread(w http.ResponseWriter, r *http.Request, user db.User) {
 	var input struct {
-		Title        string `json:"title"`
+		Title         string `json:"title"`
 		RootMessageID string `json:"root_message_id"`
-		Follow       *bool  `json:"follow"`
+		Follow        *bool  `json:"follow"`
 	}
 	if !decode(w, r, &input) {
 		return

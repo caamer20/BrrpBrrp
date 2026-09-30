@@ -595,6 +595,26 @@ func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request, user db.U
 		problem(w, 403, "You can only delete your own messages.")
 		return
 	}
+	// Deleting a thread's root tombstones the thread rather than removing it.
+	//
+	// The replies are acknowledged, read history that other people have linked to, and
+	// the schema used to cascade the thread row away with the root — leaving every
+	// reply carrying a `thread_id` that resolved to nothing. They were then absent from
+	// the thread (404), absent from the channel listing, and still returned by search
+	// with a link that 404s, so a member who deleted one message lost the rest of the
+	// conversation with nothing to say so.
+	//
+	// The subject is withdrawn, not the discussion: the row is cleared, the moment is
+	// recorded so the thread can say why its first line is empty, and the replies stay
+	// exactly where they were (ADR 0017).
+	if message.ThreadID != "" {
+		if _, err := tx.ExecContext(r.Context(),
+			`UPDATE threads SET root_message_id=NULL, root_deleted_at=? WHERE id=? AND root_message_id=?`,
+			db.Now(), message.ThreadID, message.ID); err != nil {
+			s.failed(w, err)
+			return
+		}
+	}
 	if _, err := tx.ExecContext(r.Context(), `DELETE FROM messages WHERE id=?`, message.ID); err != nil {
 		s.failed(w, err)
 		return

@@ -119,3 +119,35 @@ defence in depth at the cost of one indexed lookup, on the principle that the ro
 guard decides whether a handler runs and the committing transaction decides whether a
 row may be written — and the second is the only one of the two close enough to the
 write to be about it.
+
+
+## A thread survives its subject
+
+Migration 19 declared `root_message_id ... ON DELETE CASCADE` and wrote, in the
+comment above it, that deleting the root "tombstones the thread rather than leaving
+replies attached to nothing". The cascade did the opposite.
+
+Deleting a root deleted the **thread row**, and the replies — acknowledged, read
+history that other people had linked to — were left carrying a `thread_id` that
+resolved to nothing. They were absent from the thread (404), absent from the channel
+listing, and still returned by search with a link that 404s. A member who deleted one
+message lost the rest of the conversation, and nothing anywhere said so.
+
+The root is what a thread is *about*, not what it *is*. A subject can be withdrawn and
+the discussion can stand: that is what a forum thread is, and it is what somebody who
+has read forty replies is owed.
+
+Schema 23 makes `root_message_id` nullable and adds `root_deleted_at`. Deleting a root
+clears the reference and records the moment, so a thread can say *why* its first line
+is empty rather than presenting an unexplained hole. Two things it deliberately does
+**not** do:
+
+- It does not retain the subject's text. The tombstone records that it went, not what
+  it said, and nothing in this migration is a content-retention field.
+- It does not make the thread special. A tombstoned thread is still listed, still
+  readable, still followed, and still accepts replies — a discussion whose subject was
+  withdrawn is still a discussion, and a member needs a way back to it.
+
+The table is rebuilt rather than altered, because SQLite cannot drop a foreign key or
+widen a `NOT NULL` column in place, and that cascade is the whole problem. The unique
+root index becomes partial, since several tombstoned threads may have no root.
