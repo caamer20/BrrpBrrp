@@ -8,12 +8,15 @@
   import AudioSettings from './AudioSettings.svelte';
   let showAudio = $state(false);
   let audioSettings = $state<{ stopTest: () => void }>();
+  // One resolver for both kinds of room. A private call is a conversation, not a
+  // channel, and reading the channel list here would have made it unreachable — the
+  // panel would have shown "no channel by that name" for a call the server admits.
+  let room = $derived(voice.selectedRoom);
   let channel = $derived(
     workspace.state?.channels.find((channel) => channel.id === voice.selectedId)
   );
-  let participants = $derived(
-    workspace.state?.voice_states.filter((state) => state.channel_id === voice.selectedId) || []
-  );
+  let participants = $derived(room?.participants ?? []);
+  let roomName = $derived(room?.name ?? channel?.name ?? 'this call');
 
   function moderate(state: VoiceState, action: 'kick' | 'mute' | 'deafen') {
     const user = workspace.state?.users.find((user) => user.id === state.user_id);
@@ -35,11 +38,20 @@
   }
 </script>
 
-<Modal title={channel?.name || 'Voice channel'} close={() => (voice.panelOpen = false)}>
+<Modal
+  title={room?.name || (channel?.name ?? 'Voice channel')}
+  close={() => (voice.panelOpen = false)}
+>
   <div class="voice-panel-header">
     <div class="channel-symbol"><Icon name="volume" size={32} /></div>
     <p>{channel?.topic || 'Drop in and hang out.'}</p>
-    <small>{participants.length} of {channel?.max_voice_users || 8} places occupied</small>
+    <small>
+      {#if room?.private}
+        {participants.length === 2 ? 'Two people on this call' : 'Nobody else is on this call yet'}
+      {:else}
+        {participants.length} of {room?.capacity || 8} places occupied
+      {/if}
+    </small>
   </div>
   <div class="voice-participants">
     {#each participants as state (state.user_id)}{@const user = workspace.state?.users.find(
@@ -100,29 +112,35 @@
     {#if showAudio}<AudioSettings bind:this={audioSettings} compact />{/if}
   {/if}
   <div class="voice-panel-actions">
-    {#if voice.channelId === channel?.id}<button
+    {#if voice.channelId === room?.id}<button
         class="secondary"
         onclick={() => voice.toggleMute()}
         disabled={voice.ownState?.admin_muted || voice.ownState?.admin_deafened}
         ><Icon name={voice.muted ? 'micOff' : 'mic'} size={18} />{voice.muted
           ? 'Unmute'
           : 'Mute'}</button
-      ><button class="danger-button" onclick={() => voice.leave()}>Leave voice</button
+      ><button class="danger-button" onclick={() => voice.leave()}
+        >{room?.private ? 'Leave call' : 'Leave voice'}</button
       >{:else}<button
         class="primary full"
         disabled={voice.status === 'requesting' ||
           voice.status === 'connecting' ||
-          participants.length >= (channel?.max_voice_users || 8)}
+          !room ||
+          participants.length >= (room.capacity || 8)}
         onclick={() => {
           audioSettings?.stopTest();
           showAudio = false;
-          if (channel) void voice.join(channel.id);
+          if (room) void voice.join(room.id);
         }}
         ><Icon name="headphones" size={19} />{voice.status === 'requesting'
           ? 'Waiting for microphone…'
-          : participants.length >= (channel?.max_voice_users || 8)
-            ? 'Channel is full'
-            : 'Join voice'}</button
+          : participants.length >= (room?.capacity || 8)
+            ? room?.private
+              ? 'Already on a call here'
+              : 'Channel is full'
+            : room?.private
+              ? 'Start a call'
+              : 'Join voice'}</button
       >{/if}
   </div>
 </Modal>

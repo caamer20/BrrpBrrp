@@ -99,11 +99,7 @@ func (s *Server) visibleVoiceStates(ctx context.Context, principal authz.Princip
 	for _, state := range states {
 		allowed, known := decided[state.ChannelID]
 		if !known {
-			_, _, readable, err := s.channelAccess(ctx, principal, state.ChannelID)
-			if err != nil {
-				s.log.Warn("voice visibility lookup failed", "error", err)
-			}
-			allowed = err == nil && readable
+			allowed = s.canSeeVoiceRoom(ctx, principal, state.ChannelID)
 			decided[state.ChannelID] = allowed
 		}
 		if allowed {
@@ -111,6 +107,28 @@ func (s *Server) visibleVoiceStates(ctx context.Context, principal authz.Princip
 		}
 	}
 	return visible
+}
+
+// canSeeVoiceRoom decides whether one principal may see who is in a room. It is the
+// same rule admission uses, so the participant list a member sees and the call they
+// may join cannot disagree — and a private room's list is visible to its members
+// rather than to whoever can read a channel, which would otherwise disclose a call to
+// every account on the server.
+func (s *Server) canSeeVoiceRoom(ctx context.Context, principal authz.Principal, roomID string) bool {
+	// A channel is visible on the channel's own read rule.
+	if _, _, readable, err := s.channelAccess(ctx, principal, roomID); err == nil && readable {
+		return true
+	}
+	if !s.config.PrivateConversations {
+		return false
+	}
+	tx, err := s.store.BeginTx(ctx, nil)
+	if err != nil {
+		return false
+	}
+	defer tx.Rollback()
+	room, refusal := s.resolveVoiceRoom(ctx, tx, principal, roomID)
+	return refusal == "" && room.ID != ""
 }
 
 // voiceChannel resolves a channel for a caller that wants to join it. A channel

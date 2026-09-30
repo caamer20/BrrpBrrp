@@ -9,7 +9,7 @@
     {#if voice.channelId || voice.status === 'requesting'}
       <button
         class="voice-status"
-        title="Open voice channel details"
+        title="Open call details"
         disabled={voice.status === 'requesting'}
         onclick={() => {
           voice.selectedId = voice.channelId;
@@ -20,13 +20,11 @@
             >{voice.status === 'requesting'
               ? 'Waiting for microphone…'
               : voice.status === 'connected'
-                ? 'Voice connected'
-                : 'Connecting voice…'}</strong
-          ><small
-            >{workspace.state?.channels.find(
-              (channel) => channel.id === (voice.channelId || voice.selectedId)
-            )?.name}</small
-          ></span
+                ? voice.roomFor(voice.channelId)?.private
+                  ? 'Call connected'
+                  : 'Voice connected'
+                : 'Connecting…'}</strong
+          ><small>{voice.roomFor(voice.channelId || voice.selectedId)?.name ?? ''}</small></span
         ></button
       >
       <div class="voice-buttons">
@@ -62,7 +60,7 @@
                   : voice.startScreenShare()}><Icon name="hash" size={18} /></button
             >{/if}<button
             class="icon-button danger-text"
-            aria-label="Leave voice"
+            aria-label={voice.roomFor(voice.channelId)?.private ? 'Leave call' : 'Leave voice'}
             onclick={() => voice.leave()}><Icon name="leave" size={18} /></button
           >
         {:else}

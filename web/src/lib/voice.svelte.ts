@@ -123,6 +123,15 @@ class Voice {
     return workspace.state?.voice_states.find((state) => state.user_id === workspace.user?.id);
   }
 
+  /**
+   * Opens a call's room panel, or moves to it when one is already joined.
+   *
+   * A room is a community voice channel or a private conversation. Both go through
+   * this one entry point, because a person deciding to call somebody should not have
+   * to find a different control for a direct conversation than for a channel — and
+   * because a second entry point is a second set of gates that can disagree about
+   * whether a call may be started.
+   */
   selectChannel(id: string) {
     if (
       id === this.channelId ||
@@ -137,6 +146,51 @@ class Voice {
     else this.panelOpen = true;
   }
 
+  /** The room the selected id names, whether it is a channel or a conversation. */
+  roomFor(id: string) {
+    if (!id) return null;
+    return this.selectedRoomFor(id);
+  }
+
+  private selectedRoomFor(id: string) {
+    const channel = workspace.state?.channels.find((item) => item.id === id);
+    if (channel) {
+      if (channel.type !== 'voice') return null;
+      return {
+        id,
+        private: false,
+        name: channel.name,
+        capacity: channel.max_voice_users,
+        participants: workspace.state?.voice_states.filter((state) => state.channel_id === id) ?? []
+      };
+    }
+    const direct = workspace.directConversations.find((item) => item.id === id);
+    if (direct) {
+      return {
+        id,
+        private: true,
+        name: direct.peer?.display_name || direct.peer?.username || 'this conversation',
+        capacity: 2,
+        participants: workspace.state?.voice_states.filter((state) => state.channel_id === id) ?? []
+      };
+    }
+    const group = workspace.groups.find((item) => item.id === id);
+    if (group) {
+      return {
+        id,
+        private: true,
+        name: group.name || 'this group',
+        capacity: 2,
+        participants: workspace.state?.voice_states.filter((state) => state.channel_id === id) ?? []
+      };
+    }
+    return null;
+  }
+
+  get selectedRoom() {
+    return this.roomFor(this.selectedId);
+  }
+
   async join(id: string) {
     if (
       id === this.channelId ||
@@ -149,11 +203,13 @@ class Voice {
       this.error = 'Reconnect to the server before joining voice.';
       return;
     }
-    const channel = workspace.state?.channels.find((channel) => channel.id === id);
-    if (!channel || channel.type !== 'voice') return;
-    const participants = workspace.state?.voice_states.filter((state) => state.channel_id === id);
-    if ((participants?.length || 0) >= channel.max_voice_users) {
-      this.error = `${channel.name} is full. Try another voice channel.`;
+    // A room is a voice channel or a private conversation. The gate is a room being
+    // a *call* at all, and a private conversation is one; the capacity and fullness
+    // are then the room's own.
+    const room = this.roomFor(id);
+    if (!room) return;
+    if ((room.participants.length || 0) >= room.capacity) {
+      this.error = `${room.name} is full.`;
       return;
     }
     if (this.channelId && this.peer) {

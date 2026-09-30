@@ -1226,3 +1226,162 @@ async function createGroupWithMember(request, owner, guest, guestID, name) {
   await signInOverApi(request, owner);
   return groupID;
 }
+
+// A private call is the same SFU behind a different admission decision, and this
+// journey walks the whole member-facing path in two browsers: start a call in a
+// direct conversation, have the other member answer it, see both sides connected,
+// and confirm a third account cannot reach the call at all.
+//
+// Capture is generated with Web Audio, as in the voice journey. A real microphone and
+// a real browser picker are not things a test can drive, and pretending otherwise
+// would be testing Playwright rather than this product. The application's admission,
+// negotiation, forwarding and authorization are all unchanged by the stub.
+test('two members hold a private call, and a third account cannot reach it', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(180000);
+  const caller = { username: 'call_caller', password: 'a caller passphrase' };
+  const callee = { username: 'call_callee', password: 'a callee passphrase' };
+  const outsider = { username: 'call_stranger', password: 'a stranger passphrase' };
+  // Accounts are created through the operator route, so the request fixture has to be
+  // the owner first. Without this every create is refused and the journey fails for a
+  // reason that has nothing to do with calls.
+  await signInOverApi(request);
+  const calleeID = await createAccount(request, callee);
+  await createAccount(request, caller);
+  await createAccount(request, outsider);
+
+  // A direct conversation, accepted over the real routes: the membership a call
+  // depends on is the membership a message would see.
+  // The request is made *as the caller*: the shared request jar is the owner's, and a
+  // direct request from the owner would be a conversation with nobody in this journey.
+  const callerSetup = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const callerSetupPage = await callerSetup.newPage();
+  await signIn(callerSetupPage, caller);
+  const created = await callerSetupPage.request.post('/api/directs', {
+    data: { user_id: calleeID }
+  });
+  if (created.status() !== 201)
+    throw new Error(`direct request: ${created.status()} ${await created.text()}`);
+  const directID = (await created.json()).id;
+  // The callee accepts, in a context of their own: the shared request fixture holds
+  // one cookie jar, so accepting here would replace the caller's session and the
+  // caller's browser would then see an installation it is not signed in to.
+  const calleeSetup = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const calleeSetupPage = await calleeSetup.newPage();
+  await signIn(calleeSetupPage, callee);
+  const accepted = await calleeSetupPage.request.post(`/api/directs/${directID}/accept`, {
+    data: {}
+  });
+  if (!accepted.ok()) throw new Error(`accept: ${accepted.status()} ${await accepted.text()}`);
+  await calleeSetup.close();
+
+  // The caller captures a generated stream, as the voice journey does.
+  await captureGeneratedAudio(page);
+  await signIn(page, caller);
+  await page.getByRole('button', { name: /^Messages and requests/ }).click();
+  await page.getByRole('button', { name: /^Conversations/ }).click();
+  const card = page.getByRole('dialog').locator('article', { hasText: callee.username }).first();
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: 'Open conversation' }).click();
+  // The conversation header carries the call control; it opens the room panel, and the
+  // panel's action is what starts the call. Both are walked here so the journey is the
+  // path a member takes rather than a control invoked directly.
+  await page.getByRole('button', { name: 'Start a call' }).first().click();
+  await expect(page.getByRole('dialog')).toContainText(/Start a call|Call|voice/i);
+  await page.getByRole('dialog').getByRole('button', { name: 'Start a call' }).click();
+
+  const sidebarVoice = page.locator('aside.channel-sidebar .voice-controls');
+  // Read the application's own refusal if there is one: a refused call leaves nothing
+  // to wait for, and the reason is on the page.
+  // On failure the sidebar's own text is reported: a refused call leaves a reason
+  // there, and it is the only place the reason appears. Without this the journey
+  // reports a missing control and nothing about why.
+  const sidebarText = async () =>
+    (await page.locator('aside.channel-sidebar').innerText()).replace(/\s+/g, ' ').trim();
+  try {
+    await expect(sidebarVoice.getByRole('button', { name: /Leave (voice|call)/ })).toBeVisible({
+      timeout: 30000
+    });
+  } catch (error) {
+    throw new Error(`the call did not connect. Sidebar said: ${await sidebarText()}`);
+  }
+
+  // The other member sees the call in their own conversation and answers it, with no
+  // reload anywhere in the sequence.
+  const calleeContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const calleePage = await calleeContext.newPage();
+  await captureGeneratedAudio(calleePage);
+  await signIn(calleePage, callee);
+  await calleePage.getByRole('button', { name: /^Messages and requests/ }).click();
+  await calleePage.getByRole('button', { name: /^Conversations/ }).click();
+  const calleeCard = calleePage
+    .getByRole('dialog')
+    .locator('article', { hasText: caller.username })
+    .first();
+  await expect(calleeCard).toBeVisible();
+  await calleeCard.getByRole('button', { name: 'Open conversation' }).click();
+  await calleePage.getByRole('button', { name: 'Start a call' }).first().click();
+  await calleePage.getByRole('dialog').getByRole('button', { name: 'Start a call' }).click();
+  const calleeSidebar = calleePage.locator('aside.channel-sidebar .voice-controls');
+  await expect(calleeSidebar.getByRole('button', { name: /Leave (voice|call)/ })).toBeVisible({
+    timeout: 30000
+  });
+
+  // Both sides report two participants: the call exists in both browsers, which is
+  // the property a single-page test cannot show.
+  await expect(sidebarVoice).toContainText('Call connected');
+  await expect(calleeSidebar).toContainText('Call connected');
+
+  // A third account, with no membership in the conversation at all, cannot reach the
+  // call. The stranger's own state does not list the conversation, so there is no
+  // button to press and nothing to click — which is the honest shape of the check,
+  // because the application never offers a call it would refuse.
+  const strangerContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const strangerPage = await strangerContext.newPage();
+  await captureGeneratedAudio(strangerPage);
+  await signIn(strangerPage, outsider);
+  await strangerPage.getByRole('button', { name: /^Messages and requests/ }).click();
+  await strangerPage.getByRole('button', { name: /^Conversations/ }).click();
+  const strangerDialog = strangerPage.getByRole('dialog');
+  // Neither member of the call is offered to the stranger, because a conversation
+  // they are not in is not a conversation they can open.
+  await expect(strangerDialog.locator('article', { hasText: caller.username })).toHaveCount(0);
+  await expect(strangerDialog.locator('article', { hasText: callee.username })).toHaveCount(0);
+  // And the call's participants are not leaked into a stranger's own view.
+  const strangerStates = await strangerPage.evaluate(async (room) => {
+    const state = await (await fetch('/api/state', { credentials: 'same-origin' })).json();
+    return (state.voice_states ?? []).filter((row) => row.channel_id === room).length;
+  }, directID);
+  expect(strangerStates).toBe(0);
+  void directID;
+});
+
+/**
+ * Replaces the microphone with a generated stream, as the voice journey does.
+ *
+ * Chromium's fake-device capture can hang in the host audio service before a track
+ * exists, so the track is synthesised with Web Audio. The application's admission,
+ * negotiation, forwarding and authorization are unchanged; this does not validate a
+ * physical microphone or a browser's permission prompt.
+ */
+async function captureGeneratedAudio(page) {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      if (!constraints?.audio || constraints.video)
+        throw new Error('This fixture supplies audio only.');
+      const audio = new AudioContext();
+      await audio.resume();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      const destination = audio.createMediaStreamDestination();
+      oscillator.frequency.value = 440;
+      gain.gain.value = 0.1;
+      oscillator.connect(gain).connect(destination);
+      oscillator.start();
+      return destination.stream;
+    };
+  });
+}
