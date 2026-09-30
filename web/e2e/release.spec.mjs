@@ -251,7 +251,9 @@ test('the operator and member surfaces are free of detectable violations', async
   await expect(page.getByRole('dialog')).toBeVisible();
   await expectAccessible(page);
   await page.getByRole('button', { name: 'Alerts' }).click();
-  await expect(page.getByRole('heading', { name: 'Alerts' })).toBeVisible();
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: 'Alerts', exact: true })
+  ).toBeVisible();
   await expectAccessible(page);
   await page.getByRole('button', { name: 'Close dialog' }).click();
 

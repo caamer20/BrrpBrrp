@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   assignOnly,
+  captureGeneratedAudio,
   createAccount,
   createRole,
   OWNER,
@@ -316,4 +317,98 @@ test('a screen share is offered, and every refusal is explained', async ({ page 
   await expect(stop).toBeVisible();
   await stop.click();
   await expect(sidebarVoice(page).getByRole('button', { name: 'Share screen' })).toBeVisible();
+
+  // The voice session is left rather than resumed. A clean close detaches and keeps a
+  // resume token, which is right for a person who closed a tab and is coming back — and
+  // wrong here, because the next journey in this file joins the same account and would
+  // be handed a session it did not ask for. Leaving is what a person changing their
+  // mind does, so it is what the journey does.
+  const leave = sidebarVoice(page).getByRole('button', { name: /Leave (voice|call)/ });
+  if (await leave.isVisible().catch(() => false)) {
+    await leave.click();
+    await expect(leave).toHaveCount(0, { timeout: 15000 });
+  }
+});
+
+// A screen share is captured, *published*, and negotiated — and the whole thing has to
+// survive a stop. The capture is stubbed because a browser's picker cannot be driven by
+// a test, but the publication is the product's own code: if it is not sent, the server
+// never sees a screen, and if the server refuses, the browser's own indicator must not
+// be left on claiming otherwise.
+test('a screen share is published to the room, and stopping it releases the track', async ({
+  page
+}) => {
+  test.setTimeout(180000);
+  await captureGeneratedAudio(page);
+  await page.addInitScript(() => {
+    window.__shareState = { grabbed: 0, stopped: 0, offers: 0 };
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      window.__shareState.grabbed += 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 240;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#2f6f4f';
+      context.fillRect(0, 0, 320, 240);
+      context.fillStyle = '#fff';
+      context.font = '24px sans-serif';
+      context.fillText('shared', 100, 130);
+      // Repainted on a timer so a viewer receives a moving picture rather than one
+      // frame, which is what distinguishes a forwarded stream from a stale one.
+      let frame = 0;
+      const timer = setInterval(() => {
+        frame += 1;
+        context.fillStyle = frame % 2 ? '#2f6f4f' : '#1d4a35';
+        context.fillRect(0, 0, 320, 240);
+        context.fillStyle = '#fff';
+        context.fillText('shared ' + frame, 60, 130);
+      }, 250);
+      const stream = canvas.captureStream(4);
+      const track = stream.getVideoTracks()[0];
+      const originalStop = track.stop.bind(track);
+      track.stop = () => {
+        clearInterval(timer);
+        window.__shareState.stopped += 1;
+        originalStop();
+      };
+      Object.defineProperty(track, 'label', { value: 'Shared test screen', configurable: true });
+      return stream;
+    };
+  });
+
+  await joinVoice(page, OWNER);
+
+  // The control is offered because the owner holds voice.share_screen.
+  const share = sidebarVoice(page).getByRole('button', { name: 'Share screen' });
+  await expect(share).toBeVisible();
+  await share.click();
+
+  // The browser granted a capture, and the app reports that it is sharing.
+  await expect.poll(() => page.evaluate(() => window.__shareState.grabbed)).toBe(1);
+  // The state the app reached is reported on failure, because "the message is not
+  // there" and "the share was refused and the message says so" are different failures
+  // and a reader cannot tell them apart from a timeout.
+  const shareState = await page.evaluate(() => ({
+    controls: document.querySelector('.voice-controls')?.textContent?.trim() ?? ''
+  }));
+  await expect(
+    sidebarVoice(page).getByText(/Everyone in the conversation can see it/),
+    `share state: ${JSON.stringify(shareState)}`
+  ).toBeVisible();
+
+  // Stopping it releases the track, so the browser's own indicator goes away. An
+  // indicator left on is a person believing they are visible when they are not.
+  await sidebarVoice(page).getByRole('button', { name: 'Stop sharing screen' }).click();
+  await expect.poll(() => page.evaluate(() => window.__shareState.stopped)).toBe(1);
+  await expect(sidebarVoice(page).getByRole('button', { name: 'Share screen' })).toBeVisible();
+
+  // The voice session is left behind. The server holds it until somebody leaves, and
+  // a later journey in this file joins the same account: a test that leaves the shared
+  // server holding a session makes the next one fail for a reason that has nothing to
+  // do with the thing under test.
+  const leave = sidebarVoice(page).getByRole('button', { name: /Leave (voice|call)/ });
+  if (await leave.isVisible().catch(() => false)) {
+    await leave.click();
+    await expect(leave).toHaveCount(0, { timeout: 15000 });
+  }
 });

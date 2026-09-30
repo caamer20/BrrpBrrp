@@ -35,6 +35,12 @@ class Voice {
   // One request per call: a second renegotiation for the same share would be noise,
   // and a client that failed to add the track should be able to try again later.
   private screenRequested = false;
+  // The sender for a published screen, so a restart replaces the track rather than
+  // negotiating a second one into a room whose bound is one screen.
+  private screenSender: RTCRtpSender | null = null;
+  // Whether the server has accepted this screen as a publication. Only a *published*
+  // share is withdrawn, and only the track is stopped for one that was not.
+  private publishedScreen = false;
   screenElement = $state<HTMLVideoElement | null>(null);
   // The selected candidate pair's kind: 'host' | 'srflx' | 'prflx' | 'relay'. It is
   // read by qualification and by support, and it is the only way to tell a direct
@@ -863,16 +869,82 @@ class Voice {
     this.releaseScreenWatch = onCaptureEnded(result.stream, () => {
       void this.stopScreenShare();
     });
+    // The capture has to be *published*, not merely held. The server decides whether
+    // this account may share — the room's screen bound and this account's own
+    // permission are both the server's call — and it answers with the publication id
+    // the rest of the negotiation is built on.
+    const published = await this.publishScreen(result.stream);
+    if (!published) {
+      // The server refused. The browser's own indicator is still on, and leaving it on
+      // while telling nobody is the worst outcome: the person believes they are sharing
+      // to a room that is not receiving them.
+      stopScreen(result.stream);
+      this.screenStream = null;
+      this.screenState = 'failed';
+      this.screenMessage =
+        'Your screen was not shared. Join a conversation where you can share, and try again.';
+    }
+  }
+
+  /**
+   * Adds the captured screen as a publishing video track and renegotiates.
+   *
+   * The track's stream id is the *publishing* one, deliberately not the view marker:
+   * that marker is how the server tells a viewer from a publisher, and using it here
+   * would make this client's own share read as a view of somebody else's.
+   */
+  private async publishScreen(stream: MediaStream): Promise<boolean> {
+    const peer = this.peer;
+    if (!peer) return false;
+    const track = stream.getVideoTracks()[0];
+    if (!track) return false;
+    try {
+      if (this.screenSender) {
+        // Already publishing: replace the track rather than adding a second
+        // transceiver, so a restart is a swap and not a second screen.
+        await this.screenSender.replaceTrack(track);
+      } else {
+        this.screenSender = peer.addTransceiver(track, { direction: 'sendonly' }).sender;
+        this.publishedScreen = true;
+      }
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      if (peer !== this.peer) return false;
+      workspace.sendEvent('rtc.signal', {
+        sdp: peer.localDescription?.toJSON(),
+        connection_id: this.connectionId,
+        publication: 'screen_video'
+      });
+      return true;
+    } catch {
+      this.screenSender = null;
+      return false;
+    }
   }
 
   /** Stops sharing and releases the browser's capture. Safe to call when not sharing. */
   async stopScreenShare(): Promise<void> {
     this.releaseScreenWatch?.();
     this.releaseScreenWatch = null;
+    // The server is told, because the publication is the server's record: a room whose
+    // screen publication is never removed stays "full" for the rest of the call, and
+    // the next person to try to share is refused by a share that ended minutes ago.
+    if (this.publishedScreen && this.connectionId) {
+      workspace.sendEvent('rtc.signal', {
+        connection_id: this.connectionId,
+        publication: 'screen_video',
+        publication_stopped: true
+      });
+      this.publishedScreen = false;
+    }
     if (this.screenStream) {
       stopScreen(this.screenStream);
       this.screenStream = null;
     }
+    // The track is stopped, but the transceiver stays: removing it would renegotiate
+    // the connection again, and a share that restarts a moment later would then need a
+    // third. A stopped track sends nothing, which is the property that matters.
+    this.screenRequested = false;
     this.screenState = 'idle';
     this.screenLabel = '';
     this.screenMessage = '';

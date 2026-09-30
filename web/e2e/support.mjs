@@ -132,3 +132,30 @@ export async function expectAccessible(page) {
     throw new Error(`accessibility violations: ${JSON.stringify(violations, null, 2)}`);
   }
 }
+
+/**
+ * Replaces the microphone with a generated stream.
+ *
+ * Chromium's fake-device capture can hang in the host audio service before a track
+ * exists, so the track is synthesised with Web Audio. The application's
+ * negotiation, forwarding and authorization are unchanged; this does not validate a
+ * physical microphone or a browser's permission prompt.
+ */
+export async function captureGeneratedAudio(page) {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      if (!constraints?.audio || constraints.video)
+        throw new Error('This fixture supplies audio only.');
+      const audio = new AudioContext();
+      await audio.resume();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      const destination = audio.createMediaStreamDestination();
+      oscillator.frequency.value = 440;
+      gain.gain.value = 0.1;
+      oscillator.connect(gain).connect(destination);
+      oscillator.start();
+      return destination.stream;
+    };
+  });
+}

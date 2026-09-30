@@ -185,6 +185,18 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 			return
 		}
 		if err := s.voice.Signal(user.ID, client.ID, signal); err != nil {
+			// A failed *renegotiation* is not a failed call. Adding a screen is a
+			// renegotiation, and a room that is full, or an account without the
+			// capability, would otherwise end a voice call that is working perfectly
+			// because somebody tried to share their screen. The call is left only when
+			// the failure is one a further offer cannot recover from.
+			if signal.Publication != "" {
+				// The share is refused; the call is untouched. A person whose screen did
+				// not go out keeps talking, which is the whole point of the two being
+				// separable.
+				report(err.Error())
+				return
+			}
 			report("Voice negotiation failed. Leave and try joining again.")
 			s.leaveVoice(user.ID, client.ID)
 		}

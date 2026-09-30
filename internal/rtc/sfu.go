@@ -47,6 +47,10 @@ type Signal struct {
 	// and returned to the client so a reconnecting client can tell a resume from a
 	// new publication that reused a slot.
 	PublicationID PublicationID `json:"publication_id,omitempty"`
+	// PublicationStopped withdraws a publication. It is a separate field rather than an
+	// empty `publication`, because "stop sharing" and "share something" are different
+	// intents and reading one as the other would refuse a stop as an unnamed offer.
+	PublicationStopped bool `json:"publication_stopped,omitempty"`
 }
 
 type JoinEvent struct {
@@ -340,6 +344,12 @@ func (s *SFU) forward(source *Peer, packet *rtp.Packet) {
 }
 
 func (s *SFU) Signal(userID, owner string, signal Signal) error {
+	// A withdrawal is answered before anything else, because it must work even after a
+	// client has lost the ability to publish: somebody whose permission was withdrawn
+	// still has to be able to stop sending.
+	if signal.PublicationStopped {
+		return s.stopPublication(userID, signal)
+	}
 	s.mu.Lock()
 	peer := s.peers[userID]
 	owned := peer != nil && peer.owner == owner
@@ -1133,5 +1143,48 @@ func (s *SFU) answerViewOnly(peer *Peer) error {
 	peer.emit("rtc.signal", Signal{
 		SDP: peer.pc.LocalDescription(), ConnectionID: peer.connectionID,
 	})
+	return nil
+}
+
+// stopPublication withdraws a peer's publication and tells the room.
+//
+// A stop *removes* the publication rather than marking it inactive: the room's screen
+// bound is one, and a publication that is still counted after the person stopped
+// sharing means the next person to try is refused by a share that ended minutes ago.
+//
+// It takes no locks beyond the SFU's and touches no forwarder state, which is
+// deliberate — an earlier version reached into the viewer's forwarders here and
+// deadlocked on a lock the caller already held.
+func (s *SFU) stopPublication(userID string, signal Signal) error {
+	s.mu.Lock()
+	peer, ok := s.peers[userID]
+	if !ok || (signal.ConnectionID != "" && peer.connectionID != signal.ConnectionID) {
+		s.mu.Unlock()
+		// Not an error: a client whose session has already gone has nothing to stop.
+		return nil
+	}
+	room := peer.state.ChannelID
+	registry := s.room(room)
+	stopped := false
+	for _, publication := range registry.list() {
+		if publication.Owner == userID && publication.Kind == PublicationScreenVideo {
+			registry.remove(publication.ID)
+			stopped = true
+		}
+	}
+	if !stopped {
+		s.mu.Unlock()
+		return nil
+	}
+	var recipients []*Peer
+	for _, other := range s.peers {
+		if other.state.ChannelID == room {
+			recipients = append(recipients, other)
+		}
+	}
+	s.mu.Unlock()
+	for _, other := range recipients {
+		other.emit("screen.stopped", map[string]any{"channel_id": room})
+	}
 	return nil
 }
