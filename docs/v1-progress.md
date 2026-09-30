@@ -146,6 +146,22 @@ run**.
 - A call now reports **which path it took** — direct, via STUN, or relayed through
   TURN. Latency cannot distinguish those, and the case this project is most likely to
   hit is a relay behind NAT that connects on the host and fails for everyone else.
+- **Operator alerts now exist and are verified by delivery, not configuration.**
+  `GET /api/admin/alerts` reports when an alert last *reached* the destination, the
+  current conditions and the delivery history with attempt counts and the last error.
+  A webhook that has never delivered looks like coverage, and the operator finds that
+  out during a restore. The conditions are the ones that mean recovery is unavailable:
+  a verified backup older than three times the interval, consecutive failed attempts, a
+  copy that is behind, and low space. Six tests run a real HTTP receiver and check what
+  arrived. **Not established:** no alert has been delivered to an operator's own
+  receiver on a real deployment, so the mechanism is proven in tests and not in
+  production.
+- A **notification's tap now opens the activity** and the worker **deduplicates on the
+  tag the server actually sends**. Both were defects an independent review named: the
+  worker read a field the payload does not have, so no notice was ever deduplicated, and
+  the announced destination was a path no route matched, so pressing one went nowhere.
+  Deduplication is retained for 24 hours per account per event, and a browser that
+  refuses storage still gets notifications.
 
 - **A capacity harness exists and has been run once, on a development host.**
   `scripts/capacity-fixture.mjs` builds a population through the public API — a
@@ -172,7 +188,7 @@ Production code holds that lock; the test reached past it. The recorded figure
 supersedes the older schema-14 one.
 
 **What is not established.** No qualifying capacity or soak measurement, no
-monitoring or alert delivery, no container runtime, no signed Windows download, and
+container runtime, no signed Windows download, and
 no canonical public repository or registry identity. There is no Git remote
 configured in this environment. The recorded race figure predates this schema.
 
