@@ -78,10 +78,22 @@ revocation*, non-cooperative speaker enforcement at the RTP boundary, moderated 
 — is already built and tested, and an external SFU would mean re-implementing all of
 it across a network boundary, each re-implementation a new way for authorization to
 disagree with itself. The one-binary deployment is also most of what makes the product
-approachable. **The decision is conditional on a video-forwarding measurement** that
-has not been made: the plan's own arithmetic puts two 2.5 Mbit/s shares to nine
-viewers at roughly 45 Mbit/s of egress from a process also serving HTTP, SQLite and
-WebSocket.
+approachable.
+
+**The decision was conditional on a video-forwarding measurement, and the measurement
+is made — but not on the hardware that decides it.**
+`planning/m4-checkpoint/video-forwarding.json` records one publisher to nine viewers at
+2,500 kbit/s on a **sixteen-core development host**: 36,369 packets forwarded, mean
+egress 23.28 Mbit/s against the plan's arithmetic of 22.50, peak heap 37.4 MiB. That is
+not the four-core, 8 GiB reference allocation the plan's budgets are stated for, so the
+media profile is **not qualified** and the same measurement is on the host checklist to
+re-run there.
+
+The measurement also found two gaps, both recorded in the ADR. `MaxParticipants` bounds
+the **whole server** at ten where the plan targets twenty serverwide, ten per room — a
+decision about a community's capacity that belongs to the owner rather than to a
+benchmark. And a client could not ask to *watch* a screen at all; that is now fixed,
+with the refusal for an unmarked offer kept.
 
 **All five media capabilities are built.**
 
@@ -223,10 +235,14 @@ supersedes the older schema-14 one.
   real deployment. Both gates were run before being committed: a gate that fails on
   arrival teaches people to ignore the one that matters.
 
-**What is not established.** No qualifying capacity or soak measurement, no
-container runtime, no signed Windows download, and
-no canonical public repository or registry identity. There is no Git remote
-configured in this environment. The recorded race figure predates this schema.
+**What is not established.** No qualifying capacity or soak measurement — the recorded
+figures are a development host over loopback, and the video-forwarding run was on
+sixteen cores rather than the reference allocation. No container runtime, no signed
+Windows download, and no canonical public repository or registry identity: there is no
+Git remote configured in this environment. No alert has been delivered to an operator's
+own receiver on a real deployment, though the mechanism is proven against a real HTTP
+receiver in tests. The race figure in this section is the current one; the recovery and
+browser figures above are recorded at the schema they name.
 
 ## Current private-message tranche
 
