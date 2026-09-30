@@ -74,6 +74,39 @@ A timeout does not mark the account banned or deactivated, and does not end its
 sessions. A ban does; one that arrives as a side effect of a timeout is a ban nobody
 decided to apply.
 
+**The two are separate facts, not one flag with two names.** `Principal.Inactive`
+means banned or deactivated; `Principal.Suspended` means a timeout. They were one
+field, and folding them together is what made a community timeout behave as an
+installation ban: no sign-in, no session, no private history, no direct messages, no
+calls. One flag cannot express two answers, and every consumer that cared had to ask
+the timeout question again for itself. The split is asserted in both directions — a
+timeout leaves the private surfaces open, and a ban closes them.
+
+**The sign-in gate was the visible symptom and the flag was the cause.** The comment
+above it said a timeout is "a moderation decision, not a failed sign-in, and the person
+is owed the truth about it: the password was right" — and then refused the sign-in
+anyway. The comment described the intended behaviour and the code did the opposite for
+as long as the two states shared a value. A timed-out member now signs in, holds a real
+session, reads and sends in their private conversations, and finds the community
+closed.
+
+**A timed-out member can still act on their own account.** Reading `/api/me`, changing
+their password, and managing their own sessions and second factor are
+`BeyondCommunity`. Without that the client cannot show them *why* the community is
+closed, or let them secure the account they are still signed in with — a timeout that
+leaves somebody unable to find out what is happening to them is a different failure,
+not a smaller one.
+
+**Some paths cannot be decided in the middleware at all.**
+`/api/conversations/{id}/messages` and `/api/channels/{id}/messages` are the *same
+handler*, and the same URL is a community channel for one id and a private
+conversation for another. A timeout's scope is per-destination, not per-path, so those
+routes carry `MixedConversation` and the handler decides: it already resolves the
+conversation in order to answer at all, and it refuses a suspended caller when the
+conversation is a channel. Marking them `BeyondCommunity` instead would have let a
+timed-out member keep reading community channels, which is the failure the scope
+exists to prevent.
+
 ## Hierarchy is decided by authority level, not by who is asking
 
 A moderator may act on an account strictly below their own level. This is checked

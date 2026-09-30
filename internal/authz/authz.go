@@ -153,8 +153,23 @@ type Principal struct {
 	// Inactive is set when the account is banned or deactivated in the state the
 	// policy was resolved from. An inactive account holds nothing, so a request
 	// that was authenticated before the account changed cannot commit.
+	//
+	// This is *only* a ban or a deactivation. A moderation timeout is not one of
+	// them, and folding it in here is what made a community timeout behave as an
+	// installation ban: the account could not sign in, could not read its own
+	// private history, and could not send a direct message. A timeout is a
+	// community decision and its scope is the community.
 	Inactive bool
-	Revision int64
+	// Suspended is set while a moderation timeout is live. The session is valid and
+	// the account is still signed in; it may not participate in the community, and
+	// everything outside the community is untouched.
+	//
+	// It is a separate flag rather than a facet of Inactive because the two are
+	// answered differently on purpose: a ban ends the session and gets 401, a
+	// timeout keeps it and gets 403. One flag cannot express both, and every
+	// consumer that cared had to ask the timeout question again for itself.
+	Suspended bool
+	Revision  int64
 }
 
 // Position is the highest authority level the principal holds.

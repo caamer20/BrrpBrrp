@@ -43,6 +43,21 @@ type routePolicy struct {
 	// wrong in this direction is recoverable; getting it wrong in the other direction
 	// is a community moderator holding somebody's private conversations hostage.
 	BeyondCommunity bool
+	// MixedConversation marks a route that serves *both* community channels and
+	// private conversations under the same path, so the middleware cannot know which
+	// kind it is answering without resolving the conversation itself.
+	//
+	// A timeout's scope is per-destination, not per-path: the same URL is a community
+	// channel for one id and a private conversation for another. Such a route lets a
+	// suspended account through, and the handler decides — it already resolves the
+	// conversation to answer at all, and it refuses a suspended caller for a channel
+	// (see `refuseSuspendedCommunity`).
+	//
+	// Declaring it is a deliberate act. A route that is only community must not carry
+	// it, because that would let a timed-out member keep reading channels; a route
+	// that is only private should use BeyondCommunity instead, which needs no
+	// per-request work.
+	MixedConversation bool
 }
 
 // administrativeCapabilities reach administration surfaces. Mutations behind
@@ -82,17 +97,23 @@ func (s *Server) protect(policy routePolicy, next authenticatedHandler) http.Han
 		// deactivated account's session is over, so 401 sends it back to sign in; a
 		// timeout is a decision about what the account may do and its session is still
 		// valid, so 403 with an explanation is the honest answer.
+		// A ban or deactivation ends the session everywhere: the account is out, and
+		// 401 says so rather than implying a permission problem.
 		if principal.Inactive {
-			if suspended, _ := s.timeoutState(r.Context(), user.ID); suspended && !policy.BeyondCommunity {
-				problem(w, http.StatusForbidden, "This account is suspended until a moderation timeout expires. Contact a moderator if you think this is a mistake.")
-			} else if suspended {
-				// Suspended, but this route is beyond what a community timeout reaches.
-				// The person is not signed out and not banned; they cannot participate in
-				// the community until the timeout ends.
-				w.Header().Set("X-Brrpbrrp-Timeout", "community")
-			} else {
-				problem(w, http.StatusUnauthorized, "Please sign in again.")
-			}
+			problem(w, http.StatusUnauthorized, "Please sign in again.")
+			return
+		}
+		// A moderation timeout is a *community* decision. On a community route it is a
+		// 403 with an explanation, because the session is still valid and the person is
+		// still signed in — 401 would send them through a sign-in they do not need.
+		//
+		// On a route marked BeyondCommunity it does not apply at all. The previous
+		// version set a header and then returned, so the handler never ran and the
+		// client received an empty 200: a private conversation list with no
+		// conversations, a DM that silently vanishes. A 200 that is indistinguishable
+		// from success and is not success is worse than the 403 it replaced.
+		if principal.Suspended && !policy.BeyondCommunity && !policy.MixedConversation {
+			problem(w, http.StatusForbidden, "This account is suspended until a moderation timeout expires. Contact a moderator if you think this is a mistake.")
 			return
 		}
 		if policy.Capability != "" && !principal.Allowed(policy.Capability) {

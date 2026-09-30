@@ -67,8 +67,12 @@ func (s *Service) Resolve(ctx context.Context, q db.Queryer, account db.User) (P
 	principal := Principal{
 		UserID: current.ID, IsOwner: current.IsOwner, AdminBridge: current.IsAdmin,
 		OwnerDesignated: owners > 0, OwnershipEstablished: established, Revision: revision,
-		Inactive: current.IsBanned || current.IsDeactivated || suspended,
-		Roles:    make([]Role, 0, len(catalog)),
+		// A ban and a timeout are separate facts with separate answers. They were one
+		// flag, and the single flag made a community timeout an installation ban: no
+		// sign-in, no private history, no direct messages, no calls (ADR 0018).
+		Inactive:  current.IsBanned || current.IsDeactivated,
+		Suspended: suspended,
+		Roles:     make([]Role, 0, len(catalog)),
 	}
 	for _, role := range catalog {
 		if granted[role.ID] || role.IsDefault {

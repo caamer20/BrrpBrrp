@@ -35,6 +35,18 @@ func (s *Server) conversationAccess(ctx context.Context, q db.Queryer, principal
 		if err != nil {
 			return scope, err
 		}
+		// A community timeout reaches a community channel, even on a path that also
+		// serves private conversations. The middleware cannot make this call — the same
+		// URL is a channel for one id and a private conversation for another — so the
+		// handler makes it, and it is refused here with the same explanation the
+		// middleware uses so the two answers are the same words.
+		//
+		// `Inactive` is deliberately not consulted: a ban already ended the session, so
+		// a request that got this far is either not a ban or arrived from an admission
+		// decided before it. The middleware owns that refusal.
+		if principal.Suspended {
+			return scope, refuse(403, "This account is suspended until a moderation timeout expires. Contact a moderator if you think this is a mistake.")
+		}
 		access, err := s.store.ChannelAccessLists(ctx, q, channel.ID)
 		if err != nil {
 			return scope, err
@@ -57,7 +69,11 @@ func (s *Server) conversationAccess(ctx context.Context, q db.Queryer, principal
 	// checked once for both, rather than the direct case being written out and the
 	// group case added beside it — a second copy of this check is exactly how the
 	// two would come to disagree about who may read what (ADR 0016).
-	if !s.config.PrivateConversations || (scope.Kind != "direct" && scope.Kind != "group") || state != "active" || principal.Inactive {
+	// `Inactive` is not consulted here either. A banned or deactivated account is
+	// refused at the middleware and cannot reach this point with a live session, and a
+	// timeout is *not* a reason to refuse private access — that conflation is what
+	// made a community timeout an installation ban (ADR 0018).
+	if !s.config.PrivateConversations || (scope.Kind != "direct" && scope.Kind != "group") || state != "active" {
 		return scope, authz.ErrUnavailable
 	}
 	var member bool
@@ -255,8 +271,8 @@ func (s *Server) publishToConversation(ctx context.Context, id, kind string, dat
 	case "message.created", "message.updated", "reaction.updated", "message.embed_updated":
 		var direct, blocked bool
 		// A direct conversation is read-only when the pair is blocked; a group is not a
-	// pair, so there is nothing here that a block between two members would change.
-	err := tx.QueryRowContext(ctx, `SELECT c.kind='direct',c.kind='direct' AND EXISTS(SELECT 1 FROM direct_pairs p JOIN user_blocks b ON (b.blocker_id=p.user_low AND b.blocked_id=p.user_high) OR (b.blocker_id=p.user_high AND b.blocked_id=p.user_low) WHERE p.conversation_id=c.id) FROM conversations c WHERE c.id=?`, id).Scan(&direct, &blocked)
+		// pair, so there is nothing here that a block between two members would change.
+		err := tx.QueryRowContext(ctx, `SELECT c.kind='direct',c.kind='direct' AND EXISTS(SELECT 1 FROM direct_pairs p JOIN user_blocks b ON (b.blocker_id=p.user_low AND b.blocked_id=p.user_high) OR (b.blocker_id=p.user_high AND b.blocked_id=p.user_low) WHERE p.conversation_id=c.id) FROM conversations c WHERE c.id=?`, id).Scan(&direct, &blocked)
 		if err != nil || (direct && (len(audience) != 2 || blocked)) {
 			return
 		}

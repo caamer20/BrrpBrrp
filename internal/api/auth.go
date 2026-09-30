@@ -75,13 +75,19 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		problem(w, 401, "Incorrect username or password.")
 		return
 	}
-	// A timeout is a moderation decision, not a failed sign-in, and the person is
-	// owed the truth about it: the password was right. An expired timeout is lifted
-	// here, before the check, so signing in is itself the thing that clears it.
-	if suspended, until := s.timeoutState(r.Context(), id); suspended {
-		problem(w, 403, "This account is suspended until "+until+". Contact a moderator if you think this is a mistake.")
-		return
-	}
+	// A timeout is a moderation decision, not a failed sign-in, and the person is owed
+	// the truth about it: the password was right. So the sign-in succeeds, the session
+	// is created, and the community is closed to them until it ends.
+	//
+	// Refusing here is what made a community timeout behave as an installation ban — no
+	// sign-in, no session, and therefore no way to read the private conversations the
+	// timeout never decided anything about. The comment above this branch described the
+	// intended behaviour and the code did the opposite for as long as the two states
+	// shared a flag.
+	//
+	// An expired timeout is still lifted here, before the check, so signing in is
+	// itself the thing that clears it.
+	s.timeoutState(r.Context(), id)
 	if !s.completeLogin(w, r, id, hash, input.Code) {
 		return
 	}
