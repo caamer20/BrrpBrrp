@@ -472,3 +472,119 @@ func TestAVideoPacketNeverReachesTheAudioForwarder(t *testing.T) {
 		t.Fatalf("a video packet was written through %d audio outputs", before)
 	}
 }
+
+// A client that wants to *watch* a screen must not have to claim a publication to do
+// it. The refusal "a second offer must name the publication it is adding" made that
+// impossible: a viewer was treated as a second publisher, and a room's
+// one-screen-per-room bound would then refuse the viewer too.
+func TestAViewerCanNegotiateToReceiveAScreenWithoutPublishing(t *testing.T) {
+	sfu := newTestSFU(t)
+	publisher := connectPeer(t, sfu, "ana", "room")
+	viewer := connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	// Ana shares, through the production signal path.
+	publisher.setScreenTrack(t)
+	offer, err := publisher.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	if err := sfu.Signal("ana", "ana", Signal{
+		ConnectionID: sfu.connectionIDFor("ana"),
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: publisher.pc.LocalDescription().SDP},
+		Publication:  PublicationScreenVideo,
+	}); err != nil {
+		t.Fatalf("the publisher could not share: %v", err)
+	}
+	waitFor(t, "the publication to be announced", func() bool {
+		for _, publication := range sfu.Publications("room") {
+			if publication.Kind == PublicationScreenVideo {
+				return true
+			}
+		}
+		return false
+	})
+
+	// Bo asks only to *receive*. A bare video transceiver has no direction attribute at
+	// all — the SDP default makes it sendrecv — so the description cannot say what the
+	// client wants; the stream id is the marker, and it has to be on the track itself
+	// because a description is validated against the offer that produced it.
+	viewTrack, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate},
+		ViewStreamID, "viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := viewer.pc.AddTransceiverFromTrack(viewTrack,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+		t.Fatal(err)
+	}
+	viewOffer, err := viewer.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := viewer.pc.SetLocalDescription(viewOffer); err != nil {
+		t.Fatal(err)
+	}
+	if err := sfu.Signal("bo", "bo", Signal{
+		ConnectionID: sfu.connectionIDFor("bo"),
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: viewer.pc.LocalDescription().SDP},
+	}); err != nil {
+		t.Fatalf("a viewer could not negotiate to receive: %v", err)
+	}
+
+	// And the viewer's claim to *receive* is not a claim to publish: the room still
+	// holds exactly one screen, and it belongs to the person sharing.
+	published, ownedByViewer := 0, false
+	for _, publication := range sfu.Publications("room") {
+		if publication.Kind != PublicationScreenVideo {
+			continue
+		}
+		published++
+		if publication.Owner == "bo" {
+			ownedByViewer = true
+		}
+	}
+	if published != 1 {
+		t.Fatalf("the room holds %d screen publications, want 1", published)
+	}
+	if ownedByViewer {
+		t.Fatal("a viewer was recorded as a screen publisher")
+	}
+}
+
+// A second offer that does not say it is a view is still refused. The receive path
+// must not become a way to publish by omitting a field.
+func TestAnUnmarkedSecondOfferIsStillRefused(t *testing.T) {
+	sfu := newTestSFU(t)
+	peer := connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "the peer to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	// A bare video transceiver with no view marker: this is what the old code could not
+	// tell apart from a viewer, and it is refused rather than guessed at.
+	if _, err := peer.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := peer.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	err = sfu.Signal("ana", "ana", Signal{
+		ConnectionID: sfu.connectionIDFor("ana"),
+		SDP:         &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: peer.pc.LocalDescription().SDP},
+	})
+	if err == nil {
+		t.Fatal("a second offer naming no publication and no view was accepted")
+	}
+}

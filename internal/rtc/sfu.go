@@ -3,6 +3,7 @@ package rtc
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -557,6 +558,37 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 	// Holding it across the whole exchange is the point: an SDP exchange is a
 	// multi-step conversation and interleaving two of them corrupts both.
 	if signal.Publication == "" {
+		// An offer that names no publication is either a client asking to *receive* — to
+		// watch a screen somebody else is sharing — or a client that forgot to say what it
+		// was adding. The two must not be confused: a client that has not asked to publish
+		// must never be able to by omitting a field, and a viewer must never have to claim
+		// a publication to watch one.
+		//
+		// The verdict is read from the tracks rather than from the offer's direction
+		// attribute, for two reasons that are both specific rather than stylistic. A
+		// transceiver created with `AddTransceiverFromKind` produces a section with no
+		// direction at all, which the SDP default makes sendrecv — so a viewer and a
+		// publisher can produce byte-identical offers. And Pion reuses a same-kind
+		// transceiver rather than creating a second one, so a bare recvonly offer matches
+		// the server's existing screen output. A viewer's own stream id is what puts its
+		// track on a separate m-line, and it is what this reads.
+		if signal.SDP == nil || signal.SDP.SDP == "" {
+			return errors.New("a renegotiation needs an offer")
+		}
+		if err := peer.pc.SetRemoteDescription(*signal.SDP); err != nil {
+			return err
+		}
+		if peerIsViewing(peer) {
+			// The server needs an output to send the screen on, and a viewer that joins
+			// before anybody shares does not have one yet.
+			if err := peer.addScreenOutput(); err != nil {
+				return err
+			}
+			return s.answerViewOnly(peer)
+		}
+		// Not a viewer. A second offer *replaces* the first, so the publication path
+		// below re-applies this same offer and the connection is never left holding
+		// one that was never answered.
 		return errors.New("a second offer must name the publication it is adding")
 	}
 	if !signal.Publication.Valid() {
@@ -879,6 +911,11 @@ func (s *SFU) forwardScreen(source *Peer, kind PublicationKind, packet *rtp.Pack
 	}
 }
 
+// screenTrackPrefix names the tracks this server sends. It is a prefix rather than an
+// exact id because the user id is appended, and two places now depend on it — a
+// literal in two of them is how they come to disagree.
+const screenTrackPrefix = "screen-"
+
 // addScreenOutput creates one video output on this peer. There is one, not several:
 // the room's publication bound already decides how many screens a room carries, and a
 // second output per peer would be a way around it.
@@ -959,6 +996,119 @@ func (s *SFU) renegotiateForTest(peer *Peer, publicationID string) error {
 	peer.emit("rtc.signal", Signal{
 		SDP: peer.pc.LocalDescription(), ConnectionID: peer.connectionID,
 		Publication: PublicationScreenVideo, PublicationID: PublicationID(publicationID),
+	})
+	return nil
+}
+
+// peerIsViewing reports whether the offer that was just applied is a client asking to
+// receive rather than to publish.
+//
+// It looks for the view stream id, which is the one signal that survives both problems
+// above: the direction attribute is absent from a bare transceiver, and a same-kind
+// transceiver is reused rather than duplicated. A viewer that omits the id is refused,
+// which is the right way round — the burden is on the client that wants something
+// unusual to say so explicitly, and a client that publishes without saying so gets the
+// refusal rather than a silent publication.
+func peerIsViewing(peer *Peer) bool {
+	receiving := false
+	for _, transceiver := range peer.pc.GetTransceivers() {
+		if transceiver.Kind() != webrtc.RTPCodecTypeVideo {
+			continue
+		}
+		// The server's own screen output is a sendonly video track it added, and it is
+		// not the client's. Counting it would make every viewer look like a publisher,
+		// which is the exact confusion this check exists to prevent.
+		if sender := transceiver.Sender(); sender != nil && sender.Track() != nil &&
+			isScreenOutputTrack(sender.Track().ID()) {
+			continue
+		}
+		// A video transceiver the client is only receiving on is a viewer. This is what a
+		// marker-free offer looks like once the transceivers are negotiated, and it is
+		// why the check reads them rather than the description.
+		if transceiver.Direction() != webrtc.RTPTransceiverDirectionRecvonly {
+			continue
+		}
+		if receiver := transceiver.Receiver(); receiver != nil && receiver.Track() != nil {
+			if IsViewOnlyStream(receiver.Track().StreamID()) {
+				return true
+			}
+		}
+		receiving = true
+	}
+	return receiving
+}
+
+// isScreenOutputTrack recognises the track the server added to send a screen, by the
+// prefix it was created with.
+func isScreenOutputTrack(trackID string) bool {
+	return strings.HasPrefix(trackID, screenTrackPrefix)
+}
+
+// remoteMedia splits an SDP into its media sections, each with its own attributes.
+func remoteMedia(offer string) []sdpMedia {
+	sections := []sdpMedia{}
+	for _, part := range strings.Split(offer, "m=")[1:] {
+		lines := strings.Split(part, "\n")
+		media := sdpMedia{header: strings.TrimSpace(strings.SplitN(lines[0], "\r", 2)[0])}
+		for _, raw := range lines[1:] {
+			line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+			if line == "" {
+				break
+			}
+			media.attributes = append(media.attributes, line)
+		}
+		sections = append(sections, media)
+	}
+	return sections
+}
+
+type sdpMedia struct {
+	header     string
+	attributes []string
+}
+
+func isVideoMedia(media sdpMedia) bool {
+	fields := strings.Fields(media.header)
+	return len(fields) > 0 && (strings.Contains(fields[0], "video") || strings.Contains(fields[0], "image"))
+}
+
+func mediaSends(media sdpMedia) bool {
+	for _, attribute := range media.attributes {
+		switch attribute {
+		case "a=sendonly", "a=sendrecv":
+			return true
+		case "a=recvonly":
+			return false
+		}
+	}
+	// No direction attribute at all is sendrecv by the SDP default, so a section that
+	// omits one is a publisher rather than a viewer.
+	return true
+}
+
+func mediaDeclaresView(media sdpMedia) bool {
+	for _, attribute := range media.attributes {
+		if strings.HasPrefix(attribute, "a=brrpbrrp-view") {
+			return true
+		}
+	}
+	return false
+}
+
+// answerViewOnly answers an offer that adds only a receiving track. It deliberately
+// announces nothing: the bounds, the participant list and the forwarding are all
+// about publications, and a viewer that appeared in them would be counted as a
+// sharer and would consume the room's one-screen budget.
+func (s *SFU) answerViewOnly(peer *Peer) error {
+	answer, err := peer.pc.CreateAnswer(nil)
+	if err != nil {
+		return err
+	}
+	if err := peer.pc.SetLocalDescription(answer); err != nil {
+		return err
+	}
+	peer.emit("rtc.signal", Signal{
+		SDP: peer.pc.LocalDescription(), ConnectionID: peer.connectionID,
 	})
 	return nil
 }

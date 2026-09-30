@@ -195,10 +195,11 @@ qualified here, on real hardware, rather than in a local benchmark:
   today regardless of how much forwarding headroom exists. Confirm the *intended* bound
   with the owner before changing it: raising it is a product decision about a
   community's capacity, not a performance one.
-- **A client cannot yet ask to watch a screen without being treated as a second
-  publisher.** A second offer with no publication name is refused. A real two-client
-  screen-share run is what shows whether a viewer receives anything, because the local
-  harness counts the server's writes rather than a client's receipt.
+- **A client can now ask to watch a screen without claiming a publication**, but it has
+  never been shown doing it on real hardware. The local test proves the negotiation and
+  that a viewer is not recorded as a publisher; it does not prove a picture arrives. A
+  real two-client screen-share run is what does, and the browser journey that exercises
+  it is what would catch a browser sending something Pion parses differently.
 
 ### 3.2 The video forwarding measurement, on the reference allocation
 

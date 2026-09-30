@@ -2,6 +2,7 @@ package rtc
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -271,4 +272,65 @@ func (l PublicationLimits) admits(kind PublicationKind, roomCount, serverCount i
 		return ErrWrongPublicationKind
 	}
 	return nil
+}
+
+// ViewStreamID is the stream id a client puts on a track it only wants to receive.
+//
+// It exists because of a specific failure, recorded in ADR 0019 §6. A viewer asking to
+// watch a screen sends an offer whose video section has *no direction attribute* — the
+// SDP default makes it sendrecv — and the server reuses a same-kind transceiver rather
+// than creating a second one. So the offer matches the server's existing `sendonly`
+// screen output, the direction stays `sendonly`, and the server concludes the client is
+// publishing. A viewer would then have to claim a publication to watch one, and a
+// room's one-screen-per-room bound would refuse the claim.
+//
+// A distinct stream id puts the client's track on its own m-line, so it cannot be
+// matched against the server's output. This is what a real browser already sends, and
+// naming it here makes the requirement explicit rather than emergent.
+const ViewStreamID = "brrpbrrp-view"
+
+// IsViewOnlyStream reports whether a stream id is the one a client puts on a track it
+// only wants to receive.
+func IsViewOnlyStream(streamID string) bool {
+	return streamID == ViewStreamID
+}
+
+// ViewMarker is the SDP attribute a client sets on a video section to say it only
+// wants to receive on it.
+//
+// It is a private attribute rather than the stream id, for two reasons that are both
+// about what the library can carry. Pion's `AddTransceiverFromTrack` accepts only
+// `sendonly` and `sendrecv`, so a receiving track cannot be given a stream id at all;
+// and a bare `AddTransceiverFromKind` produces a section with no direction attribute,
+// which the SDP default makes `sendrecv` — so without an explicit marker a viewer and
+// a publisher produce byte-identical descriptions.
+//
+// A section carrying the marker is a viewer. A section without one that also does not
+// send is a publisher, and is refused rather than guessed at: the burden is on a client
+// doing something unusual to say so, and a client that publishes without saying so gets
+// the refusal rather than a silent publication.
+const ViewMarker = "a=brrpbrrp-view"
+
+// MarkViewOnly adds the view marker to every video section of an offer that does not
+// already send. It is what a client calls before sending an offer whose only purpose is
+// to receive a screen.
+func MarkViewOnly(offer string) string {
+	lines := strings.Split(offer, "\n")
+	out := make([]string, 0, len(lines))
+	inVideo := false
+	for _, raw := range lines {
+		line := strings.TrimSuffix(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "m=") {
+			inVideo = strings.Contains(strings.ToLower(trimmed), "video")
+		}
+		out = append(out, line)
+		if inVideo && trimmed == "a=recvonly" {
+			// A section that already says recvonly is a viewer on its own; the marker
+			// is still added so the two paths agree rather than one being inferred.
+			out = append(out, ViewMarker)
+			inVideo = false
+		}
+	}
+	return strings.Join(out, "\n")
 }
