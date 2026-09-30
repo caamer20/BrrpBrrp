@@ -261,6 +261,19 @@
           </div>{/each}{/if}
     </nav>
     <VoiceControls />
+    {#if voice.screenShared}
+      <!-- A shared screen, rendered once for the whole workspace. The element is muted
+           and inline: a video element that tried to unmute would play the sharer's system
+           audio at everybody watching, and inline keeps a phone from going fullscreen. -->
+      <video
+        bind:this={voice.screenElement}
+        class="shared-screen"
+        autoplay
+        playsinline
+        muted
+        aria-label="A screen being shared in this conversation"
+      ></video>
+    {/if}
     <div class="sidebar-bottom">
       <span class="connection-dot" class:connected={workspace.connection === 'connected'}
       ></span><span

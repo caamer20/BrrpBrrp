@@ -721,8 +721,31 @@ func (s *SFU) serverPublicationCount(kind PublicationKind) int {
 
 // announcePublication records a new publication. The caller holds mu, because the
 // registry and the peer map have to agree about who is in the room.
+// announcePublication records a publication and tells the room.
+//
+// The announcement is what makes a client that joined *after* a share began able to
+// receive one: a client that has no video transceiver cannot be sent a screen, and
+// the only moment it learns a screen exists is when somebody says so. It is emitted to
+// the room's participants rather than the whole server because who is in a call is
+// the same boundary as who may hear it (ADR 0019 §5).
 func (s *SFU) announcePublication(peer *Peer, publication Publication) {
-	s.room(peer.state.ChannelID).add(&publication)
+	room := peer.state.ChannelID
+	s.room(room).add(&publication)
+	var recipients []*Peer
+	for _, other := range s.peers {
+		if other.state.ChannelID == room {
+			recipients = append(recipients, other)
+		}
+	}
+	s.mu.Unlock()
+	for _, other := range recipients {
+		other.emit("screen.published", map[string]any{
+			"publication_id": string(publication.ID),
+			"owner":          publication.Owner,
+			"channel_id":     room,
+		})
+	}
+	s.mu.Lock()
 }
 
 // Publications returns the live publications in a room, in announcement order. It is

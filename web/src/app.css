@@ -3189,3 +3189,31 @@ meter {
 .channel-link.active .channel-flag {
   color: var(--text);
 }
+
+/* A shared screen sits above the conversation rather than inside it: it is a picture
+   somebody is looking at while they read, and putting it in the message list would
+   push the conversation out of view every time a share started. */
+.shared-screen {
+  position: fixed;
+  inset-block-end: 1rem;
+  inset-inline-end: 1rem;
+  width: min(28rem, 45vw);
+  aspect-ratio: 16 / 10;
+  object-fit: contain;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px #0006;
+  /* Above the composer, below a dialog: a share is interrupted by a modal for the same
+     reason a call is. */
+  z-index: 30;
+}
+
+/* A narrow screen has no room for a picture beside a conversation, so the share takes
+   the width and the conversation is read above it rather than beside it. */
+@media (max-width: 720px) {
+  .shared-screen {
+    inset-inline: 0.5rem;
+    width: auto;
+  }
+}

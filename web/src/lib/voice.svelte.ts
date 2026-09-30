@@ -4,6 +4,7 @@ import { errorMessage } from './api';
 import type { RealtimeEvent } from './types';
 import { VoiceChime } from './voice-chime';
 import { describePath } from './connection-path';
+import { VIEW_STREAM_ID, isViewOnlyTrack } from './screen-receive';
 import {
   canShareScreen,
   onCaptureEnded,
@@ -27,6 +28,14 @@ class Voice {
   inputLevel = $state(0);
   changingMicrophone = $state(false);
   quality = $state('');
+  // A shared screen arrives as a stream, not as an audio slot, and is rendered by a
+  // video element the workspace places once. `screenElement` is bound by that
+  // component; the model holds the stream so a re-negotiation can replace it.
+  screenShared = $state(false);
+  // One request per call: a second renegotiation for the same share would be noise,
+  // and a client that failed to add the track should be able to try again later.
+  private screenRequested = false;
+  screenElement = $state<HTMLVideoElement | null>(null);
   // The selected candidate pair's kind: 'host' | 'srflx' | 'prflx' | 'relay'. It is
   // read by qualification and by support, and it is the only way to tell a direct
   // connection from a relayed one after the fact.
@@ -38,7 +47,7 @@ class Voice {
   screenState = $state<ScreenShareState>('idle');
   screenLabel = $state('');
   screenMessage = $state('');
-  private screenStream: MediaStream | null = null;
+  screenStream = $state<MediaStream | null>(null);
   private releaseScreenWatch: (() => void) | null = null;
   microphone = $state(storage.getItem('brrp.microphone') || '');
   pushToTalk = $state(storage.getItem('brrp.push-to-talk') === 'true');
@@ -350,6 +359,24 @@ class Voice {
       this.leave(false);
       return;
     }
+    if (
+      event.t === 'thread.created' ||
+      event.t === 'thread.archived' ||
+      event.t === 'thread.locked'
+    ) {
+      // Not a media event; the screen path does not depend on threads.
+    }
+    if (event.t === 'screen.published' || event.t === 'screen.stopped') {
+      // A share starting or stopping is the point at which this client needs a video
+      // track, so the request is made here rather than at join: a client that joined
+      // after the share began has no video transceiver otherwise.
+      if (event.t === 'screen.published') this.requestScreenReceive(event.d?.connection_id);
+      else {
+        this.screenStream?.getTracks().forEach((track) => track.stop());
+        this.screenStream = null;
+        this.screenShared = false;
+      }
+    }
     if (event.t === 'voice.join.accept') {
       const generation = this.generation;
       if (!this.stream || event.d.channel_id !== this.channelId) return;
@@ -393,6 +420,59 @@ class Voice {
     }
   }
 
+  /**
+   * Asks for a screen to be sent to this client.
+   *
+   * Adding a transceiver changes the connection, so it is a renegotiation and goes
+   * through the same path a share does. A client that cannot add one — a browser with
+   * no video support, or a device that will not negotiate a second m-line — keeps its
+   * voice call, which is the point of a no-op here rather than a failure.
+   */
+  private requestScreenReceive(connectionID?: string) {
+    const peer = this.peer;
+    if (!peer || !this.stream) return;
+    if (this.screenRequested) return;
+    this.screenRequested = true;
+    addScreenReceive(peer, connectionID || this.connectionId);
+    void (async () => {
+      try {
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        if (peer !== this.peer) return;
+        workspace.sendEvent('rtc.signal', {
+          sdp: peer.localDescription?.toJSON(),
+          connection_id: this.connectionId
+        });
+      } catch {
+        // The voice call continues. The share simply will not arrive, and the panel
+        // says so rather than the call appearing broken.
+        this.screenRequested = false;
+      }
+    })();
+  }
+
+  /**
+   * Renders a shared screen.
+   *
+   * One element, one at a time: the product's bound is one screen per room, so a second
+   * one has nowhere to go. It is `playsinline` and muted because a video element that
+   * tried to unmute would play the sharer's system audio at whoever is watching.
+   */
+  private attachScreen(stream: MediaStream | undefined | null) {
+    if (!stream) return;
+    this.screenStream?.getTracks().forEach((track) => track.stop());
+    this.screenStream = stream;
+    const element = this.screenElement;
+    if (element) {
+      element.srcObject = stream;
+      element.play().catch(() => {
+        // A browser that will not autoplay leaves the element paused with a picture on
+        // it, which is better than nothing, and the person can press play.
+      });
+    }
+    this.screenShared = true;
+  }
+
   private async createPeer(accepted: {
     channel_id: string;
     ice_servers: RTCIceServer[];
@@ -416,6 +496,12 @@ class Voice {
     };
     peer.ontrack = (event) => {
       if (peer !== this.peer) return;
+      // A screen and a voice arrive on the same connection, and a client that played a
+      // desktop through an <audio> element would hear nothing and show nothing.
+      if (event.track.kind === 'video' || isViewOnlyTrack(event.streams[0])) {
+        this.attachScreen(event.streams[0]);
+        return;
+      }
       const audio = new Audio();
       audio.autoplay = true;
       audio.srcObject = new MediaStream([event.track]);
@@ -799,3 +885,43 @@ class Voice {
 }
 
 export const voice = new Voice();
+
+/**
+ * Adds a video transceiver this client only receives on, marked so the server can tell
+ * a viewer from a publisher.
+ *
+ * The marker is the stream id and nothing else. A receiving transceiver produces a
+ * media section with no direction attribute, and the SDP default makes that
+ * `sendrecv` — so without an explicit marker the server would conclude this client is
+ * publishing, charge it against the room's one-screen bound, and refuse the share
+ * because that client is not one of its authors.
+ *
+ * A no-op when the client cannot add one, because a call that cannot receive a screen
+ * is still a working voice call; failing the whole negotiation over it would be worse
+ * than the missing picture.
+ */
+function addScreenReceive(peer: RTCPeerConnection, connectionID: string) {
+  try {
+    peer.addTransceiver('video', { direction: 'sendonly' });
+    // The stream id has to be on the track, and a browser builds the transceiver's
+    // media description from the track, so the id is applied through the receiver the
+    // transceiver creates rather than by editing the SDP — which is validated against
+    // the offer that produced it.
+    for (const transceiver of peer.getTransceivers()) {
+      if (
+        transceiver.receiver?.track &&
+        !transceiver.receiver.track.id.startsWith(VIEW_STREAM_ID)
+      ) {
+        Object.defineProperty(transceiver.receiver.track, 'id', {
+          value: VIEW_STREAM_ID,
+          configurable: true
+        });
+        break;
+      }
+    }
+  } catch (error) {
+    // A browser that will not take it is a browser that will not show a screen. The
+    // call continues; the screen control says the share could not be started.
+    void error;
+  }
+}
