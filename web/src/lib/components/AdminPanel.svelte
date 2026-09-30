@@ -7,6 +7,7 @@
   import PrivateEvidence from './admin/PrivateEvidence.svelte';
   import AdminSettings from './admin/Settings.svelte';
   import Maintenance from './admin/Maintenance.svelte';
+  import Alerts from './admin/Alerts.svelte';
   import AdminInvitations from './admin/Invitations.svelte';
   import { workspace } from '../workspace.svelte';
   // Each tab names the capabilities that make it useful. A delegated manager sees the
@@ -30,7 +31,10 @@
     // avoid (completion review 10, R10-07).
     { name: 'Private evidence', capabilities: ['report.review_private'], gated: true },
     { name: 'Settings', capabilities: ['settings.manage'] },
-    { name: 'Maintenance', capabilities: ['operator.backup', 'settings.manage', 'audit.read'] }
+    { name: 'Maintenance', capabilities: ['operator.backup', 'settings.manage', 'audit.read'] },
+    // Alert health is operator information, not community administration: it describes
+    // the recovery path and whether its notifications are arriving.
+    { name: 'Alerts', capabilities: ['operator.backup'] }
   ];
   const allowed = $derived(
     tabs.filter(
@@ -64,5 +68,6 @@
   {:else if tab === 'People'}<AdminUsers />{:else if tab === 'Invitations'}<AdminInvitations
     />{:else if tab === 'Channels'}<AdminChannels />{:else if tab === 'Roles'}<AdminRoles
     />{:else if tab === 'Private evidence'}<PrivateEvidence />{:else if tab === 'Reports'}<Reports
-    />{:else if tab === 'Settings'}<AdminSettings />{:else}<Maintenance />{/if}
+    />{:else if tab === 'Settings'}<AdminSettings />{:else if tab === 'Alerts'}<Alerts
+    />{:else}<Maintenance />{/if}
 </Modal>
