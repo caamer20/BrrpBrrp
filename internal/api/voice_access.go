@@ -324,22 +324,44 @@ func (s *Server) resolveVoiceRoom(ctx context.Context, q db.Queryer, principal a
 		if scope.Kind != "direct" && scope.Kind != "group" {
 			return voiceRoom{}, "Voice room not found."
 		}
-		// A block ends contact, and a call is the most immediate contact there is.
+		// A block ends contact between *two people*, and a call is the most immediate
+		// contact there is. On a **direct pair** that is the whole relationship, so
+		// refusing the call is right and was the V14-07 fix: the conversation's read
+		// admission is deliberately *retained*-history, so reusing it for a live call
+		// was reading a privacy decision about the past as an admission rule for the
+		// present, and a blocked pair could open a call the whole time.
 		//
-		// The conversation's read admission is deliberately *retained*-history: a
-		// blocked member can still read what was said before the block, which is the
-		// documented and correct behaviour. Reusing it for a live call was therefore
-		// reading a privacy decision about the past as an admission rule for the
-		// present, and a blocked pair could open a call the whole time. The message
-		// path already refuses a new message after a block; the call did not, and the
-		// two disagreeing about the same block is the defect (completion review 14,
-		// V14-07).
+		// On a **group** it is one relationship among several. The group has other
+		// members, the block removes nobody from it, and both blocked and blocking
+		// members keep reading the history. `blockedBetween` asks whether *any* accepted
+		// member blocks the caller, so applied to a group it excluded the parties from
+		// each other's call for as long as the block stood — and let either of them keep
+		// a third member out of the room that third member is standing in. That is not a
+		// narrower block; it is the group deciding who may talk to whom.
 		//
-		// Existing history stays readable to both of them. What a block ends is *new*
-		// contact: a new call, and a new message.
-		if blocked, err := s.blockedBetween(ctx, q, principal.UserID, roomID); err != nil {
+		// So the live-contact gate is a direct pair's property. What a block still
+		// governs on a group is the message path — which refuses a new message to the
+		// blocker — and the deletion path. Both are unchanged, and
+		// `TestABlockBetweenTwoGroupMembersDoesNotRemoveThemFromTheGroupCall` asserts
+		// that the relaxation did not extend to them.
+		if scope.Kind == "direct" {
+			if blocked, err := s.blockedBetween(ctx, q, principal.UserID, roomID); err != nil {
+				return voiceRoom{}, "Voice room not found."
+			} else if blocked {
+				return voiceRoom{}, "Voice room not found."
+			}
+		}
+		// Both parties must be usable accounts. `conversationAccess` only requires a
+		// *usable other member* on the write path, so reading a direct conversation
+		// still works after a peer is erased, deactivated or banned — which is correct:
+		// the surviving member keeps their history. A call is different in kind: it is
+		// live contact with somebody who is not there, and the membership row outlives
+		// all three states because they are account lifecycle rather than conversation
+		// membership. Admitting it means a live room containing an account that cannot
+		// sign in and never will.
+		if usable, err := s.conversationHasUsablePeer(ctx, q, principal.UserID, roomID); err != nil {
 			return voiceRoom{}, "Voice room not found."
-		} else if blocked {
+		} else if !usable {
 			return voiceRoom{}, "Voice room not found."
 		}
 		return voiceRoom{
@@ -351,6 +373,22 @@ func (s *Server) resolveVoiceRoom(ctx context.Context, q db.Queryer, principal a
 	default:
 		return voiceRoom{}, "Voice room not found."
 	}
+}
+
+// conversationHasUsablePeer reports whether somebody other than the caller is still a
+// usable member of this conversation.
+//
+// It is the call path's own question, and it is deliberately narrower than the read
+// path's. Reading retained history after a peer is erased, deactivated or banned is
+// correct and must keep working; joining a *live* call with them is not contact with
+// them at all. The membership row survives all three states, so membership alone
+// cannot answer this.
+func (s *Server) conversationHasUsablePeer(ctx context.Context, q db.Queryer, userID, conversationID string) (bool, error) {
+	var usable bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members m JOIN users u ON u.id=m.user_id
+		WHERE m.conversation_id=? AND m.user_id<>? AND m.state='accepted'
+		AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0)`, conversationID, userID).Scan(&usable)
+	return usable, err
 }
 
 // privateRoomName names a private call for a participant list. A direct pair is named

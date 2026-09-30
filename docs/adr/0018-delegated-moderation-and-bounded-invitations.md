@@ -184,3 +184,40 @@ positively — a real sign-in, real private history, a DM that exists in storage
 afterwards, the account's own activity — and then the forbidden half exactly, including
 that a refused community write leaves no row behind. Reverting the enforcement check
 makes it fail, and so does a sign-in that reports the wrong account.
+
+
+## A block is a two-person fact; an unavailable account is nobody to call
+
+Both gates on a private call came from V14-07, and both over-generalised what that fix
+established. The original defect was real — a blocked *direct pair* could open a call the
+whole time the block stood — and the repair asked a question that has no single answer.
+
+**A block between two group members is not the group's business.** The check was
+`blockedBetween`, which asks whether *any* accepted member blocks the caller. On a group
+that is wrong twice over. It excludes the parties from each other's call for as long as
+the block stands, and — because the same query runs for every participant — it lets
+either of them keep a *third* member out of the room that third member is standing in.
+That is not a narrower block; it is the group deciding who may talk to whom. The live
+contact gate is now a direct pair's property. A block still governs the message path and
+deletion on a group, which is what `conversationAccess` already decided — a group is not
+a pair, so there is no two-person relationship to read as blocked — and the call path now
+agrees with the message path instead of inventing a second policy.
+
+**An erased, deactivated or banned peer is not somebody to call.** Membership outlives
+all three, because they are account lifecycle rather than conversation membership, and
+deleting the conversation would destroy the other person's history. So the pair still
+reads `accepted` and the call path — which consulted membership — admitted a live room
+containing an account that cannot sign in and never will. `conversationAccess` only
+requires a *usable other member* on the write path, so reading retained history after a
+peer is gone still works, and that is deliberate: the surviving member keeps their side
+of the conversation. Joining a **live** call is different in kind, and now asks the
+separate question.
+
+The revalidation pass inherits both rules, which produces the two results that look
+opposite and are both correct: a direct call empties when a peer becomes unavailable,
+because the one member left cannot rejoin into a room the admission rule refuses; a
+group call loses only the member who left, because the group is not a pair.
+
+**What is deliberately unchanged.** A blocked direct pair still cannot call, still cannot
+message, and still cannot open a fresh request. A blocked member still reads retained
+history and can still report it.
