@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, onDestroy } from 'svelte';
   import { workspace } from '../workspace.svelte';
-  import { errorMessage, uploadFile } from '../api';
+  import { errorMessage, UploadCancelled, uploadFile } from '../api';
   import type { Attachment, User, Message } from '../types';
   import Icon from './Icon.svelte';
 
@@ -21,6 +21,14 @@
   let text = $state('');
   let attachments = $state<Attachment[]>([]);
   let progress = $state<number | null>(null);
+  // The running upload, so it can be stopped. A person who chose the wrong file
+  // should not have to close the tab to change their mind, and closing the tab costs
+  // them the draft as well.
+  let running: { abort: () => void } | null = null;
+  // A file that failed, kept so the retry does not require going back to the file
+  // picker — which on a phone means finding the file again — and so the draft's text
+  // is never the thing that has to be retyped.
+  let retryable = $state<{ file: File; name: string } | null>(null);
   let uploadName = $state('');
   let uploadChannelName = $state('');
   let dragging = $state(false);
@@ -119,13 +127,17 @@
       workspace.uploadCount++;
       uploadName = file.name;
       try {
-        const attachment = await uploadFile<Attachment>(
+        const uploading = uploadFile<Attachment>(
           file,
           (value) => (progress = value),
           // A group is a private conversation, so a staged upload names the
           // conversation rather than a channel.
           workspace.isPrivate(destination) ? destination : undefined
         );
+        running = uploading;
+        const attachment = await uploading.promise;
+        running = null;
+        retryable = null;
         if (
           generation !== workspace.authorizationGeneration ||
           !workspace.canWriteConversation(destination)
@@ -142,7 +154,16 @@
           savedElsewhere = true;
         }
       } catch (error) {
-        if (mounted) workspace.showToast(errorMessage(error));
+        running = null;
+        if (error instanceof UploadCancelled) {
+          // Not a failure and not a toast: the person asked for it, and telling them
+          // their upload "failed" would be telling them something untrue.
+          continue;
+        }
+        // Kept so the retry is one press rather than a trip back to the file picker.
+        retryable = { file, name: file.name };
+        if (mounted)
+          workspace.showToast(`${file.name} could not be uploaded. ${errorMessage(error)}`);
       } finally {
         progress = null;
         workspace.uploadCount--;
@@ -333,6 +354,18 @@
   </div>
   {#if progress !== null}<p class="upload-status" role="status">
       Uploading {uploadName} to #{uploadChannelName} · {progress}%
+      <button
+        type="button"
+        class="text-button"
+        onclick={() => running?.abort()}
+        aria-label={`Cancel the upload of ${uploadName}`}>Cancel</button
+      >
+    </p>{/if}
+  {#if retryable && progress === null}<p class="upload-status" role="status">
+      {retryable.name} was not uploaded.
+      <button type="button" class="text-button" onclick={() => void attach([retryable!.file])}
+        >Try again</button
+      >
     </p>{/if}
   <div class="composer-hint" id={helpId}>
     <span

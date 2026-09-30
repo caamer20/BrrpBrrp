@@ -473,6 +473,12 @@ class Workspace {
     // notification landed on whatever the account happened to be looking at — or on
     // nothing at all. It is handled here, on a supported route under current
     // authority, and the hash is cleared so a reload does not reopen it.
+    // A message permalink is resolved before anything else opens, so a link somebody
+    // was sent lands on the message rather than on whatever the account last had open.
+    if (location.hash.startsWith('#message=')) {
+      await this.openPermalink(location.hash);
+      history.replaceState(null, '', location.pathname + location.search);
+    }
     const notifyActivity = location.hash === '#messages' || location.hash === '#activity';
     if (notifyActivity) {
       this.openMessagesTab('activity');
@@ -1769,6 +1775,30 @@ class Workspace {
   saveDraft(channel: string, text: string) {
     this.drafts[channel] = text;
     if (this.saveDrafts && this.user) writeDrafts(storage, this.user.id, this.drafts);
+  }
+
+  /**
+   * The stable address of one message, and what to do when somebody opens it.
+   *
+   * A permalink has to resolve under *current* authority rather than carrying the
+   * permissions the link was created with, so following one uses the same
+   * context-resolution path as clicking a reply reference. A link to a message in a
+   * conversation the opener can no longer read lands somewhere that refuses, which is
+   * the honest answer — and the failure mode this avoids is a link that opens
+   * somebody else's history on a shared machine.
+   */
+  messagePermalink(id: string) {
+    return `${location.origin}/#message=${encodeURIComponent(id)}`;
+  }
+
+  async openPermalink(hash: string) {
+    const match = /^#message=([^&]+)/.exec(hash);
+    if (!match) return false;
+    await this.jumpToMessage(decodeURIComponent(match[1]));
+    // The hash is cleared so a reload does not yank somebody back to a message they
+    // have since scrolled away from.
+    history.replaceState(null, '', location.pathname + location.search);
+    return true;
   }
 
   async jumpToMessage(id: string) {

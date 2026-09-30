@@ -52,13 +52,21 @@ export async function api<T>(
   }
 }
 
+/**
+ * Uploads a file, reporting progress and handing back a way to stop.
+ *
+ * The request handle is returned because an upload that cannot be cancelled is an
+ * upload somebody is trapped in: the only way out is to close the tab, which loses the
+ * draft along with it. Returning `{ promise, abort }` is what makes a cancel button
+ * possible at all, and a cancel that abandons the promise alone is not a cancel.
+ */
 export function uploadFile<T>(
   file: File,
   progress: (percent: number) => void,
   conversationId?: string
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
+): { promise: Promise<T>; abort: () => void } {
+  const request = new XMLHttpRequest();
+  const promise = new Promise<T>((resolve, reject) => {
     request.open(
       'POST',
       `/api/uploads${conversationId ? '?conversation_id=' + encodeURIComponent(conversationId) : ''}`
@@ -74,10 +82,23 @@ export function uploadFile<T>(
     };
     request.onerror = () => reject(new Error('Upload interrupted. Check your connection.'));
     request.ontimeout = () => reject(new Error('The upload timed out. Please try again.'));
+    // A deliberate cancel is not a failure. Rejecting with a distinguishable error is
+    // what stops the composer showing "Upload failed" for something the person just
+    // asked to stop.
+    request.onabort = () => reject(new UploadCancelled());
     const data = new FormData();
     data.append('file', file);
     request.send(data);
   });
+  return { promise, abort: () => request.abort() };
+}
+
+/** Raised when an upload was stopped on purpose. Never shown as a failure. */
+export class UploadCancelled extends Error {
+  constructor() {
+    super('Upload cancelled.');
+    this.name = 'UploadCancelled';
+  }
 }
 
 export function errorMessage(error: unknown): string {

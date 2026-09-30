@@ -122,6 +122,22 @@
       document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
     );
   }
+  async function copyLink() {
+    moreOpen = false;
+    // A permalink, not the message text. Somebody sharing a link is sharing a
+    // reference, and pasting the message into a channel would leak a private
+    // conversation to whoever receives the paste.
+    const link = workspace.messagePermalink(message.id);
+    try {
+      await navigator.clipboard.writeText(link);
+      workspace.showToast('Link copied.');
+    } catch {
+      // A clipboard the browser refused is a real outcome, and telling somebody the
+      // link is copied when it is not would be the worst version of this feature.
+      workspace.showToast(`Copy this link: ${link}`);
+    }
+  }
+
   function openThread() {
     moreOpen = false;
     workspace.threadId = message.id;
@@ -412,6 +428,7 @@
           }}><Icon name="shield" />Report private message</button
         >{/if}
       <button onclick={replyToMessage}><Icon name="reply" />Reply</button>
+      <button onclick={copyLink}><Icon name="link" />Copy link</button>
       {#if showThread}<button onclick={openThread}><Icon name="hash" />Open reply thread</button
         >{/if}
       {#if canStartNamedThread && !message.pending}<button

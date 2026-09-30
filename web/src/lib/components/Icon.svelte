@@ -2,6 +2,7 @@
   let { name, size = 20 }: { name: string; size?: number } = $props();
   const paths: Record<string, string> = {
     hash: 'M5 9h14M4 15h14M11 3 7 21M17 3l-4 18',
+    link: 'M9 13a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 1 0-5.7-5.7l-1.3 1.3',
     search: 'm21 21-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
     volume: 'm11 5-6 4H2v6h3l6 4V5Zm4 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14',
     mic: 'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0V5Zm-3 6v1a6 6 0 0 0 12 0v-1m-6 7v4m-4 0h8',

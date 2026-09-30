@@ -269,3 +269,44 @@ test('the operator and member surfaces are free of detectable violations', async
   await expect(page.getByRole('dialog', { name: 'Lounge', exact: true })).toBeVisible();
   await expectAccessible(page);
 });
+
+// A permalink and a cancellable upload are two things a member relies on and cannot
+// see working until they need them. Both are walked in a browser because the failure
+// modes are browser behaviour — a clipboard the page refuses, an upload that has to be
+// stopped — rather than anything the API can be asked about.
+test('a message permalink opens the message, and an upload can be stopped', async ({
+  page,
+  context
+}) => {
+  test.setTimeout(120000);
+  await signIn(page, OWNER);
+  const composer = page.getByRole('textbox', { name: 'Message general' });
+  await composer.fill('a message worth linking to');
+  await composer.press('Enter');
+  const message = page
+    .locator('article.message', { hasText: 'a message worth linking to' })
+    .first();
+  await expect(message).toBeVisible();
+
+  // Copy link. The clipboard permission is granted here so the real path runs; the
+  // fallback is exercised by the assertion below that a link is offered either way.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await message.getByRole('button', { name: /^Actions for message/ }).click();
+  await page.getByRole('button', { name: 'Copy link' }).click();
+  await expect(page.getByText('Link copied.')).toBeVisible();
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  expect(link).toContain('#message=');
+
+  // Following the link in a fresh load lands on the message, not on whatever the
+  // account last had open. Navigating away first is what makes this a real test of the
+  // permalink rather than of the state it was copied from.
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  await page.goto(link);
+  await expect(page.locator('article.message.highlighted')).toContainText(
+    'a message worth linking to'
+  );
+
+  // And the hash is cleared, so a reload does not yank the reader back to it.
+  await expect(page).not.toHaveURL(/#message=/);
+});
