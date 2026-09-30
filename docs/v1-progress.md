@@ -104,6 +104,39 @@ both required deployments can be qualified the moment hosts exist. This environm
 has no Docker, no PowerShell, no Windows host and no Tailscale peer, so none of it has
 been run.
 
+### M5 — operations, capacity and public release (in progress)
+
+**Host qualification procedures are written, not run.** `docs/host-qualification.md`
+gives the exact commands, what each one observes, and an evidence template whose
+required `not_established` field keeps a passing run from being read as proving more
+than it does. It also says the two things this work is usually misreported as:
+static Dockerfile checks are **not** Docker runtime qualification, and a page loading
+over Tailscale says nothing about whether media established. This environment has no
+Docker, no PowerShell, no Windows host and no Tailscale peer, so **none of it has been
+run**.
+
+**Release engineering, closed locally:**
+
+- The **schema-13 rehearsal ships** in the source package. It did not, so a source
+  archive could not reproduce the qualified upgrade from a real prior executable.
+- **CI now runs it**, building its own seed from the pinned baseline executable and
+  **failing rather than skipping** when that baseline is missing — a rehearsal that
+  did not run is not a passing rehearsal. Building a seed with the *current* binary
+  produces a current database, and the rehearsal's own check rejects it: a lookalike
+  fixture is refused, not accepted.
+- A **machine-readable SBOM** (CycloneDX 1.5) is generated from the same discovered
+  component set as the third-party notices, so the two inventories cannot disagree.
+  `--check` verifies both files and writes neither. A release stamps the version it
+  was built for.
+- A call now reports **which path it took** — direct, via STUN, or relayed through
+  TURN. Latency cannot distinguish those, and the case this project is most likely to
+  hit is a relay behind NAT that connects on the host and fails for everyone else.
+
+**What is not established.** No host qualification, no capacity or soak measurement,
+no monitoring or alert delivery, no container runtime, no signed Windows download, and
+no canonical public repository or registry identity. There is no Git remote
+configured in this environment. The recorded race figure predates this schema.
+
 ## Current private-message tranche
 
 Schemas 11–12 and ADR 0012 implement the shared private-message rebuild, canonical direct requests, consent, durable contact limits, blocking, shared message/file/reply/search/read behavior and an opt-in inbox. ADR 0013 and 0014 add selected private-message evidence reporting and recipient-only request evidence, with `report.review_private` as a distinct delegated capability. This is partial progress in WP-09–11, not completed private messaging or v1 acceptance: push/activity, groups, calls, screen sharing and independent review remain. Private conversations default off.
