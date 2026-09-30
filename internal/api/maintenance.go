@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -93,6 +94,11 @@ func (s *Server) maintain(now time.Time) error {
 		s.hub.Broadcast("reconnect.required", map[string]bool{"refetch": true})
 	}
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM sessions WHERE expires_at<?`, db.Timestamp(now)); err != nil {
+		return err
+	}
+	// The bytes behind a reclaimed attachment row are removed too, on the same pass and
+	// with the same bound. The row is what records which file belonged to it.
+	if _, err := s.reclaimUploadFiles(now); err != nil {
 		return err
 	}
 	// A produced export's server copy has a lifetime (ADR 0019b). Keeping one account's
@@ -211,4 +217,68 @@ func directorySize(path string) int64 {
 		return nil
 	})
 	return size
+}
+
+// reclaimUploadFiles removes the files behind attachments that no longer have a row.
+//
+// The row sweep deletes an attachment whose message is gone, and the row is what
+// records which file belonged to it — so without this the bytes stay on disk forever.
+// That is not a cosmetic leak: a server whose uploads are reclaimed in the database
+// and never on the filesystem fills its disk while reporting free space, and the
+// operator has no way to tell why.
+//
+// The sweep is bounded and it is *file-first*: a file is only removed once no row
+// claims it, so a slow read cannot lose a file somebody is being served. And it
+// tolerates a missing file, because the interesting case is the reverse — a row gone
+// and a file left — not a file gone and a row remaining.
+func (s *Server) reclaimUploadFiles(now time.Time) (int, error) {
+	entries, err := os.ReadDir(s.config.UploadDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	// Anything a row still claims is somebody's, whatever its age.
+	claimed := map[string]bool{}
+	rows, err := s.store.QueryContext(s.ctx, `SELECT stored_name FROM attachments`)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		claimed[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	// A young unclaimed file is a staged upload somebody is about to attach. Removing
+	// it immediately would delete a file between the upload response and the message
+	// that claims it.
+	grace := now.Add(-24 * time.Hour)
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || claimed[entry.Name()] {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(grace) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.config.UploadDir, entry.Name())); err == nil {
+			removed++
+		} else if !errors.Is(err, os.ErrNotExist) {
+			s.log.Warn("could not remove an unclaimed upload", "error", err, "file", entry.Name())
+		}
+	}
+	return removed, nil
 }
