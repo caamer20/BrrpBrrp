@@ -1,0 +1,64 @@
+{
+  "milestone": "M4 — voice reliability, private calls, screen sharing, relay paths",
+  "source_commit": "f485732f48964422adaf0a4b9ebcc02de90d7967",
+  "schema": 22,
+  "backup_format": 2,
+  "architecture_decision": {
+    "document": "docs/adr/0019-media-architecture.md",
+    "choice": "extend the embedded Pion SFU and rewrite its publication model",
+    "rejected": "separately self-hosted SFU",
+    "basis": "the authorization/privacy/resume/TURN control plane is already built and tested in-process; an external SFU would re-implement all of it across a network boundary, and the one-binary deployment is most of what makes the product approachable",
+    "conditional_on": "a video-forwarding measurement at the reference allocation; the plan puts two 2.5 Mbit/s shares to nine viewers at roughly 45 Mbit/s of egress from a process also serving HTTP, SQLite and WebSocket"
+  },
+  "delivered": {
+    "TURN TCP fallback": "the relay offers UDP and TCP on one ICE server; a test drives a real STUN Binding Request over the TCP listener and checks the echoed transaction id",
+    "TURN advertised host": "configurable, so a relay behind NAT does not advertise its listening address",
+    "publication model": "a publication is an object with a stable id, owner, kind and lifecycle; screen video is H.264 at 90 kHz and audio is Opus at 48 kHz and the two are never written through the same forwarder",
+    "renegotiation": "a second offer naming a screen is accepted, bounded, and gated on the same voice.speak decision as the microphone",
+    "H.264 registration": "baseline, main and high profiles"
+  },
+  "not_delivered_yet": [
+    "The screen track is negotiated but not yet forwarded: the SFU still forwards audio by slot and no client calls getDisplayMedia.",
+    "Private calls: admission still resolves a db.Channel and refuses anything whose Type != voice, so a direct or group conversation cannot host a call.",
+    "The 24-hour race suite has not been run for this schema.",
+    "No physical microphone, capture, or restricted-network observation exists."
+  ],
+  "rehearsals": {
+    "schema13_to_current": {
+      "result": "PASS",
+      "note": "expected 14..22 beyond 13"
+    },
+    "community_recovery": {
+      "checks": 23,
+      "schema": 20
+    },
+    "private_recovery": {
+      "checks": 113
+    },
+    "rollback": {
+      "checks": 57,
+      "from": "0.4.0-alpha.6 (schema 12)"
+    },
+    "browser": {
+      "default_off": 15,
+      "private_enabled": 25
+    },
+    "go": {
+      "packages": 10
+    },
+    "frontend": {
+      "tests": 163,
+      "svelte_files": 142,
+      "errors": 0,
+      "warnings": 0
+    },
+    "note": "the recovery and browser figures were recorded at schema 20 and before the publication model; the rtc and api suites are current"
+  },
+  "blocked_on_owner": [
+    "Windows x64 host with a supported build",
+    "Linux amd64 host with Docker and Compose",
+    "Tailscale peer for the Windows deployment",
+    "Physical client devices, for capture and restricted-network observation",
+    "Procedures are written in docs/host-qualification.md and have not been run"
+  ]
+}
