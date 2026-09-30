@@ -77,7 +77,10 @@ test('the reply control follows the thread, not just the draft', () => {
 // stored message is correctly filed.
 test('a thread reply is not added to the channel it was branched off from', () => {
   const source = readSource('src/lib/workspace.svelte.ts');
-  assert.match(source, /loaded\.filter\(\(message\) => !message\.thread_id\)/);
+  // Filtered once, where the page is accepted, so the older-page merge, the new-page
+  // replace and the pending reconciliation all inherit the same rule. Filtering in one
+  // of the branches is how the other two end up disagreeing about the same message.
+  assert.match(source, /loaded = loaded\.filter\(\(message\) => !message\.thread_id\)/);
 });
 
 test('the server sends the thread id with a live message event', () => {

@@ -902,6 +902,15 @@ class Workspace {
       let loaded = await api<Message[]>(`${this.conversationPath(id, 'messages')}${before}`);
       if (id !== this.activeId || version !== this.loadVersion || !this.admitted(request))
         return false;
+      // A channel's view is the channel's own messages. A thread reply belongs to the
+      // thread and is read from there, and the server's page already excludes it — but
+      // a message injected by a live event that arrived while this page was in flight
+      // is not filtered by the server. Filtering once, here, means every branch below
+      // inherits the same rule: the older-page merge, the new-page replace, and the
+      // pending reconciliation. Doing it in one place is also what stops the two views
+      // from disagreeing about the same message, which is how a thread reply came to
+      // appear in the channel it was branched off from.
+      if (this.channel) loaded = loaded.filter((message) => !message.thread_id);
       // Reconcile events received while this snapshot was in flight before displaying it.
       const known = new Set(loaded.map((message) => message.id));
       const changed = [...this.snapshotChanges.entries()].filter(
@@ -977,7 +986,7 @@ class Workspace {
         // the thread and is read from there; the server's page already excludes it, and
         // a live event has to be excluded here for the same reason, or the two views
         // disagree about the same message.
-        this.messages = [...loaded.filter((message) => !message.thread_id), ...pending];
+        this.messages = [...loaded, ...pending];
       }
       if (!historyWindow) this.hasOlder = loaded.length === 50;
       if (position) this.scrollRestore = { ...position };

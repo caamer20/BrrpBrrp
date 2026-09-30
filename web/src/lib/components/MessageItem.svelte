@@ -5,6 +5,7 @@
   import { api, errorMessage } from '../api';
   import ReactionPicker from './ReactionPicker.svelte';
   import { reactionName } from '../reactions';
+  import { tokenizeMessage, linkHost } from '../message-tokens';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import Modal from './Modal.svelte';
@@ -61,7 +62,7 @@
   // moderator sees the control and the server accepts it.
   let canPin = $derived(canWrite && workspace.can('message.pin'));
   let reply = $derived(workspace.messages.find((item) => item.id === message.reply_to_id));
-  const tokens = (text: string) => text.split(/(https?:\/\/[^\s<>]+|@[a-zA-Z0-9_]+)/g);
+  const tokens = (text: string) => tokenizeMessage(text);
   const size = (bytes: number) =>
     bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
 
@@ -133,6 +134,13 @@
   let threadTitleInput = $state<HTMLInputElement>();
   let threadTitle = $state('');
   let threadError = $state('');
+  // A mention of somebody who is not here reads as plain text rather than as a link
+  // to nowhere, which is also what a name inside a code block is.
+  const memberExists = (name: string) =>
+    workspace.state?.users.some((member) => member.username.toLowerCase() === name.toLowerCase())
+      ? ''
+      : 'Nobody by this name is on this server';
+
   async function startNamedThread() {
     const title = threadTitle.trim();
     if (!title) return;
@@ -230,12 +238,15 @@
       </form>
     {:else}
       <p class="message-content">
-        {#each tokens(message.content) as token}{#if /^https?:\/\//.test(token)}<a
-              href={token}
+        {#each tokens(message.content) as token, index (index)}{#if token.kind === 'link'}<a
+              href={token.value}
               target="_blank"
-              rel="noopener noreferrer">{token}</a
-            >{:else if token.startsWith('@')}<span class="mention">{token}</span
-            >{:else}{token}{/if}{/each}
+              rel="noopener noreferrer">{token.value}</a
+            >{:else if token.kind === 'mention'}<span
+              class="mention"
+              title={memberExists(token.name)}>{token.value}</span
+            >{:else if token.kind === 'code'}<code class="message-code">{token.value}</code
+            >{:else}{token.value}{/if}{/each}
       </p>
     {/if}
     {#each message.attachments as attachment (attachment.id)}

@@ -925,6 +925,22 @@ kbd {
 .message-content:empty {
   display: none;
 }
+.message-code {
+  display: block;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.86em;
+  background: color-mix(in srgb, var(--raised) 70%, transparent);
+  border-left: 3px solid var(--border);
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  margin: 0.35rem 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: isolate;
+}
+
 .mention {
   color: var(--link);
   border-radius: 3px;
