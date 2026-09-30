@@ -224,6 +224,49 @@ path at all** — which is the ordinary case on corporate and some mobile networ
 The existing credential machinery — 24-hour HMAC credentials with `RevokeUser`
 (`turn.go:113,135`) — is sound and stays.
 
+### 7.1 Two settings this ADR required and the code did not have
+
+**A vendor STUN server was hardcoded.** Every call was offered
+`stun:stun.l.google.com:19302`. In a product whose promise is that it needs no vendor
+account, that sends a call's address discovery to a third party, and on an
+air-gapped or offline installation it points at a name that cannot resolve — so the
+call has no path and the failure presents as a network fault.
+
+`stun_server` is now an operator setting and **empty by default**. A server with no
+STUN server configured offers an empty list rather than reaching for one. The setting
+is validated where it is saved, because ICE reports an unusable server as a network
+fault: a typo saved today would otherwise present as a call that sometimes fails
+tomorrow, which is the worst shape for a setting documented as optional.
+
+The validation has one subtlety worth recording, because the obvious version is
+wrong in both directions. `stun:host:port` is an *opaque* URL — everything after the
+scheme is the address, so `url.Parse` leaves `Host` empty. Checking for a host
+rejects every correct value, while `stun.example.com:3478` parses with the hostname
+as its *scheme* and would pass a scheme-only check. What distinguishes a real one is
+the scheme, a non-empty remainder, and a port.
+
+**There was no way to force the relay.** A direct path and a relayed path are
+different products, and without a switch a passing call never says which of the two
+carried it. "Tailscale and HTTPS both worked" is not evidence that media
+established — which is exactly the point §7 makes above, and it applies to the relay
+too. `force_relay` sets the client's ICE transport policy to `relay`, forbidding
+direct candidates so every packet goes through the server.
+
+It is off by default: relaying everything costs the server bandwidth and adds
+latency to a call that had a direct path. It is server-wide rather than per-call
+because it is a statement about the network, not about one conversation. It requires
+a configured relay — forcing a path with nothing to force onto would leave the client
+with *no* path at all, which is worse than the direct path it was giving up — and
+that requirement is enforced where the operator changes it rather than discovered at
+the next call.
+
+### 7.2 One defect this work found in passing
+
+`ice_servers` was a nil slice, which marshals to JSON `null`, not `[]`. The client
+iterates that list, so `ice_servers.map(...)` threw a `TypeError` and the call failed
+with a client-side error naming nothing an operator could act on. It is now an empty
+list, which is the honest encoding of "no servers to offer".
+
 ## 8. What this ADR does not establish
 
 - That any of it works. It records a decision and its basis; the evidence comes after

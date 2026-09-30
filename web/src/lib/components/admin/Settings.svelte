@@ -185,6 +185,35 @@
     Allow UDP 49152–49999 for relay traffic and your configured media range. Disable TURN and save
     before changing its address or port.
   </p>
+  <h3 class="section-divider">Network paths</h3>
+  <div class="form-grid">
+    <label
+      >STUN server<input
+        bind:value={settings.stun_server}
+        placeholder="stun:stun.example.com:3478"
+      /><small
+        >Optional. Helps calls find a public address. Leave empty to use none — no third-party
+        server is contacted unless you name one here.</small
+      ></label
+    >
+  </div>
+  <label class="setting-row"
+    ><span
+      ><strong>Send every call through the relay</strong><small
+        >Forces relayed calls when direct connections do not work on your network. Uses more of your
+        server's bandwidth and adds a little latency, so leave it off unless you need it.</small
+      ></span
+    ><input
+      type="checkbox"
+      bind:checked={settings.force_relay}
+      disabled={!settings.enable_turn_server}
+    /></label
+  >
+  {#if settings.force_relay && !settings.enable_turn_server}
+    <p class="muted">
+      Turn the built-in TURN server on first — there is nothing to relay through otherwise.
+    </p>
+  {/if}
   <div class="button-row">
     <button
       class="primary"

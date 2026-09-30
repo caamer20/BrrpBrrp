@@ -172,6 +172,8 @@ export interface Settings {
   enable_voice: boolean;
   enable_turn_server: boolean;
   turn_port: number;
+  stun_server: string;
+  force_relay: boolean;
   turn_external_ip: string;
   voice_bitrate_kbps: number;
   max_upload_bytes: number;

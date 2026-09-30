@@ -112,13 +112,30 @@ type Settings struct {
 	// The fallback transports. UDP alone leaves a client behind a network that blocks
 	// it with no path at all, which is the ordinary case on corporate and some mobile
 	// networks (ADR 0019, §7). A port of 0 means that transport is not offered.
-	TURNTLSPort   int    `json:"turn_tls_port"`
-	TURNTCPFallback bool  `json:"turn_tcp_fallback"`
+	TURNTLSPort     int  `json:"turn_tls_port"`
+	TURNTCPFallback bool `json:"turn_tcp_fallback"`
 	// TURNAdvertisedHost is what clients are told to relay through. It is separate
 	// from TURNExternalIP because a host or container behind NAT has an address it
 	// listens on and a different one clients can reach, and getting this wrong produces
 	// a call that works locally and fails for everybody else.
 	TURNAdvertisedHost string `json:"turn_advertised_host"`
+	// STUNServer is the STUN URL clients are offered for server-reflexive candidates.
+	//
+	// It is configurable and *empty by default* rather than pointing at a public
+	// server. A hardcoded third-party STUN server in a self-hosted product sends
+	// every call's address discovery to a vendor, and leaves the call with no path at
+	// all on an air-gapped or offline installation. An operator who wants it names
+	// their own.
+	STUNServer string `json:"stun_server"`
+	// ForceRelay makes every call use the TURN relay and forbid direct connections.
+	//
+	// It exists because a direct path and a relayed path are different products, not
+	// because either is better. A server that cannot be tested on a direct path is not
+	// a server whose relay path has been tested either: without a switch, "the call
+	// worked" never says which of the two carried it. It is off by default because
+	// relaying everything costs the server bandwidth and adds latency to a call that
+	// had a direct path.
+	ForceRelay     bool   `json:"force_relay"`
 	VoiceBitrate   int    `json:"voice_bitrate_kbps"`
 	MaxUploadBytes int64  `json:"max_upload_bytes"`
 	RetentionDays  int    `json:"message_retention_days"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"brrpbrrp/internal/authz"
@@ -140,16 +141,38 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 			report(err.Error())
 			return
 		}
-		iceServers := []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}
+		settings := s.Settings()
+		// The STUN server is the operator's, and may be absent. Offering a hardcoded
+		// public one would send every call's address discovery to a third party in a
+		// product whose whole promise is that it needs no vendor account, and would
+		// leave an offline installation with a URL it cannot resolve.
+		// Never nil. A JSON `null` reaches a browser as `null`, not `[]`, and the
+		// client iterates this list — `ice_servers.map(...)` on a null throws, and the
+		// call fails with a client-side error that names nothing the operator can act
+		// on. An empty list is the honest encoding of "no servers to offer".
+		iceServers := []webrtc.ICEServer{}
+		if stun := strings.TrimSpace(settings.STUNServer); stun != "" {
+			iceServers = append(iceServers, webrtc.ICEServer{URLs: []string{stun}})
+		}
 		turn, enabled := s.turn.Credentials(user.ID)
 		if enabled {
 			iceServers = append(iceServers, turn)
 		}
+		// Forcing the relay is a server-wide decision because it is a statement about
+		// the network, not about one call: if the operator has declared that direct
+		// connections do not work here, every client is told so identically. Without a
+		// switch there is no way to establish that the relay path works, because a
+		// successful call does not say which path carried it.
+		//
+		// A forced relay with TURN off cannot be honoured — there would be nothing to
+		// relay through — so the flag is reported back as ineffective rather than
+		// silently ignored, and the call proceeds on whatever paths do exist.
+		forced := settings.ForceRelay && enabled
 		// `private` is in the acceptance so the client can tell a call from a
 		// conversation. A private call's events must not be broadcast to a channel
 		// audience, and the client needs to know which it is in to avoid rendering a
 		// conversation's participants in a channel sidebar.
-		client.Send("voice.join.accept", map[string]any{"channel_id": room.ID, "private": room.Private, "display_name": room.DisplayName, "connection_id": s.voice.ConnectionID(user.ID, client.ID), "resume_token": s.voice.ResumeToken(user.ID, client.ID), "ice_servers": iceServers, "turn_enabled": enabled, "bitrate": s.Settings().VoiceBitrate * 1000, "receive_slots": rtc.MaxParticipants - 1, "may_speak": principal.Allowed(authz.VoiceSpeak)})
+		client.Send("voice.join.accept", map[string]any{"channel_id": room.ID, "private": room.Private, "display_name": room.DisplayName, "connection_id": s.voice.ConnectionID(user.ID, client.ID), "resume_token": s.voice.ResumeToken(user.ID, client.ID), "ice_servers": iceServers, "turn_enabled": enabled, "force_relay": forced, "relay_available": enabled, "bitrate": settings.VoiceBitrate * 1000, "receive_slots": rtc.MaxParticipants - 1, "may_speak": principal.Allowed(authz.VoiceSpeak)})
 	case "voice.leave":
 		s.leaveVoice(user.ID, client.ID)
 	case "voice.state", "voice.speaking":

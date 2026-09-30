@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"brrpbrrp/internal/app"
@@ -53,6 +55,35 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 	}
 	if len(settings.TURNAdvertisedHost) > 253 {
 		problem(w, 400, "The TURN advertised host is too long.")
+		return
+	}
+	// A STUN URL is validated at the point an operator saves it, not discovered
+	// broken later. ICE reports an unusable server as a network fault, so a typo here
+	// would present as "the call sometimes fails" rather than "the setting is wrong" —
+	// the worst possible shape for a setting an operator is told to be optional.
+	settings.STUNServer = strings.TrimSpace(settings.STUNServer)
+	if stun := settings.STUNServer; stun != "" {
+		// `stun:host:port` is an *opaque* URL: everything after the scheme is the
+		// address, so there is no authority to read a host out of. Validating it the
+		// obvious way — by looking for a Host — rejects every correct value and
+		// accepts "stun.example.com:3478", which parses with the hostname as a scheme.
+		// What distinguishes a real one is the scheme, a non-empty remainder, and a
+		// trailing port.
+		parsed, err := url.Parse(stun)
+		address := parsed.Opaque
+		if parsed.Host != "" {
+			address = parsed.Host
+		}
+		if err != nil || !strings.EqualFold(parsed.Scheme, "stun") || !validSTUNAddress(address) {
+			problem(w, 400, "The STUN server must be a stun: URL with a host and port, for example stun:stun.example.com:3478. Leave it empty to offer no STUN server.")
+			return
+		}
+	}
+	// Forcing the relay while none is configured would advertise a constraint the
+	// server cannot satisfy. It is refused here so the operator learns at the point of
+	// the change, rather than discovering at the next call that the setting did nothing.
+	if settings.ForceRelay && !settings.TURN {
+		problem(w, 400, "Forcing the relay needs a TURN server to relay through. Configure TURN first, or turn the requirement off.")
 		return
 	}
 	if settings.TURN && net.ParseIP(settings.TURNExternalIP) == nil {
@@ -146,4 +177,16 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 	}
 	s.hub.Broadcast("settings.updated", settings)
 	respond(w, 200, settings)
+}
+
+// validSTUNAddress reports whether an opaque STUN URL body is a host and a port.
+// Both are required: a host with no port leaves the browser to guess, and a bare
+// port is not an address.
+func validSTUNAddress(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return false
+	}
+	number, err := strconv.Atoi(port)
+	return err == nil && number >= 1 && number <= 65535
 }

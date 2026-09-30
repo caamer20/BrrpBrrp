@@ -486,12 +486,22 @@ class Voice {
     bitrate: number;
     resume_token: string;
     connection_id: string;
+    force_relay?: boolean;
+    relay_available?: boolean;
   }) {
     if (!this.stream || accepted.channel_id !== this.channelId) return;
     this.rejoining = false;
     this.resumeToken = accepted.resume_token;
     this.bitrate = accepted.bitrate;
-    const peer = new RTCPeerConnection({ iceServers: accepted.ice_servers });
+    // `relay` forbids direct candidates, so every packet goes through the server's
+    // TURN relay. The server only asks for it when the relay is actually configured —
+    // asking for a relay that does not exist would leave the client with no path at
+    // all, which is worse than the direct path it was trying to give up.
+    const forced = accepted.force_relay === true && accepted.relay_available === true;
+    const peer = new RTCPeerConnection({
+      iceServers: accepted.ice_servers,
+      iceTransportPolicy: forced ? 'relay' : 'all'
+    });
     this.peer = peer;
     peer.onicecandidate = (event) => {
       if (peer === this.peer && event.candidate)
