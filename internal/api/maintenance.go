@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
 )
-
 
 // Restricted review audit metadata outlives the evidence it describes. An audit
 // record is administrative accountability: if it were reclaimed with the 90-day
@@ -112,6 +112,13 @@ func (s *Server) maintain(now time.Time) error {
 	// grows with every export ever run, and the member can delete theirs sooner — but
 	// an undeleted one must not survive its own stated lifetime either.
 	if _, err := s.expireExports(s.ctx, s.store); err != nil {
+		return err
+	}
+	// An export file with no row behind it: a crash between reclaiming the row and
+	// unlinking the file, or an account erased by a path that predates the cleanup.
+	// Every other sweep works from the table, so without this one a file with no row
+	// is a file nothing ever reaches again.
+	if _, err := s.sweepOrphanExports(24 * time.Hour); err != nil {
 		return err
 	}
 	orphanCutoff := db.Timestamp(now.Add(-24 * time.Hour))
@@ -284,6 +291,59 @@ func (s *Server) reclaimUploadFiles(now time.Time) (int, error) {
 			removed++
 		} else if !errors.Is(err, os.ErrNotExist) {
 			s.log.Warn("could not remove an unclaimed upload", "error", err, "file", entry.Name())
+		}
+	}
+	return removed, nil
+}
+
+// sweepOrphanExports removes export files with no row behind them.
+//
+// A crash between reclaiming a row and unlinking its file leaves a file the account
+// table can no longer name and no other sweep can reach, because every other sweep
+// works from the table. It is a copy of somebody's history with no owner, so it is
+// removed on the same grace period as an unclaimed upload.
+//
+// The grace matters in one direction only: a file younger than it may belong to an
+// export whose row committed moments ago and whose file is being written, so a file
+// that recent is left alone rather than unlinked under a live build.
+func (s *Server) sweepOrphanExports(grace time.Duration) (int, error) {
+	directory := filepath.Join(s.config.DataDir, "exports")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	cutoff := time.Now().Add(-grace)
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// A partial file is a build in progress or a build that failed; the build
+		// cleans its own, and one left by a crash is removed the same way.
+		id := strings.TrimSuffix(strings.TrimSuffix(name, ".json"), ".partial")
+		if id == "" {
+			continue
+		}
+		var known bool
+		if err := s.store.QueryRowContext(s.ctx,
+			`SELECT EXISTS(SELECT 1 FROM data_exports WHERE id=?)`, id).Scan(&known); err != nil {
+			return removed, err
+		}
+		if known {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(directory, name)); err == nil {
+			removed++
+		} else if !errors.Is(err, os.ErrNotExist) {
+			s.log.Warn("could not remove an orphaned export", "error", err, "file", name)
 		}
 	}
 	return removed, nil

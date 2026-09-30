@@ -934,3 +934,31 @@ Unchanged by this: a copy a member downloaded legitimately before a withdrawal i
 and cannot be recalled. This is the server's own undelivered copy. Still outstanding
 from the same finding: finite ready-export storage per account and server, bounded job
 admission, crash/restart reconciliation and orphan-file cleanup after erasure.
+
+
+**V14-02, the storage half.** Three obligations follow from the server holding a copy,
+and none of them were met.
+
+*A lifetime is not a count.* Seven days says how long a copy may exist, not how many.
+Finished copies are now bounded at three per account and fifty on the server, and the
+oldest are reclaimed rather than the request refused — a member asking for a new export
+and being told to delete something first is a worse answer than losing a copy they can
+rebuild at no cost. The count is taken before the new build, so the bound accounts for
+the copy being created.
+
+*Erasing an account left its export file on disk.* The row cascades with the account,
+so any cleanup written afterwards has nothing to name: a file with no record, which no
+sweep working from the table can ever reach. The ids are now collected inside the
+erasure transaction and the files removed after the commit, so a rollback leaves a file
+rather than a row pointing at nothing. An export is the account's own content and
+nobody else's.
+
+*Nothing swept an orphaned export file.* A crash between reclaiming a row and unlinking
+its file left a copy of somebody's history permanently. Orphans are now removed on the
+same grace period as an unclaimed upload, because every other maintenance pass works
+from the table and a file with no row is unreachable by construction. A file younger
+than the grace is left alone: it may belong to a build whose row committed moments ago.
+
+The clamp that limits how much of one account's excess the server's own slack absorbs
+was written backwards at first and silently reclaimed nothing; the tests caught it
+because they measure the bound rather than the mechanism.

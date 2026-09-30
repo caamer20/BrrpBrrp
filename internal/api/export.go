@@ -205,6 +205,19 @@ func (s *Server) requestExport(w http.ResponseWriter, r *http.Request, user db.U
 		problem(w, 409, "An export is already being prepared. It will be ready shortly.")
 		return
 	}
+	// Finished copies are bounded per account and on the server. A seven-day lifetime
+	// is a statement about how long a copy may exist, not about how many may exist: an
+	// account that ran one export a minute would otherwise accumulate an unbounded
+	// number of files, and every one of them is a copy of somebody's history the
+	// server is holding.
+	//
+	// The oldest are reclaimed rather than the request refused, because a member
+	// asking for a new export and being told "delete something first" is a worse
+	// answer than losing a copy they can rebuild at no cost to anybody.
+	if err := s.reclaimExportStorage(r.Context(), tx, principal.UserID); err != nil {
+		s.failed(w, err)
+		return
+	}
 	now := db.Now()
 	id := db.ID()
 	if _, err := tx.ExecContext(r.Context(), `INSERT INTO data_exports(id,user_id,operation_key,state,created_at,fresh_auth_at)
@@ -216,6 +229,7 @@ func (s *Server) requestExport(w http.ResponseWriter, r *http.Request, user db.U
 		s.failed(w, err)
 		return
 	}
+	s.drainExportRemovals()
 	// The build runs after the commit, outside the request. An export that took a
 	// minute would time the request out, and a member would have no way to tell a
 	// slow export from a stuck one.
@@ -744,4 +758,115 @@ func (s *Server) exportScopeStillReadable(ctx context.Context, q db.Queryer, pri
 		return false, err
 	}
 	return member, nil
+}
+
+// exportIDsFor lists an account's export ids, for erasure to remove their files.
+// It runs inside the erasure transaction because the rows cascade with the account:
+// after the delete there is nothing left to name the files, and a file with no record
+// is a file no sweep can ever reach.
+func (s *Server) exportIDsFor(q db.Queryer, userID string) ([]string, error) {
+	rows, err := q.QueryContext(context.Background(), `SELECT id FROM data_exports WHERE user_id=?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// exportStorageBounds are the ceilings on finished copies. They are small because the
+// export is a retrieval convenience, not an archive: a member who wants more asks
+// again, and a server holding a year of one account's exports is a liability rather
+// than a feature.
+const (
+	maxReadyExportsPerAccount = 3
+	maxReadyExportsOnServer   = 50
+)
+
+// reclaimExportStorage removes the oldest finished copies until the account and the
+// server are both inside their bounds. Files go with the rows, in that order, so a
+// crash between the two leaves an orphan file rather than a row pointing at nothing —
+// and the maintenance sweep, which works from the directory, cleans up orphans.
+func (s *Server) reclaimExportStorage(ctx context.Context, tx *sql.Tx, userID string) error {
+	// The server bound first, so one account cannot consume the whole allowance.
+	var server int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_exports WHERE state='ready'`).Scan(&server); err != nil {
+		return err
+	}
+	var account int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_exports WHERE state='ready' AND user_id=?`, userID).Scan(&account); err != nil {
+		return err
+	}
+	// The count is of *finished* copies and this runs before the new one is built, so
+	// the new one will make one more. The bound has to account for the copy being
+	// created, not only for what exists: an account at the limit that asks for another
+	// export is asking for the copy that tips it over.
+	excess := account - (maxReadyExportsPerAccount - 1)
+	// The server bound caps how much this account's excess may be relieved by: a
+	// server inside its allowance has not earned the right to hold more on an
+	// account's behalf, so a healthy server clamps nothing and a *full* one relieves
+	// only as much as the room allows.
+	//
+	// `excess` is what this account is over by; the slack is what the server has spare.
+	// The relief is the smaller of the two, and zero spare means no relief at all.
+	if slack := maxReadyExportsOnServer - server; slack < excess {
+		excess = slack
+	}
+	if excess <= 0 {
+		return nil
+	}
+	// Oldest first. `id` is the stored creation order, which is also the export's
+	// creation time, so this is the order a member would expect.
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM data_exports WHERE state='ready'
+		AND user_id=? ORDER BY id LIMIT ?`, userID, excess)
+	if err != nil {
+		return err
+	}
+	stale := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		stale = append(stale, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM data_exports WHERE id=? AND state='ready'`, id); err != nil {
+			return err
+		}
+	}
+	// The file removal is queued rather than done here: this runs inside the request's
+	// transaction, and unlinking a file a concurrent reader is streaming is a race the
+	// download path already handles by refusing an unknown row. The row goes first,
+	// so nothing can authorize a download of a file we are about to remove.
+	s.exportRemovalsMu.Lock()
+	s.pendingExportRemovals = append(s.pendingExportRemovals, stale...)
+	s.exportRemovalsMu.Unlock()
+	return nil
+}
+
+// drainExportRemovals unlinks the files whose rows have already gone. It runs after a
+// commit, from the same place the rest of the post-commit cleanup runs.
+func (s *Server) drainExportRemovals() {
+	s.exportRemovalsMu.Lock()
+	pending := s.pendingExportRemovals
+	s.pendingExportRemovals = nil
+	s.exportRemovalsMu.Unlock()
+	for _, id := range pending {
+		if err := os.Remove(s.exportPath(id)); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("a reclaimed export file could not be removed", "export", id, "error", err)
+		}
+	}
 }

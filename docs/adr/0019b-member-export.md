@@ -123,3 +123,31 @@ the interface asks.
 What this does not change: a copy a member legitimately downloaded before a
 withdrawal is theirs, and it cannot be recalled. This is about the server's own
 undelivered copy.
+
+## What the server holds is bounded, reclaimed and swept
+
+Three more obligations follow from the server keeping a copy.
+
+**A lifetime is not a count.** Seven days says how long a copy may exist, not how many
+may exist. Finished copies are bounded per account (three) and on the server (fifty),
+and the oldest are reclaimed rather than the request refused: a member asking for a new
+export and being told to delete something first is a worse answer than losing a copy
+they can rebuild at no cost to anybody. The count is taken *before* the new build, so
+the bound accounts for the copy being created rather than only for what exists.
+
+The row goes first and the file follows outside the transaction, so nothing can
+authorize a download of a file that is about to be unlinked. A rollback therefore
+leaves an orphan file rather than a row pointing at nothing.
+
+**Erasing an account removes its files.** The export row cascades with the account, so
+the ids are collected *inside* the erasure transaction — afterwards there is nothing
+left to name them, and a file with no record is a file no sweep can ever reach. An
+export is the account's own content and nobody else's, so removing it erases nothing
+anybody else is entitled to.
+
+**A file with no row behind it is swept.** Every other maintenance pass works from the
+table, so a crash between reclaiming a row and unlinking its file would otherwise leave
+a copy of somebody's history that nothing can ever reach again. Orphans are removed on
+the same grace period as an unclaimed upload: a file younger than the grace may belong
+to an export whose row committed moments ago, and unlinking it would break a build in
+progress.

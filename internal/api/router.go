@@ -120,11 +120,16 @@ type Server struct {
 	// credential change between the route guard and the registration check, which is the
 	// ordering registration exists to close (R6-02). Production leaves it nil.
 	connectionAdmission atomic.Pointer[func()]
-	settingsMu          sync.RWMutex
-	settings            db.Settings
-	passwordSlots       chan struct{}
-	thumbnailSlots      chan struct{}
-	limiter             *rateLimiter
+	// pendingExportRemovals are export files whose rows have already been reclaimed.
+	// The row goes first so nothing can authorize a download of a file about to be
+	// unlinked; the file follows outside the transaction.
+	pendingExportRemovals []string
+	exportRemovalsMu      sync.Mutex
+	settingsMu            sync.RWMutex
+	settings              db.Settings
+	passwordSlots         chan struct{}
+	thumbnailSlots        chan struct{}
+	limiter               *rateLimiter
 }
 
 func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) {

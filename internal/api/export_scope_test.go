@@ -3,8 +3,10 @@ package api
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"brrpbrrp/internal/db"
 )
@@ -217,4 +219,157 @@ func latestExportID(t *testing.T, s *Server, userID string) string {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// Erasing an account removes its export files.
+//
+// The row cascades with the account, so a cleanup written afterwards has nothing to
+// name: an erased member's export would sit in the data directory with no record of
+// whose it was and no sweep that could ever reach it, because the sweep works from the
+// table. This is a copy of somebody's history that outlived the account by accident.
+func TestErasingAnAccountRemovesItsExportFiles(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	admin := setupAdmin(t, s, handler)
+	_, alice := namedUser(t, s, "export_erased_alice")
+	aliceID := memberIDOf(t, s, "export_erased_alice")
+
+	_ = exportFor(t, s, handler, alice, "export-key-erased")
+	exportID := latestExportID(t, s, aliceID)
+	if _, err := os.Stat(s.exportPath(exportID)); err != nil {
+		t.Fatalf("the export file was never written: %v", err)
+	}
+	// The owned account cannot be erased; erase the member's.
+	if w := request(t, handler, "DELETE", "/api/admin/users/"+aliceID, map[string]any{"confirm": "export_erased_alice"}, admin); w.Code != 200 {
+		t.Fatalf("erase the account: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(s.exportPath(exportID)); !os.IsNotExist(err) {
+		t.Fatalf("AN ERASED ACCOUNT'S EXPORT FILE SURVIVED IN THE DATA DIRECTORY: %v", err)
+	}
+	var rows int
+	if err := s.store.QueryRowContext(t.Context(), `SELECT count(*) FROM data_exports WHERE id=?`, exportID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatal("the export row survived the account it belonged to")
+	}
+}
+
+// Finished copies are bounded, and the bound is the account's and the server's.
+//
+// A seven-day lifetime is a statement about how long a copy may exist, not about how
+// many may exist. An account that ran one export a minute would otherwise accumulate
+// an unbounded number of files, and every one of them is a copy of somebody's history
+// the server is holding.
+func TestFinishedExportsAreBoundedPerAccount(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	_, alice := namedUser(t, s, "export_bound_alice")
+
+	// Six exports, one more than the per-account allowance.
+	for i := 0; i < maxReadyExportsPerAccount+3; i++ {
+		_ = exportFor(t, s, handler, alice, "export-bound-key-"+string(rune('a'+i)))
+	}
+	var ready int
+	if err := s.store.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM data_exports WHERE state='ready'`).Scan(&ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready > maxReadyExportsPerAccount {
+		t.Fatalf("an account holds %d finished exports, bound is %d", ready, maxReadyExportsPerAccount)
+	}
+	// And the *files* follow the rows. A bound on the table with the files left behind
+	// is a bound on nothing.
+	entries, err := os.ReadDir(filepath.Join(s.config.DataDir, "exports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) > maxReadyExportsPerAccount {
+		t.Fatalf("the data directory holds %d export files for one account, bound is %d", len(entries), maxReadyExportsPerAccount)
+	}
+}
+
+// The reclaim takes the oldest, so an account is not left holding only its most
+// recent export while older ones are kept for some other reason.
+func TestTheReclaimTakesTheOldestExports(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	_, alice := namedUser(t, s, "export_oldest_alice")
+
+	const first = "export-oldest-key-aaa"
+	_ = exportFor(t, s, handler, alice, first)
+	firstID := latestExportID(t, s, memberIDOf(t, s, "export_oldest_alice"))
+	for i := 0; i < maxReadyExportsPerAccount+1; i++ {
+		_ = exportFor(t, s, handler, alice, "export-oldest-key-"+string(rune('b'+i)))
+	}
+	var exists int
+	if err := s.store.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM data_exports WHERE id=?`, firstID).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists != 0 {
+		t.Fatal("the reclaim kept the oldest export and dropped a newer one")
+	}
+}
+
+// An export file with no row behind it is swept, on the same grace period as an
+// unclaimed upload. Without this, a crash between reclaiming a row and unlinking its
+// file leaves a copy of somebody's history that nothing can ever reach again.
+func TestAnOrphanedExportFileIsSwept(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+
+	directory := filepath.Join(s.config.DataDir, "exports")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(directory, "orphan-export.json")
+	if err := os.WriteFile(orphan, []byte(`{"conversations":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Aged past the grace, as a file abandoned by a crash a day ago would be.
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(orphan, old, old); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.sweepOrphanExports(24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("the sweep removed %d orphaned exports, want 1", removed)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatal("THE ORPHANED EXPORT FILE SURVIVED THE SWEEP")
+	}
+	_ = handler
+}
+
+// A file younger than the grace is left alone: it may belong to an export whose row
+// committed moments ago and whose file is still being written, and unlinking it would
+// break a build in progress.
+func TestAFreshExportFileIsNotSwept(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	setupAdmin(t, s, handler)
+	directory := filepath.Join(s.config.DataDir, "exports")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fresh := filepath.Join(directory, "fresh-export.json")
+	if err := os.WriteFile(fresh, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.sweepOrphanExports(24 * time.Hour); err != nil {
+		t.Fatal(err)
+	} else if removed != 0 {
+		t.Fatal("the sweep removed a file young enough to be a build in progress")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("a fresh export file was removed: %v", err)
+	}
+	_ = handler
 }

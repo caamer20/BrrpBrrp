@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -462,6 +463,19 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request, actor db.Use
 		s.failed(w, err)
 		return
 	}
+	// The export files are collected *before* the delete. The row cascades with the
+	// account, so afterwards there is nothing left to name them: an erased member's
+	// export would sit in the data directory with no record of whose it was and no
+	// sweep that could ever reach it, because the sweep works from the table.
+	//
+	// This is the one place a file outliving its account is unambiguous — an export is
+	// the account's own content and nobody else's, so removing it erases nothing
+	// anybody else is entitled to.
+	exportIDs, err := s.exportIDsFor(tx, target.ID)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
 	result, err := tx.Exec(`DELETE FROM users WHERE id=? AND is_owner=0`, target.ID)
 	if err != nil {
 		s.failed(w, err)
@@ -480,6 +494,13 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request, actor db.Use
 	if err := s.commitAuthorityChange(r.Context(), tx, "Your account was removed.", target.ID); err != nil {
 		s.failed(w, err)
 		return
+	}
+	// File removal runs after the commit, like every other post-commit cleanup: a
+	// rollback must not have deleted a file a surviving record still points at.
+	for _, exportID := range exportIDs {
+		if err := os.Remove(s.exportPath(exportID)); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("an erased account's export file could not be removed", "export", exportID, "error", err)
+		}
 	}
 	s.deliveries.revokeAccount(target.ID)
 	s.leaveVoice(target.ID, "")
