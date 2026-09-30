@@ -265,7 +265,7 @@ func dockerSourcePaths() []string {
 	for _, workflow := range []string{"check.yml", "docker.yml"} {
 		paths = append(paths, filepath.Join(".github", "workflows", workflow))
 	}
-	for _, script := range []string{"release.go", "check-browser-steps.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-package.mjs", "check-source-package.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs"} {
+	for _, script := range []string{"release.go", "check-browser-steps.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs"} {
 		paths = append(paths, filepath.Join("scripts", script))
 	}
 	// The per-platform release scripts are a transitive dependency of `make release`:

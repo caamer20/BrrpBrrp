@@ -55,6 +55,11 @@ jobs:
       # script with a syntax error is otherwise found by whoever runs it next, on
       # their machine, at the moment they need it — which for the capacity and alert
       # tooling is exactly the moment they are trying to measure a real deployment.
+      # A broken link in a README is not cosmetic: it is the one place somebody who has
+      # never seen this repository is told where to go next, and a link to a renamed
+      # document sends them nowhere.
+      - name: Documentation links resolve
+        run: node scripts/check-doc-links.mjs
       - name: Every shipped script parses
         run: |
           status=0

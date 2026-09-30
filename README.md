@@ -31,7 +31,7 @@ published.
 
 Policies worth reading before changing any of it: the [private conversation
 policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md), the
-[groups policy](docs/adr/0016-groups.md), the [media architecture
+[groups policy](docs/adr/0016-consenting-groups.md), the [media architecture
 decision](docs/adr/0019-media-architecture.md) and the [member export
 contract](docs/adr/0019b-member-export.md).
 
