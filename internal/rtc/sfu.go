@@ -804,6 +804,11 @@ type screenForwarder struct {
 	// packet of a publication computes its delta against zero and produces a huge
 	// jump, which a decoder reads as a stream that has been running for minutes.
 	started bool
+	// written and bytes count what this forwarder accepted. They are the server's own
+	// cost, which is what a capacity measurement reads: whether a client has negotiated
+	// to receive says nothing about what the server did with the packet.
+	written uint64
+	bytes   uint64
 }
 
 // videoClockRate is the RTP clock for the video this build carries. It is stated once,
@@ -848,7 +853,10 @@ func (f *screenForwarder) write(source string, packet *rtp.Packet) {
 	// The payload type is carried through rather than assumed. A video stream whose
 	// payload type does not match the negotiated codec is not decodable, and the
 	// caller cannot be assumed to have rewritten it.
-	_ = f.track.WriteRTP(&forwarded)
+	if err := f.track.WriteRTP(&forwarded); err == nil {
+		f.written++
+		f.bytes += uint64(len(forwarded.Payload))
+	}
 }
 
 // forwardScreen writes a video publication to every peer's screen output in the room.
@@ -900,5 +908,57 @@ func (p *Peer) addScreenOutput() error {
 			}
 		}
 	}(transceiver.Sender())
+	return nil
+}
+
+// screenOutputs returns a peer's video outputs. It copies the slice so a caller can
+// read the forwarders' counters under their own locks without holding the SFU's.
+func (p *Peer) screenOutputs() []*screenForwarder {
+	return append([]*screenForwarder(nil), p.screens...)
+}
+
+// renegotiateForTest announces a publication for a peer that is already connected,
+// without the SDP exchange.
+//
+// It exists because the load measurement needs the *forwarding* path and the
+// negotiation is not what it is measuring: announcing through the real signal path
+// would make the harness wait on offer/answer round trips that a benchmark loop
+// cannot usefully do hundreds of times a second. Everything the measurement does care
+// about — which forwarder a packet takes, how much is copied, what the server's
+// timeline does — is the production code path.
+//
+// It is deliberately unexported and unavailable outside this package, so the
+// production surface has no way to announce a publication without negotiating one.
+func (s *SFU) renegotiateForTest(peer *Peer, publicationID string) error {
+	s.mu.Lock()
+	if s.peers[peer.state.UserID] != peer {
+		s.mu.Unlock()
+		return errors.New("peer is not in this server")
+	}
+	if err := peer.addScreenOutput(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.room(peer.state.ChannelID).add(&Publication{
+		ID: PublicationID(publicationID), Owner: peer.state.UserID,
+		Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	s.mu.Unlock()
+	// The answer is produced and sent here, because a screen track that was added
+	// without a negotiation never reaches the server at all: the connection has no
+	// transceiver for it, its OnTrack never fires, and the publication is announced
+	// with nothing behind it. That is what a measurement reports when it has not been
+	// wired up, and it is why this is stated rather than assumed.
+	answer, err := peer.pc.CreateAnswer(nil)
+	if err != nil {
+		return err
+	}
+	if err := peer.pc.SetLocalDescription(answer); err != nil {
+		return err
+	}
+	peer.emit("rtc.signal", Signal{
+		SDP: peer.pc.LocalDescription(), ConnectionID: peer.connectionID,
+		Publication: PublicationScreenVideo, PublicationID: PublicationID(publicationID),
+	})
 	return nil
 }

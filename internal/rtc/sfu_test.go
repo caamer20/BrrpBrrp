@@ -11,9 +11,21 @@ import (
 )
 
 type testPeer struct {
-	pc        *webrtc.PeerConnection
+	pc *webrtc.PeerConnection
+	// name is the account this peer connected as, so a test can find the SFU's own
+	// peer for it. The two are different types, and a test that needs both has to be
+	// able to cross between them by something the SFU stores rather than by reaching
+	// into its fields.
+	name      string
 	track     *webrtc.TrackLocalStaticRTP
 	packets   chan []byte
+	// The screen publication a load harness gives this peer, and the frames that come
+	// back on it. Kept here rather than in the harness so the peer owns its own tracks,
+	// which is what the production peer does too.
+	videoTrack     *webrtc.TrackLocalStaticRTP
+	videoPackets   chan []byte
+	videoSequence  uint16
+	videoTimestamp uint32
 	joins     chan JoinEvent
 	sequence  uint16
 	timestamp uint32
@@ -50,7 +62,11 @@ func connectPeerWithCapacity(t *testing.T, sfu *SFU, id, room string, capacity i
 			t.Fatal(err)
 		}
 	}
-	peer := &testPeer{pc: pc, track: track, packets: make(chan []byte, 64), joins: make(chan JoinEvent, 16)}
+	peer := &testPeer{
+		pc: pc, name: id, track: track,
+		packets: make(chan []byte, 64), joins: make(chan JoinEvent, 16),
+		videoPackets: make(chan []byte, 4096),
+	}
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		for {
 			packet, _, err := track.ReadRTP()
