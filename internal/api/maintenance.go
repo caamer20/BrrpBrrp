@@ -96,6 +96,12 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM sessions WHERE expires_at<?`, db.Timestamp(now)); err != nil {
 		return err
 	}
+	// The operator's alerts come from this pass rather than from a timer of their own,
+	// so the readings and the notifications describe the same moment. Without a
+	// destination this raises nothing; the conditions are still readable on the status
+	// surface, which is the point — an operator can see a problem without depending on a
+	// webhook that may itself be what is broken.
+	s.raiseCurrentAlerts()
 	// The bytes behind a reclaimed attachment row are removed too, on the same pass and
 	// with the same bound. The row is what records which file belonged to it.
 	if _, err := s.reclaimUploadFiles(now); err != nil {

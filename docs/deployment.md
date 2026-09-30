@@ -23,6 +23,37 @@ The unit restarts on failure, uses a dedicated account, blocks privilege escalat
 
 `sudo sh scripts/linux/uninstall.sh` removes the service unit and preserves the executable, user account, settings and data.
 
+
+## Operator alerts
+
+Alerts are delivered to an HTTP endpoint the operator controls. Configure two
+environment variables and restart:
+
+```sh
+BRRP_ALERT_WEBHOOK=https://alerts.example.net/hooks/your-token
+BRRP_ALERT_SECRET=a-shared-secret-the-receiver-also-knows
+```
+
+The secret is optional and is only used to sign the body, so a receiver can tell a real
+alert from a forged one posted to a URL that leaked. It is never sent in a header or
+the body, so a receiver that logs requests does not log the key that verifies them.
+
+**Check that alerting works, not that it is configured.** `GET /api/admin/alerts`
+answers that: it reports when an alert last *reached* the destination, alongside the
+current conditions and the delivery history. A configured destination that has never
+delivered is worse than no destination, because it looks like coverage — and the
+operator finds that out during a restore.
+
+The conditions are: a verified backup older than three times the configured interval,
+consecutive failed backup attempts, an independent copy that is behind or failing, and
+low free space on the data volume. The first two are marked critical because a server
+that is running fine and cannot be recovered is the worst state to be in.
+
+An unchanged condition raises one alert rather than repeating every pass, and the
+history is bounded: repeated notices for a problem nobody has fixed are how operators
+learn to ignore them.
+
+
 ## Windows service
 
 For the graphical walkthrough, extract the archive and open **Setup.cmd**. The wizard uses the normal administrator prompt and does not need PowerShell scripts. The following steps are the optional manual installation path.

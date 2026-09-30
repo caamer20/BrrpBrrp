@@ -32,6 +32,10 @@ type Server struct {
 	backupMu         sync.Mutex
 	voice            *rtc.SFU
 	voicePublished   voicePublisher
+	// alertState is the raised-alert history and its delivery record. It is created
+	// lazily by alerts(), so a server that never raises an alert never allocates it.
+	alertMu    sync.Mutex
+	alertState *alertState
 	// voiceGate serializes voice admission against access enforcement.
 	voiceGate sync.Mutex
 	// authority is the delivery fence. Its write lock is held across the moment an
@@ -258,6 +262,7 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/api/me/export", routePolicy{Note: "this account's own export history, including what each file could not include"}, s.listExports},
 		{http.MethodGet, "/api/me/export/{id}", routePolicy{Note: "authority is re-read at download, not only at build: a file must not outlive the permission that made it"}, s.downloadExport},
 		{http.MethodDelete, "/api/me/export/{id}", routePolicy{Note: "the member's own deletion of a produced file"}, s.deleteExport},
+		{http.MethodGet, "/api/admin/alerts", routePolicy{Capability: authz.OperatorBackup, Note: "answered by what was delivered, not by what is configured; a destination that has never delivered is worse than none"}, s.alertStatusHandler},
 		{http.MethodGet, "/api/directs", routePolicy{Note: "own consented conversations and contact requests only; gated"}, s.listDirectConversations},
 		{http.MethodPost, "/api/directs", routePolicy{Note: "current consent/contact policy; new requests recheck message.send"}, s.createDirectConversation},
 		{http.MethodPost, "/api/directs/{id}/accept", routePolicy{Note: "only intended recipient may accept a direct request"}, s.acceptDirectConversation},

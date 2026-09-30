@@ -107,7 +107,10 @@ func TestOperatorTierIsNotReachableByOrdinaryRoles(t *testing.T) {
 			operatorRoutes++
 		}
 	}
-	if operatorRoutes != 5 {
-		t.Fatalf("operator-gated routes = %d, want 5 (ownership, chosen-password reset, lost-factor removal, backup create and download)", operatorRoutes)
+	// The alert status is operator-gated for the same reason as backup download: it
+	// describes the health and the delivery record of the recovery path, which is
+	// operator information rather than community administration.
+	if operatorRoutes != 6 {
+		t.Fatalf("operator-gated routes = %d, want 6 (ownership, chosen-password reset, lost-factor removal, backup create and download, alert status)", operatorRoutes)
 	}
 }
