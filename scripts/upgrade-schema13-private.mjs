@@ -1,6 +1,7 @@
 // Upgrading a real schema-13 installation to the current schema and proving the
 // data survived exactly.
 //
+//   node scripts/upgrade-schema13-private.mjs --make-seed PATH --old-binary PATH
 //   node scripts/upgrade-schema13-private.mjs --seed-dir PATH --binary PATH
 //
 // The seed directory must have been produced by scripts/seed-schema13-private.mjs
@@ -25,10 +26,36 @@ const option = (flag, fallback) => {
   const index = args.indexOf(flag);
   return index < 0 ? fallback : args[index + 1];
 };
+const makeSeed = option('--make-seed', process.env.MAKE_SEED);
+const oldBinary = option('--old-binary', process.env.OLD_BINARY);
 const seedDir = option('--seed-dir', process.env.SEED_DIR);
 const binary = option('--binary', 'dist/brrpbrrp');
+
+// --make-seed builds a real schema-13 data directory by running a *preserved prior
+// executable* against an empty one, then creating a direct conversation and a pending
+// request through its own HTTP surface.
+//
+// A fixture assembled by writing SQL into a current database would not be a schema-13
+// database at all: it would be a current one with old-looking rows, and the rehearsal
+// would pass while proving nothing about the upgrade. The executable is what makes the
+// fixture real, which is why this takes a binary rather than a schema number.
+//
+// The binary must actually BE a schema-13 release. Given the current one, the seed it
+// writes is a current database, and the rehearsal's own first check says so — which is
+// the tool doing its job: a seed that is not the version under test is rejected rather
+// than accepted as a lookalike.
+if (makeSeed) {
+  if (!oldBinary || !existsSync(oldBinary)) {
+    console.error('usage: --make-seed PATH --old-binary PATH');
+    process.exit(2);
+  }
+  const { makeSchema13Seed } = await import('./schema13-seed.mjs');
+  await makeSchema13Seed({ seedDir: makeSeed, oldBinary, cwd: dirname(fileURLToPath(import.meta.url)) });
+  process.exit(0);
+}
+
 if (!seedDir || !existsSync(join(seedDir, 'brrp.db'))) {
-  console.error('usage: --seed-dir PATH --binary PATH (seed-dir is a schema-13 data directory)');
+  console.error('usage: --make-seed PATH --old-binary PATH | --seed-dir PATH --binary PATH');
   process.exit(2);
 }
 

@@ -161,6 +161,20 @@ jobs:
         run: node scripts/upgrade-recovery.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery.json
       - name: Fresh recovery rehearsal (private-state fixture)
         run: node scripts/upgrade-recovery-private.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery-private.json
+      # The schema-13 rehearsal needs a schema-13 data directory, and only a real
+      # schema-13 executable can write one: a current binary produces a current
+      # database, and the rehearsal's own checks reject that. So the seed is built by
+      # the archived release this repository already pins as a baseline, and the
+      # rehearsal is then run against the candidate. If the pinned baseline is not
+      # available this step fails rather than quietly skipping — a rehearsal that did
+      # not run is not a passing rehearsal.
+      - name: Build the schema-13 upgrade seed from the pinned baseline
+        run: |
+          mkdir -p /tmp/brrp-s13 && rm -rf /tmp/brrp-s13/*
+          unzip -q dist/releases/brrpbrrp-0.3.0-linux-amd64.zip -d /tmp/brrp-s13
+          node scripts/upgrade-schema13-private.mjs --make-seed /tmp/brrp-s13/data --old-binary /tmp/brrp-s13/brrpbrrp
+      - name: Schema-13 upgrade rehearsal
+        run: node scripts/upgrade-schema13-private.mjs --seed-dir /tmp/brrp-s13/data --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/schema13.json
       - name: Package one native and one source archive
         run: go run scripts/release.go -targets linux/amd64 -version 0.0.0-ci.${{ github.sha }}
       - name: Consume the extracted native package
