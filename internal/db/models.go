@@ -112,8 +112,30 @@ type Settings struct {
 	// The fallback transports. UDP alone leaves a client behind a network that blocks
 	// it with no path at all, which is the ordinary case on corporate and some mobile
 	// networks (ADR 0019, §7). A port of 0 means that transport is not offered.
+	//
+	// This field is named `turn_tls_port` and has always been used as the *plain TCP*
+	// port — the `turn:...?transport=tcp` listener. The name is wrong, and the code
+	// saying so plainly is better than renaming the JSON key under an operator who may
+	// already have a saved configuration: a renamed key silently resets their setting
+	// to the default, which for a port is a relay that no longer listens where it did.
+	// The TLS listener's own port is TURNTLSListenerPort below.
 	TURNTLSPort     int  `json:"turn_tls_port"`
 	TURNTCPFallback bool `json:"turn_tcp_fallback"`
+	// TURNTLSListenerPort is the port the `turns:` (TLS) listener binds. It is
+	// distinct from TURNTLSPort above, which despite its name is the plain-TCP port.
+	// A port of 0 means "choose one", which is UDP + 2.
+	TURNTLSListenerPort int `json:"turn_tls_listener_port"`
+	// TURNTLSFallback offers the relay over TLS as well, using the server's own
+	// certificate. It is the last path a client has: a network that blocks both UDP
+	// and plain TCP leaves a `turn:` relay nothing to connect on, and a `turns:` one
+	// is reachable because almost nothing blocks 443.
+	//
+	// It is off by default because it costs the operator a port and depends on the
+	// certificate being readable. When it is requested and the certificate cannot be
+	// read, the relay is still offered over UDP and plain TCP and the reason is
+	// logged — a fallback that silently does not exist is the failure this exists to
+	// prevent.
+	TURNTLSFallback bool `json:"turn_tls_fallback"`
 	// TURNAdvertisedHost is what clients are told to relay through. It is separate
 	// from TURNExternalIP because a host or container behind NAT has an address it
 	// listens on and a different one clients can reach, and getting this wrong produces
@@ -158,4 +180,18 @@ type Settings struct {
 
 func DefaultSettings() Settings {
 	return Settings{ServerName: "BrrpBrrp", LinkPreviews: true, GIFEmbeds: true, Typing: true, Presence: true, Voice: true, TURNPort: 3478, VoiceBitrate: 24, MaxUploadBytes: 12 << 20, Audit: true, Push: true, Theme: "dark", BackupHours: 24, BackupKeep: 7, BackupUploads: true, RequirePrivilegedMFA: true}
+}
+
+// TURNTCPPort is the plain-TCP fallback port the server will actually listen on:
+// the named one, or the UDP port plus one when the operator asked for a fallback
+// without naming a port. The validation and the listener have to agree on this, or a
+// setting that validates is one the server then cannot bind.
+func (settings Settings) TURNTCPPort() int {
+	if !settings.TURNTCPFallback {
+		return 0
+	}
+	if settings.TURNTLSPort != 0 {
+		return settings.TURNTLSPort
+	}
+	return settings.TURNPort + 1
 }

@@ -49,9 +49,27 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 400, "The TURN TCP fallback port must be between 1024 and 65535.")
 		return
 	}
+	if settings.TURNTLSListenerPort != 0 && (settings.TURNTLSListenerPort < 1024 || settings.TURNTLSListenerPort > 65535) {
+		problem(w, 400, "The TURN TLS fallback port must be between 1024 and 65535.")
+		return
+	}
 	if settings.TURNTCPFallback && settings.TURNTLSPort != 0 && settings.TURNTLSPort == settings.TURNPort {
 		problem(w, 400, "The TURN TCP fallback needs a different port from the UDP one.")
 		return
+	}
+	// Three listeners cannot share a port. This was checked for the UDP and TCP pair
+	// and not for TLS, which arrived later; a collision here surfaces as a bind
+	// failure at startup rather than as a refused setting, which is the worst moment
+	// to discover it.
+	if settings.TURNTLSFallback && settings.TURNTLSListenerPort != 0 {
+		if settings.TURNTLSListenerPort == settings.TURNPort {
+			problem(w, 400, "The TURN TLS fallback needs a different port from the UDP one.")
+			return
+		}
+		if settings.TURNTCPFallback && settings.TURNTLSListenerPort == settings.TURNTCPPort() {
+			problem(w, 400, "The TURN TLS fallback needs a different port from the plain TCP one.")
+			return
+		}
 	}
 	if len(settings.TURNAdvertisedHost) > 253 {
 		problem(w, 400, "The TURN advertised host is too long.")

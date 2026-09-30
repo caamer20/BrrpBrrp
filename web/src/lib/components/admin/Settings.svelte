@@ -181,6 +181,26 @@
       /></label
     >
   </div>
+  <label class="setting-row"
+    ><span
+      ><strong>Plain TCP fallback</strong><small
+        >For networks that block UDP. Adds one more port to open.</small
+      ></span
+    ><input type="checkbox" bind:checked={settings.turn_tcp_fallback} /></label
+  >
+  <label class="setting-row"
+    ><span
+      ><strong>TLS fallback</strong><small
+        >The last resort, for networks that block both UDP and plain TCP. Uses this server's own
+        certificate on a third port. If the certificate cannot be read the other two transports are
+        still offered, and the reason is written to the log.</small
+      ></span
+    ><input
+      type="checkbox"
+      bind:checked={settings.turn_tls_fallback}
+      disabled={!settings.enable_turn_server}
+    /></label
+  >
   <p class="muted">
     Allow UDP 49152–49999 for relay traffic and your configured media range. Disable TURN and save
     before changing its address or port.

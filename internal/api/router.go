@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -472,20 +473,35 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 // that is off means the relay is offered over UDP alone, which is what this shipped
 // before the fallback existed and stays the default rather than becoming an error.
 //
-// The TLS transport is wired but not enabled: a `turns:` URL without a certificate
-// would give a client something it cannot connect to, and ICE reports that as a network
-// fault rather than a misconfiguration. It is left off until an operator supplies a
-// certificate through the settings surface (ADR 0019, §7).
+// The TLS transport uses the server's own certificate — the same one the HTTPS
+// listener already serves. It was wired but unreachable: the call site passed a zero
+// port and a nil certificate, so a network that blocks both UDP and plain TCP had no
+// path at all, and the code to give it one was sitting right there unused.
+//
+// TLS is offered only when the certificate is actually readable. A `turns:` URL
+// without a certificate would hand a client something it cannot connect to, and ICE
+// reports that as a network fault rather than as a misconfiguration — the worst
+// shape for a fallback.
 func (s *Server) configureTURN(settings db.Settings) error {
-	tcpPort := 0
-	if settings.TURNTCPFallback {
-		tcpPort = settings.TURNTLSPort
-		if tcpPort == 0 {
-			// A distinct default rather than the UDP port: two protocols cannot share
-			// one listener, and an operator who asked for a fallback without naming a
-			// port meant a port that is not the one already in use.
-			tcpPort = settings.TURNPort + 1
+	// The same helper the settings validation uses. Two copies of "which port will the
+	// TCP listener bind" is how a configuration passes validation and then fails to
+	// bind, which is the worst moment to discover it.
+	tcpPort := settings.TURNTCPPort()
+	tlsPort := 0
+	var certificate *tls.Certificate
+	if settings.TURNTLSFallback {
+		if loaded, err := tls.LoadX509KeyPair(s.config.CertFile, s.config.KeyFile); err == nil {
+			certificate = &loaded
+			tlsPort = settings.TURNTLSListenerPort
+			if tlsPort == 0 {
+				// A third distinct port: TLS is neither the UDP nor the plain-TCP
+				// listener, and sharing a port with the HTTPS listener would need a
+				// SNI-based demultiplexer this server does not have.
+				tlsPort = settings.TURNPort + 2
+			}
+		} else {
+			s.log.Warn("TURN TLS fallback was requested but the server certificate could not be read; the relay will be offered over UDP and plain TCP only", "error", err)
 		}
 	}
-	return s.turn.ConfigureWithFallback(settings.TURN, settings.TURNExternalIP, settings.TURNPort, tcpPort, 0, settings.TURNAdvertisedHost, nil)
+	return s.turn.ConfigureWithFallback(settings.TURN, settings.TURNExternalIP, settings.TURNPort, tcpPort, tlsPort, settings.TURNAdvertisedHost, certificate)
 }

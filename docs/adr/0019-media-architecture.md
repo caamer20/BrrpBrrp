@@ -215,6 +215,33 @@ path at all** — which is the ordinary case on corporate and some mobile networ
 
 - Offer `turn:…?transport=tcp` alongside the UDP URL, and let ICE choose.
 - Add `turns:` (TLS on 5349) for networks that block the TCP fallback too.
+
+**Both done**, and the second one was written and then never switched on.
+`ConfigureWithFallback` already took a TLS port and a certificate and built a
+`tls.Listen` for them; the call site passed a zero port and a `nil` certificate, so
+the transport was unreachable. A client behind a network that blocks both UDP and
+plain TCP had no path, with the code to give it one sitting unused beside it.
+
+The TLS transport reuses the server's own certificate — the one the HTTPS listener
+already serves. It is offered only when that certificate is actually readable: a
+`turns:` URL with no certificate hands the client something it cannot connect to, and
+ICE reports that as a network fault rather than a misconfiguration. When it is
+requested and the certificate cannot be read, the relay is still offered over UDP and
+plain TCP and the reason is logged. A fallback that silently does not exist is the
+failure this exists to prevent.
+
+**A field that was named for the wrong transport.** `turn_tls_port` has always held
+the *plain TCP* port. The name is kept rather than fixed, because renaming a JSON key
+silently resets an operator's saved setting to the default — and for a port that is a
+relay that no longer listens where it did. The TLS listener has its own field,
+`turn_tls_listener_port`. The code says which is which, so the next reader is not sent
+looking for a TLS listener behind a TCP port.
+
+All three listeners are distinct, and the validation refuses a collision: UDP, plain
+TCP and TLS cannot share a port, and a setting that validates and then fails to bind
+at startup is discovered at the worst possible moment. The validation and the listener
+share one helper for "which port will this bind", because two copies of that question
+is how they come to disagree.
 - Make the advertised relay address **configurable**, because a container or a host
   behind NAT that advertises a private address produces a call that works locally and
   fails for everyone else.

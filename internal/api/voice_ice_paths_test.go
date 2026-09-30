@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/db"
 )
 
@@ -219,4 +220,101 @@ func configureTURNForTest(t *testing.T, handler http.Handler, s *Server, admin *
 	settings.TURNAdvertisedHost = "turn.example.com"
 	settings.TURNPort = 3478
 	saveSettings(t, handler, s, admin, settings)
+}
+
+// TestTheRelayIsOfferedOverTLSWhenAsked is the last path a client has. A network
+// that blocks both UDP and plain TCP leaves a `turn:` relay with nothing to connect
+// on; `turns:` is reachable because almost nothing blocks 443. The transport was
+// written and then never switched on — the call site passed a zero port and a nil
+// certificate — so a client behind such a network had no path at all.
+func TestTheRelayIsOfferedOverTLSWhenAsked(t *testing.T) {
+	s, server, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	settings := s.Settings()
+	settings.TURN = true
+	settings.TURNExternalIP = "203.0.113.10"
+	settings.TURNAdvertisedHost = "turn.example.com"
+	settings.TURNPort = 3478
+	settings.TURNTLSFallback = true
+	settings.TURNTLSListenerPort = 5349
+	// The relay's TLS transport reuses the server's own certificate, so the test has
+	// to give the server one. A deployment always has one — it serves HTTPS with it —
+	// but the test harness starts from an empty data directory.
+	if err := app.GenerateCert(s.config); err != nil {
+		t.Fatalf("could not create the server certificate: %v", err)
+	}
+	saveSettings(t, handler, s, admin, settings)
+
+	channel := voiceChannelWith(t, handler, admin)
+	conn := voiceSocket(t, s, server, admin)
+	accepted := joinVoiceSocket(t, conn, channel.ID)
+
+	var tlsURL string
+	for _, url := range iceURLs(t, accepted) {
+		if strings.HasPrefix(url, "turns:") {
+			tlsURL = url
+		}
+	}
+	if tlsURL == "" {
+		t.Fatalf("the relay was asked for over TLS and offered no turns: URL: %v", iceURLs(t, accepted))
+	}
+	if !strings.Contains(tlsURL, "5349") {
+		t.Fatalf("the TLS relay URL named the wrong port: %s", tlsURL)
+	}
+}
+
+// TestTheRelayIsNotOfferedOverTLSByDefault is the control: TLS costs the operator a
+// port, so a deployment that did not ask for it should not be offered a transport it
+// was not configured to serve.
+func TestTheRelayIsNotOfferedOverTLSByDefault(t *testing.T) {
+	s, server, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	configureTURNForTest(t, handler, s, admin)
+
+	channel := voiceChannelWith(t, handler, admin)
+	conn := voiceSocket(t, s, server, admin)
+	accepted := joinVoiceSocket(t, conn, channel.ID)
+
+	for _, url := range iceURLs(t, accepted) {
+		if strings.HasPrefix(url, "turns:") {
+			t.Fatalf("a deployment that did not ask for TLS was offered %s", url)
+		}
+	}
+}
+
+// TestTheThreeRelayTransportsCannotShareAPort catches a collision where a setting
+// validates and the server then cannot bind — the worst moment to discover it. UDP,
+// plain TCP and TLS are three listeners.
+func TestTheThreeRelayTransportsCannotShareAPort(t *testing.T) {
+	s, _, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	base := s.Settings()
+	base.TURN = true
+	base.TURNExternalIP = "203.0.113.10"
+	base.TURNPort = 3478
+	base.TURNTCPFallback = true
+
+	// TLS on the UDP port.
+	settings := base
+	settings.TURNTLSFallback = true
+	settings.TURNTLSListenerPort = 3478
+	if recorder := trySettings(t, handler, s, admin, settings); recorder.Code != 400 {
+		t.Fatalf("TLS on the UDP port was accepted with %d, want 400", recorder.Code)
+	}
+
+	// TLS on the plain-TCP port.
+	settings = base
+	settings.TURNTLSFallback = true
+	settings.TURNTLSListenerPort = 3479
+	if recorder := trySettings(t, handler, s, admin, settings); recorder.Code != 400 {
+		t.Fatalf("TLS on the TCP fallback port was accepted with %d, want 400", recorder.Code)
+	}
+
+	// Three distinct ports is the working shape, and it must still be accepted.
+	settings = base
+	settings.TURNTLSFallback = true
+	settings.TURNTLSListenerPort = 5350
+	if recorder := trySettings(t, handler, s, admin, settings); recorder.Code != 200 {
+		t.Fatalf("three distinct relay ports were refused with %d: %s", recorder.Code, recorder.Body.String())
+	}
 }

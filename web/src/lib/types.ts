@@ -175,6 +175,8 @@ export interface Settings {
   stun_server: string;
   force_relay: boolean;
   turn_external_ip: string;
+  turn_tcp_fallback: boolean;
+  turn_tls_fallback: boolean;
   voice_bitrate_kbps: number;
   max_upload_bytes: number;
   message_retention_days: number;
