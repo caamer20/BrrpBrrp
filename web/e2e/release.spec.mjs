@@ -1,19 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { OWNER, signIn } from './support.mjs';
-
-async function expectAccessible(page) {
-  const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
-  expect(
-    result.violations.map(({ id, impact, nodes }) => ({
-      id,
-      impact,
-      targets: nodes.map(({ target }) => target).slice(0, 12)
-    }))
-  ).toEqual([]);
-}
+import { expectAccessible, OWNER, signIn } from './support.mjs';
 
 test('first setup, persistent chat, search and sign-out', async ({ page, context }) => {
   test.setTimeout(120000);
@@ -240,4 +228,44 @@ test('a member requests their data export and sees what it holds', async ({ page
   // And the account's own history is empty of anybody else's: this is a single
   // account's list, not a server's.
   await dialog.getByRole('button', { name: 'Close' }).click();
+});
+
+// The surfaces added in this milestone are checked for automatically detectable
+// accessibility violations, because a feature that is correct and unreachable is not
+// finished. This supplements the human review M6 requires — a screen-reader pass, a
+// keyboard pass and a zoom pass find things no scanner can — and no claim of blanket
+// conformance is made from it.
+test('the operator and member surfaces are free of detectable violations', async ({ page }) => {
+  test.setTimeout(120000);
+  await signIn(page, OWNER);
+
+  // The data export panel: a dialog a member opens on purpose and reads closely.
+  await page.getByRole('button', { name: 'Your data export' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expectAccessible(page);
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+
+  // The server tools, and the alert health tab — the surface whose whole purpose is to
+  // be read under pressure.
+  await page.getByRole('button', { name: 'Manage server' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expectAccessible(page);
+  await page.getByRole('button', { name: 'Alerts' }).click();
+  await expect(page.getByRole('heading', { name: 'Alerts' })).toBeVisible();
+  await expectAccessible(page);
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+
+  // The channel thread list, reached by keyboard rather than by hover.
+  const threads = page.getByRole('button', { name: 'Threads in this channel' });
+  await threads.focus();
+  await expect(threads).toBeFocused();
+  await threads.press('Enter');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expectAccessible(page);
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+
+  // The voice panel, which is where a member looks when a call is going wrong.
+  await page.getByRole('button', { name: 'Lounge' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Lounge', exact: true })).toBeVisible();
+  await expectAccessible(page);
 });

@@ -107,3 +107,28 @@ export function totpCode(secret, at = Date.now()) {
   const number = digest.readUInt32BE(offset) & 0x7fffffff;
   return String(number % 1000000).padStart(6, '0');
 }
+
+/**
+ * Asserts that a page has no automatically detectable accessibility violations.
+ *
+ * The tags are the two WCAG levels that can be checked by a tool. This supplements a
+ * human review and does not replace one: a screen-reader pass, a keyboard pass and a
+ * zoom pass find things no scanner can, which is why M6 requires them separately and
+ * why no claim of blanket conformance is made anywhere in this project.
+ *
+ * The failure output names the rule and the elements, because "there is a violation"
+ * is not something anybody can act on.
+ */
+export async function expectAccessible(page) {
+  const { default: AxeBuilder } = await import('@axe-core/playwright');
+  const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+  const violations = result.violations.map(({ id, impact, help, nodes }) => ({
+    id,
+    impact,
+    help,
+    targets: nodes.map(({ target }) => target).slice(0, 8)
+  }));
+  if (violations.length) {
+    throw new Error(`accessibility violations: ${JSON.stringify(violations, null, 2)}`);
+  }
+}
