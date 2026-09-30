@@ -4,7 +4,9 @@ import {
   screenShareMessage,
   classifyCaptureFailure,
   canShareScreen,
-  onCaptureEnded
+  onCaptureEnded,
+  screenAudioOutcome,
+  screenAudioMessage
 } from '../src/lib/screen-share.ts';
 
 // A screen share is a user gesture with three ordinary failure modes, and the two
@@ -108,4 +110,30 @@ test('a browser without getDisplayMedia is unsupported, not broken', () => {
   } finally {
     Object.defineProperty(globalThis, 'navigator', { value: original, configurable: true });
   }
+});
+
+// System audio is requested, never required. Windows and Linux commonly cannot
+// provide it, and a browser that cannot is expected to return video-only rather than
+// fail — so the share still works, and the only thing owed to the person sharing is
+// an accurate word about what they got.
+test('screen audio is reported for what was delivered, not what was asked', () => {
+  assert.equal(screenAudioOutcome(false, 0), 'not-requested');
+  assert.equal(screenAudioOutcome(false, 1), 'not-requested');
+  assert.equal(screenAudioOutcome(true, 1), 'delivered');
+  assert.equal(screenAudioOutcome(true, 2), 'delivered');
+  assert.equal(screenAudioOutcome(true, 0), 'unavailable');
+});
+
+test('the ordinary video-only share says nothing at all', () => {
+  // Silence is the right answer for the common case. A notice on every share would
+  // train people to dismiss notices, which costs us the ones that matter.
+  assert.equal(screenAudioMessage('not-requested'), '');
+  assert.equal(screenAudioMessage('delivered'), '');
+  assert.notEqual(screenAudioMessage('unavailable'), '');
+});
+
+test('the unavailable message names the consequence, not the cause', () => {
+  const message = screenAudioMessage('unavailable');
+  assert.match(message, /without sound/);
+  assert.doesNotMatch(message, /error|failed|cannot|unable/i);
 });

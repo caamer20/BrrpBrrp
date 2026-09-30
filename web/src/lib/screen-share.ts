@@ -160,3 +160,33 @@ export function screenShareMessage(state: ScreenShareState): string {
       return '';
   }
 }
+
+/**
+ * Describes what a capture actually delivered, against what was asked for.
+ *
+ * System audio is requested, never required: Windows and Linux commonly cannot
+ * provide it, and a browser that cannot is expected to return video-only rather than
+ * fail. The person sharing needs to know which of the two they got — a silent screen
+ * that looks like a muted call sends somebody hunting through their own settings for a
+ * problem that is not there.
+ */
+export function screenAudioOutcome(
+  asked: boolean,
+  deliveredAudioTracks: number
+): 'not-requested' | 'delivered' | 'unavailable' {
+  if (!asked) return 'not-requested';
+  return deliveredAudioTracks > 0 ? 'delivered' : 'unavailable';
+}
+
+/**
+ * The words for that outcome, or nothing when there is nothing to say.
+ *
+ * Silence is the right answer for the ordinary case: a video-only share is what most
+ * people get, and a notice on every share would train people to dismiss notices.
+ */
+export function screenAudioMessage(outcome: 'not-requested' | 'delivered' | 'unavailable'): string {
+  if (outcome === 'unavailable') {
+    return 'Sharing your screen. This browser or system did not provide its audio, so people will see the screen without sound.';
+  }
+  return '';
+}

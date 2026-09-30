@@ -723,3 +723,37 @@ func TestReadingARoomDoesNotCreateOne(t *testing.T) {
 		t.Fatalf("reading one nonexistent room %d times left %d registries behind", 50, rooms)
 	}
 }
+
+// A screen's system audio is a *separate* publication, and the room's bound is
+// enforced per publication. If the client sent audio inside the video's offer, the
+// server would count one thing twice and refuse a share that is within bounds — and
+// the failure would read as "the room is full" to somebody whose room is not.
+func TestScreenAudioIsABoundedPublicationOfItsOwn(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.announcePublication(peer, Publication{ID: "v1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.announcePublication(peer, Publication{ID: "a1", Owner: "ana", Kind: PublicationScreenAudio, Started: time.Now().UTC()})
+	sfu.mu.Unlock()
+
+	published := sfu.Publications("room")
+	if len(published) != 2 {
+		t.Fatalf("a screen with its audio carries %d publications, want 2", len(published))
+	}
+	// The video's bound is about screens, not about how many tracks a screen has. A
+	// second screen is still refused while this one holds the room's only place — the
+	// audio must not have widened it.
+	second := &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}
+	if err := sfu.renegotiate(peer, Signal{ConnectionID: peer.connectionID, SDP: second, Publication: PublicationScreenVideo}); err == nil {
+		t.Fatal("a second screen was admitted to a room that already has one")
+	}
+	// And the audio is bounded too, so a second screen's audio cannot be smuggled in
+	// under the video's allowance.
+	if err := sfu.renegotiate(peer, Signal{ConnectionID: peer.connectionID, SDP: second, Publication: PublicationScreenAudio}); err == nil {
+		t.Fatal("a second screen's audio was admitted to a room that already has one")
+	}
+}

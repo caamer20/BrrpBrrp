@@ -409,3 +409,33 @@ list, which is the honest encoding of "no servers to offer".
 - That calls work on the two required deployments. That is §3 of
   [host qualification](../host-qualification.md), and it needs hosts this environment
   does not have.
+
+## 9. Screen audio is a separate publication, and it is best-effort by construction
+
+The server has carried `screen_audio` as a distinct kind since §4. Nothing produced
+it: `requestScreen` could ask for it and the voice controller never did, so a person
+sharing their screen had no way to include the sound their computer was playing.
+
+It is a **separate publication** rather than a second track inside the video's offer,
+because the room's bound is counted per publication. Audio inside the video's offer
+would be counted twice against the screen's allowance, and a share that is within
+bounds would be refused — reported to the user as "the room is full", in a room that
+is not full. The stop path withdraws it separately too, for the same reason: stopping
+the video does not remove an entry the video never owned.
+
+**Best-effort, and visibly so.** Windows and Linux commonly cannot capture system
+audio, and a browser that cannot is expected to return video-only rather than fail. So
+audio is requested and never required, a failure to add the audio transceiver leaves
+the video publishing rather than failing the share, and the person sharing is told
+which of the two they got. Silence is the right answer for the ordinary case — a
+notice on every share would train people to dismiss notices, which costs the ones that
+matter.
+
+The promise stays bounded: system audio is not available everywhere, and nothing here
+claims it is. A share of a muted screen is a working share, and the message says
+exactly that rather than promising sound the platform cannot deliver.
+
+**What this does not establish.** No real system-audio capture has been observed. The
+capture path, the separate publication, the bounds and the messaging are all covered;
+whether a given browser and operating system actually hand over the audio is the
+device qualification in §8, and it is not something a synthetic stream can answer.

@@ -58,6 +58,15 @@
                 voice.screenState === 'sharing'
                   ? voice.stopScreenShare()
                   : voice.startScreenShare()}><Icon name="hash" size={18} /></button
+            >
+            <button
+              class="icon-button"
+              class:selected={voice.wantSystemAudio}
+              aria-label="Include the sound your computer is playing"
+              aria-pressed={voice.wantSystemAudio}
+              title="Include the sound your computer is playing, if your browser offers it"
+              onclick={() => (voice.wantSystemAudio = !voice.wantSystemAudio)}
+              ><Icon name="volume" size={18} /></button
             >{/if}<button
             class="icon-button danger-text"
             aria-label={voice.roomFor(voice.channelId)?.private ? 'Leave call' : 'Leave voice'}

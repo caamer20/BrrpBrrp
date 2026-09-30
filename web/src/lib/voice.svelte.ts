@@ -8,6 +8,8 @@ import { VIEW_STREAM_ID, isViewOnlyTrack } from './screen-receive';
 import {
   canShareScreen,
   onCaptureEnded,
+  screenAudioMessage,
+  screenAudioOutcome,
   requestScreen,
   screenShareMessage,
   stopScreen,
@@ -38,9 +40,17 @@ class Voice {
   // The sender for a published screen, so a restart replaces the track rather than
   // negotiating a second one into a room whose bound is one screen.
   private screenSender: RTCRtpSender | null = null;
+  // System audio is a *separate* publication from the screen's video. The server
+  // bounds them separately — a screen's audio is only meaningful alongside its
+  // video — and a client that sent them as one would be refused by the screen's own
+  // bound the moment audio counted against the video's allowance.
+  private screenAudioSender: RTCRtpSender | null = null;
   // Whether the server has accepted this screen as a publication. Only a *published*
   // share is withdrawn, and only the track is stopped for one that was not.
   private publishedScreen = false;
+  private publishedScreenAudio = false;
+  /** Whether the operator asked for system audio with the screen. */
+  wantSystemAudio = $state(false);
   screenElement = $state<HTMLVideoElement | null>(null);
   // The selected candidate pair's kind: 'host' | 'srflx' | 'prflx' | 'relay'. It is
   // read by qualification and by support, and it is the only way to tell a direct
@@ -864,7 +874,19 @@ class Voice {
     }
     this.screenState = 'asking';
     this.screenMessage = screenShareMessage('asking');
-    const result = await requestScreen();
+    // System audio is asked for, never required. A browser or platform that cannot
+    // provide it returns video-only rather than failing the whole share, and the
+    // user is told what they got rather than what they asked for.
+    const result = await requestScreen(this.wantSystemAudio);
+    if (result.state === 'sharing' && result.stream) {
+      // The words describe what was delivered, not what was asked for. Asking for
+      // audio and not getting it is an ordinary outcome, and the person sharing is the
+      // only one who can act on it.
+      const audio = screenAudioMessage(
+        screenAudioOutcome(this.wantSystemAudio, result.stream.getAudioTracks().length)
+      );
+      if (audio) this.screenMessage = audio;
+    }
     this.screenState = result.state;
     this.screenLabel = result.label ?? '';
     this.screenMessage = result.error || screenShareMessage(result.state);
@@ -909,6 +931,7 @@ class Voice {
     const track = stream.getVideoTracks()[0];
     if (!track) return false;
     try {
+      this.publishScreenAudio(stream, peer);
       if (this.screenSender) {
         // Already publishing: replace the track rather than adding a second
         // transceiver, so a restart is a swap and not a second screen.
@@ -925,10 +948,50 @@ class Voice {
         connection_id: this.connectionId,
         publication: 'screen_video'
       });
+      // The audio publication is announced separately, because it is a separate
+      // publication with its own bound. Announcing it inside the video's offer would
+      // make the server count one thing twice.
+      if (this.publishedScreenAudio) {
+        workspace.sendEvent('rtc.signal', {
+          sdp: peer.localDescription?.toJSON(),
+          connection_id: this.connectionId,
+          publication: 'screen_audio'
+        });
+      }
       return true;
     } catch {
       this.screenSender = null;
       return false;
+    }
+  }
+
+  /**
+   * Adds the capture's system audio as its own publication.
+   *
+   * It is best-effort by construction: a capture with no audio track is the ordinary
+   * case on Windows and on Linux, and a share of the screen without its sound is far
+   * more useful than no share at all. A failure here therefore leaves the video
+   * alone rather than failing the whole operation.
+   */
+  private publishScreenAudio(stream: MediaStream, peer: RTCPeerConnection): void {
+    const track = stream.getAudioTracks()[0];
+    if (!track) {
+      this.screenAudioSender = null;
+      this.publishedScreenAudio = false;
+      return;
+    }
+    if (this.screenAudioSender) {
+      void this.screenAudioSender.replaceTrack(track);
+      return;
+    }
+    try {
+      this.screenAudioSender = peer.addTransceiver(track, { direction: 'sendonly' }).sender;
+      this.publishedScreenAudio = true;
+    } catch {
+      // The video is already publishing by this point. Losing the audio is a
+      // degraded share, not a failed one, and saying so beats taking the screen away.
+      this.screenAudioSender = null;
+      this.publishedScreenAudio = false;
     }
   }
 
@@ -947,6 +1010,18 @@ class Voice {
       });
       this.publishedScreen = false;
     }
+    // The audio is withdrawn separately, for the same reason it was published
+    // separately: it is its own publication with its own entry in the room's registry,
+    // and stopping the video does not remove it.
+    if (this.publishedScreenAudio && this.connectionId) {
+      workspace.sendEvent('rtc.signal', {
+        connection_id: this.connectionId,
+        publication: 'screen_audio',
+        publication_stopped: true
+      });
+      this.publishedScreenAudio = false;
+    }
+    this.screenAudioSender = null;
     if (this.screenStream) {
       stopScreen(this.screenStream);
       this.screenStream = null;
