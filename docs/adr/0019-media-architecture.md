@@ -221,6 +221,20 @@ path at all** — which is the ordinary case on corporate and some mobile networ
 - Record the **actual candidate type chosen** per client. "Tailscale and HTTPS both
   worked" says nothing about whether media established.
 
+**Done.** On connecting, the server reads the nominated candidate pair once and logs
+the local and remote types with a `relayed` boolean. The types are reported by name —
+`host`, `srflx`, `prflx`, `relay` — because that is the token an operator will search
+a log for, and an id nobody can resolve after the fact is not a measurement.
+
+The read is a single settled lookup, not a poll: the pair is chosen at connect time and
+does not usefully change afterwards. A peer with no connection yet reports that rather
+than reading statistics from nothing — the caller is a logging goroutine, and a panic
+there would take the server down over a diagnostic.
+
+This closes the gap §7 named for TURN specifically: an operator can now tell a
+deployment whose calls went direct from one whose calls quietly relayed, which is the
+difference between working and working-until-the-direct-path-changes.
+
 The existing credential machinery — 24-hour HMAC credentials with `RevokeUser`
 (`turn.go:113,135`) — is sound and stays.
 

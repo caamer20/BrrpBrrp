@@ -582,9 +582,62 @@ func TestAnUnmarkedSecondOfferIsStillRefused(t *testing.T) {
 	}
 	err = sfu.Signal("ana", "ana", Signal{
 		ConnectionID: sfu.connectionIDFor("ana"),
-		SDP:         &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: peer.pc.LocalDescription().SDP},
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: peer.pc.LocalDescription().SDP},
 	})
 	if err == nil {
 		t.Fatal("a second offer naming no publication and no view was accepted")
+	}
+}
+
+// A connected call must say which path carried it. "The call connected" is true of a
+// direct call and a relayed one alike, so without the candidate type a passing test
+// proves nothing about the network path — which is the question an operator has when
+// a call works locally and fails for everybody else.
+func TestAConnectedCallReportsThePathThatCarriedIt(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.mu.Unlock()
+
+	local, remote, err := sfu.selectedCandidatePair(peer)
+	if err != nil {
+		t.Fatalf("a connected call reported no candidate pair: %v", err)
+	}
+	// Two peers on the loopback interface settle on a host/srflx pair. What matters is
+	// that the answer is a type name an operator can read, not an opaque id they would
+	// have to look up — and never an empty string, which would look like a working
+	// measurement while saying nothing.
+	if local == "" || remote == "" {
+		t.Fatalf("the candidate pair reported %q/%q, want two named types", local, remote)
+	}
+	switch local {
+	case "host", "srflx", "prflx", "relay":
+	default:
+		t.Fatalf("the local candidate type was %q, which is not a candidate type", local)
+	}
+	switch remote {
+	case "host", "srflx", "prflx", "relay":
+	default:
+		t.Fatalf("the remote candidate type was %q, which is not a candidate type", remote)
+	}
+}
+
+// A peer with no established pair must say so rather than reporting an empty path.
+// The alternative is a log line reading "path: /" for a call that never connected.
+func TestAnUnestablishedCallReportsNoPathRatherThanAnEmptyOne(t *testing.T) {
+	sfu := newTestSFU(t)
+	// A real connected peer, read through the same path a diagnostic would use, has a
+	// settled pair — and a peer with no connection at all must report that rather than
+	// dereference nothing. The nil case is the one that matters: the caller is a
+	// logging goroutine, and a panic there takes the server down over a diagnostic.
+	if _, _, err := sfu.selectedCandidatePair(nil); err == nil {
+		t.Fatal("a missing peer reported a candidate pair")
+	}
+	if _, _, err := sfu.selectedCandidatePair(&Peer{connectionID: "c1", state: State{UserID: "ghost", ChannelID: "room"}}); err == nil {
+		t.Fatal("a peer with no connection reported a candidate pair")
 	}
 }

@@ -20,7 +20,6 @@ import (
 	"brrpbrrp/internal/scraper"
 	"brrpbrrp/internal/ws"
 	"brrpbrrp/web"
-	"github.com/pion/webrtc/v4"
 )
 
 type Server struct {
@@ -172,7 +171,12 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	}
 	// Voice presence is published per channel so a restricted channel's
 	// participants never reach an account that may not read it.
-	voice, err := rtc.New(rtc.Options{ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}, ExternalIP: config.VoiceExternalIP, PortMin: config.VoicePortMin, PortMax: config.VoicePortMax}, s.publishVoiceStates)
+	// The server's own media engine used to name a public STUN server. The server
+	// learns its reachable address from the operator's configuration and from the
+	// relay it already runs; reaching for a third party from inside the server adds a
+	// vendor dependency to a product that promises none, and does nothing on an
+	// offline installation.
+	voice, err := rtc.New(rtc.Options{ExternalIP: config.VoiceExternalIP, PortMin: config.VoicePortMin, PortMax: config.VoicePortMax, Log: log}, s.publishVoiceStates)
 	if err != nil {
 		cancel()
 		return nil, err

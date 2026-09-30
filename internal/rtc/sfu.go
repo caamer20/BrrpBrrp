@@ -3,6 +3,7 @@ package rtc
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,11 @@ import (
 const MaxParticipants = 10
 
 type Options struct {
+	// Log records which network path carried each call. It is optional: media tests
+	// and a bare embedder do not want a logger, and a call that connects is not a
+	// failure that needs inventing a logger to report.
+	Log *slog.Logger
+
 	ExternalIP       string
 	PortMin, PortMax uint16
 	ICEServers       []webrtc.ICEServer
@@ -42,7 +48,7 @@ type Signal struct {
 	// *renegotiation* — a client adding a track to a call that is already up — which
 	// the previous code refused outright, so there was no way to share a screen into a
 	// live call at all.
-	Publication PublicationKind   `json:"publication,omitempty"`
+	Publication PublicationKind `json:"publication,omitempty"`
 	// PublicationID is the id the new track is published under, chosen by the server
 	// and returned to the client so a reconnecting client can tell a resume from a
 	// new publication that reused a slot.
@@ -59,16 +65,16 @@ type JoinEvent struct {
 }
 
 type Peer struct {
-	owner        string
-	state        State
-	slot         int
-	pc           *webrtc.PeerConnection
-	outputs      []*forwarder
+	owner   string
+	state   State
+	slot    int
+	pc      *webrtc.PeerConnection
+	outputs []*forwarder
 	// screens are this peer's video outputs, created when a screen publication is
 	// accepted rather than up front. The audio outputs are pre-created because a
 	// participant's microphone is known at join; a screen is not, and pre-creating
 	// nine video tracks for every participant would negotiate video nobody asked for.
-	screens []*screenForwarder
+	screens      []*screenForwarder
 	send         func(string, any)
 	receiving    atomic.Bool
 	signalMu     sync.Mutex
@@ -122,6 +128,8 @@ type SFU struct {
 	// changed after construction, so a peer cannot negotiate against a bound that
 	// moved underneath it.
 	limits PublicationLimits
+	// log records which network path actually carried each call. It may be nil.
+	log *slog.Logger
 }
 
 // h264Codecs are the video profiles this build offers. Several are registered because
@@ -183,6 +191,7 @@ func New(options Options, changed func([]State)) (*SFU, error) {
 		api: api, options: options, peers: make(map[string]*Peer), changed: changed,
 		publications: make(map[string]*publicationRegistry),
 		limits:       DefaultPublicationLimits(),
+		log:          options.Log,
 	}, nil
 }
 
@@ -259,6 +268,29 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateConnected {
 			s.announceJoin(userID, peer)
+			// A connected connection says *something* carried the call, and never says
+			// what. Recording the selected pair's type is the difference between a call
+			// that worked and a call that worked over TURN — which is the difference
+			// between a working deployment and a working deployment that will fail the
+			// day the direct path stops being available.
+			//
+			// It is read once, shortly after connecting, and logged. Reading it is
+			// cheap; waiting for a later transition and reading again would be a
+			// polling loop for a value that settles.
+			go func() {
+				time.Sleep(500 * time.Millisecond)
+				local, remote, err := s.selectedCandidatePair(peer)
+				if err != nil {
+					return
+				}
+				if s.log == nil {
+					return
+				}
+				s.log.Info("voice path established",
+					"user_id", userID, "room", peer.state.ChannelID,
+					"local", local, "remote", remote,
+					"relayed", strings.Contains(local, "typ relay") || strings.Contains(remote, "typ relay"))
+			}()
 		} else if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
 			s.leavePeer(userID, peer)
 		}
@@ -1187,4 +1219,51 @@ func (s *SFU) stopPublication(userID string, signal Signal) error {
 		other.emit("screen.stopped", map[string]any{"channel_id": room})
 	}
 	return nil
+}
+
+// selectedCandidatePair reports the type of the candidate pair ICE actually chose,
+// as the SDP fragment both ends agreed on. It is the only place the question "which
+// path carried this call" has an answer, and the answer is the difference between a
+// direct path and a relayed one.
+func (s *SFU) selectedCandidatePair(peer *Peer) (string, string, error) {
+	// A peer can be present in the map before its connection is built. Reading stats
+	// from no connection is not a measurement; it is a nil dereference, and the caller
+	// is a logging goroutine whose panic would take the server down over a diagnostic.
+	if peer == nil || peer.pc == nil {
+		return "", "", errors.New("the peer has no connection")
+	}
+	stats := peer.pc.GetStats()
+	for _, report := range stats {
+		pair, ok := report.(webrtc.ICECandidatePairStats)
+		if !ok || pair.State != webrtc.StatsICECandidatePairStateSucceeded {
+			continue
+		}
+		// A pair can succeed and then be superseded. Only a nominated pair is the one
+		// ICE is actually using, so a non-nominated success is not an answer.
+		if !pair.Nominated {
+			continue
+		}
+		return reportICECandidateType(stats, pair.LocalCandidateID), reportICECandidateType(stats, pair.RemoteCandidateID), nil
+	}
+	return "", "", errors.New("no candidate pair has succeeded")
+}
+
+// reportICECandidateType resolves a candidate id to its `typ` token, so a log line
+// says "relay" rather than an id nobody can look up afterwards.
+func reportICECandidateType(stats webrtc.StatsReport, id string) string {
+	if id == "" {
+		return ""
+	}
+	report, ok := stats[id]
+	if !ok {
+		return id
+	}
+	candidate, ok := report.(webrtc.ICECandidateStats)
+	if !ok {
+		return id
+	}
+	// String is the type's own name — "host", "srflx", "prflx", "relay" — which is the
+	// token that appears in an SDP candidate line and the one an operator will search
+	// a log for.
+	return candidate.CandidateType.String()
 }
