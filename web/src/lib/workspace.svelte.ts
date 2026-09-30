@@ -973,7 +973,11 @@ class Workspace {
         const pending = Object.values(this.pending).filter(
           (message) => this.conversationId(message) === id
         );
-        this.messages = [...loaded, ...pending];
+        // A channel's view is the channel's own messages. A thread reply belongs to
+        // the thread and is read from there; the server's page already excludes it, and
+        // a live event has to be excluded here for the same reason, or the two views
+        // disagree about the same message.
+        this.messages = [...loaded.filter((message) => !message.thread_id), ...pending];
       }
       if (!historyWindow) this.hasOlder = loaded.length === 50;
       if (position) this.scrollRestore = { ...position };

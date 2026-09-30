@@ -60,6 +60,24 @@ func (s *Server) protect(policy routePolicy, next authenticatedHandler) http.Han
 			s.failed(w, err)
 			return
 		}
+		// An inactive account holds nothing — banned, deactivated or inside a
+		// moderation timeout — and the check belongs here rather than in each handler.
+		// Relying on the capability check alone would let a route that declares no
+		// capability (a plain channel list, a search) answer a suspended account,
+		// which is the one thing a timeout exists to prevent.
+		//
+		// A ban and a timeout are answered differently on purpose: a banned or
+		// deactivated account's session is over, so 401 sends it back to sign in; a
+		// timeout is a decision about what the account may do and its session is still
+		// valid, so 403 with an explanation is the honest answer.
+		if principal.Inactive {
+			if suspended, _ := s.timeoutState(r.Context(), user.ID); suspended {
+				problem(w, http.StatusForbidden, "This account is suspended until a moderation timeout expires. Contact a moderator if you think this is a mistake.")
+			} else {
+				problem(w, http.StatusUnauthorized, "Please sign in again.")
+			}
+			return
+		}
 		if policy.Capability != "" && !principal.Allowed(policy.Capability) {
 			problem(w, http.StatusForbidden, "Your role does not include "+string(policy.Capability)+".")
 			return

@@ -20,6 +20,7 @@
   let action = $state('');
   let confirm = $state('');
   let reason = $state('');
+  let timeoutMinutes = $state('60');
   // Role assignment is its own panel: it replaces a set rather than confirming a
   // single destructive action, so it does not fit the confirm-by-username flow.
   let roleTarget = $state<User | null>(null);
@@ -115,6 +116,13 @@
         else if (action === 'Delete account') await api(path, 'DELETE', { confirm });
         else if (action === 'Remove account, keep messages')
           await api(`${path}/anonymize`, 'POST', { confirm });
+        else if (action === 'Suspend for a while') {
+          const minutes = Number(timeoutMinutes);
+          if (!Number.isFinite(minutes) || minutes < 1)
+            throw new Error('Choose how many minutes the timeout lasts.');
+          await api(`${path}/timeout`, 'POST', { minutes, reason });
+        } else if (action === 'End timeout early')
+          await api(`${path}/timeout`, 'DELETE', { confirm });
         else if (action === 'Ban' || action === 'Unban')
           await api(path, 'PATCH', { confirm, is_banned: action === 'Ban', ban_reason: reason });
         else if (action === 'Deactivate' || action === 'Reactivate')
@@ -123,7 +131,11 @@
         notice =
           action === 'Remove second factor'
             ? 'Second factor removed. Tell them to enroll a new one as soon as they sign in.'
-            : 'Account updated.';
+            : action === 'Suspend for a while'
+              ? `Account suspended. It regains exactly the access it had when the timeout started, in ${timeoutMinutes} minutes.`
+              : action === 'End timeout early'
+                ? 'Timeout ended. The account can act again.'
+                : 'Account updated.';
         target = null;
       }
       password = '';
@@ -325,6 +337,10 @@
                 >{user.is_deactivated ? 'Reactivate' : 'Deactivate'}</button
               ><button onclick={() => choose(user, user.is_banned ? 'Unban' : 'Ban')}
                 >{user.is_banned ? 'Unban' : 'Ban'}</button
+              ><button onclick={() => choose(user, 'Suspend for a while')}>Timeout</button
+              >{#if user.in_timeout}<button onclick={() => choose(user, 'End timeout early')}
+                  >End timeout</button
+                >{/if}
               >{#if canManageRoles}<button
                   onclick={() => choose(user, user.is_admin ? 'Remove admin' : 'Make admin')}
                   >{user.is_admin ? 'Remove admin' : 'Make admin'}</button

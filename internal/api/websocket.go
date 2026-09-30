@@ -279,7 +279,14 @@ func (s *Server) dispatchSocketMutation(ctx context.Context, r *http.Request, cl
 // The payload carries identifiers, never content, and never reaches an account
 // without current access.
 func (s *Server) publishMessage(kind string, message db.Message) {
-	s.publishToConversation(context.Background(), message.ConversationID, kind, map[string]string{"id": message.ID, "channel_id": message.ChannelID, "conversation_id": message.ConversationID, "reply_to_id": message.ReplyToID})
+	// The thread id travels with the event. Without it a client cannot tell a thread
+	// reply from an ordinary channel message, and would put the reply into the channel
+	// list that deliberately excludes thread messages — which is how a thread reply
+	// ended up visible in the channel it was branched off from.
+	s.publishToConversation(context.Background(), message.ConversationID, kind, map[string]string{
+		"id": message.ID, "channel_id": message.ChannelID, "conversation_id": message.ConversationID,
+		"reply_to_id": message.ReplyToID, "thread_id": message.ThreadID,
+	})
 }
 
 func (s *Server) Close() {

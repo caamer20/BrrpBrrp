@@ -59,6 +59,28 @@ func (s *Server) users(includeBanned bool) ([]db.User, error) {
 	return users, rows.Err()
 }
 
+// adminUserStates decorates the administrator's account list with whether each account
+// is currently inside a moderation timeout, so the panel can offer to end one. It is a
+// separate projection rather than a column on the user: the timeout is a moderation
+// state, and putting it on the user row would make it part of identity — visible to
+// every reader of a user rather than only to the administrator who may lift it.
+func (s *Server) adminUserStates(ctx context.Context, users []db.User) (map[string]bool, error) {
+	states := map[string]bool{}
+	rows, err := s.store.QueryContext(ctx, `SELECT user_id FROM account_timeouts WHERE expires_at>?`, db.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		states[id] = true
+	}
+	return states, rows.Err()
+}
+
 // state returns the bootstrap snapshot. Every part of it is scoped to the caller:
 // a channel it cannot read contributes neither a title, a count nor a cursor.
 func (s *Server) state(w http.ResponseWriter, r *http.Request, user db.User) {

@@ -7,6 +7,9 @@ export interface User {
   // is recovered on the server host instead of from this panel.
   is_owner: boolean;
   is_banned: boolean;
+  // Present only on the administrator's account list. A timeout is a moderation
+  // state, not part of identity, so it is not on the user record other readers see.
+  in_timeout?: boolean;
   is_deactivated: boolean;
   is_deleted?: boolean;
   avatar_color: string;
@@ -121,6 +124,9 @@ export interface Message {
   embeds: Embed[];
   pending?: 'sending' | 'failed';
   preserve_position?: boolean;
+  // The named thread this message belongs to, absent for an unthreaded message
+  // (ADR 0017). A channel's view excludes these: they are read from the thread.
+  thread_id?: string;
 }
 
 export interface ReplyPage {
@@ -245,6 +251,10 @@ export interface MessageReport {
   created_at: string;
   updated_at: string;
   expires_at: string;
+  // Assignment is a claim about who is expected to review this, not a grant: the
+  // review itself still requires the reviewer's own current capability (ADR 0018).
+  assigned_to: string;
+  assigned_at: string;
 }
 
 // A consenting group (ADR 0016). A group is a conversation the account has been

@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { threadSubmitState, canSendThreadReply } from '../src/lib/thread-state.ts';
 
 const readSource = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+const readRepo = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
 
 test('a refusal keeps the action available; an unknown outcome does not', () => {
   assert.equal(threadSubmitState(false, null), 'ready');
@@ -68,4 +69,26 @@ test('the reply control follows the thread, not just the draft', () => {
   // A thread that is gone offers nothing, rather than a control that fails on press.
   assert.equal(canSendThreadReply({ ...ready, missing: true }), false);
   assert.equal(canSendThreadReply({ ...ready, open: false }), false);
+});
+
+// A thread reply belongs to the thread, not to the channel it was branched off from.
+// The server's channel page already excludes it; the client's own live-send path has to
+// make the same decision, or a thread reply appears in the channel even though the
+// stored message is correctly filed.
+test('a thread reply is not added to the channel it was branched off from', () => {
+  const source = readSource('src/lib/workspace.svelte.ts');
+  assert.match(source, /loaded\.filter\(\(message\) => !message\.thread_id\)/);
+});
+
+test('the server sends the thread id with a live message event', () => {
+  // Without it the client cannot tell a thread reply from a channel message, and the
+  // channel view would put it back. This is the defect the browser journey found.
+  const source = readRepo('internal/api/websocket.go');
+  assert.match(source, /"thread_id": message\.ThreadID/);
+});
+
+test('a stored message carries the thread it belongs to', () => {
+  const source = readRepo('internal/db/messages.go');
+  assert.match(source, /COALESCE\(thread_id,''\)/);
+  assert.match(source, /&message\.ThreadID/);
 });

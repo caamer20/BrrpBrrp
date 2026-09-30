@@ -51,7 +51,7 @@ func historySnapshot(t *testing.T, q Queryer) map[string]string {
 		"mentions":    `SELECT * FROM mentions ORDER BY message_id,target_user_id`,
 		"reads":       `SELECT * FROM channel_reads ORDER BY user_id,channel_id`,
 		"receipts":    `SELECT * FROM message_operations ORDER BY account_id,idempotency_key`,
-		"reports":     `SELECT * FROM message_reports ORDER BY id`,
+		"reports":     `SELECT id,message_id,channel_id,reporter_id,author_id,reason,snapshot_text,status,review_note,reviewed_by,created_at,updated_at,expires_at FROM message_reports ORDER BY id`,
 	} {
 		rows, err := q.QueryContext(t.Context(), query)
 		if err != nil {

@@ -92,6 +92,11 @@ type Message struct {
 	ReplyToID      string          `json:"reply_to_id,omitempty"`
 	ReplyCount     int             `json:"reply_count"`
 	Pinned         bool            `json:"pinned"`
+	// ThreadID is the named thread this message belongs to, empty for an unthreaded
+	// message (ADR 0017). It is part of the message rather than of the view because a
+	// client that cannot see it has no way to keep a thread reply out of the channel
+	// list, which deliberately excludes thread messages.
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 type Settings struct {

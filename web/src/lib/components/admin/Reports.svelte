@@ -97,6 +97,31 @@
       if (admitted(request)) loading = false;
     }
   }
+  const reviewers = $derived(
+    (workspace.state?.users ?? []).filter((member) => workspace.can('message.delete_any'))
+  );
+
+  async function assign(report: MessageReport, assignee: string) {
+    if (busy || !loadedFor || !admitted(loadedFor)) return;
+    const request = loadedFor;
+    busy = report.id;
+    error = notice = '';
+    try {
+      const updated = await api<MessageReport>(`/admin/reports/${report.id}/assign`, 'POST', {
+        assignee_id: assignee
+      });
+      if (!admitted(request)) return;
+      reports = reports.map((item) => (item.id === updated.id ? updated : item));
+      notice = updated.assigned_to
+        ? `Assigned to ${memberName(updated.assigned_to)}. They still need permission to review.`
+        : 'Assignment cleared.';
+    } catch (failure) {
+      if (admitted(request)) error = errorMessage(failure);
+    } finally {
+      if (admitted(request)) busy = '';
+    }
+  }
+
   async function review(report: MessageReport) {
     if (busy || !loadedFor || !admitted(loadedFor)) return;
     const request = loadedFor;
@@ -175,6 +200,24 @@
         Evidence available until {new Date(report.expires_at).toLocaleDateString()}. The original
         message may have changed or been deleted.
       </p>
+      <div class="report-assignment">
+        <label
+          >Assigned to<select
+            value={report.assigned_to ?? ''}
+            disabled={!!busy}
+            onchange={(event) => void assign(report, event.currentTarget.value)}
+          >
+            <option value="">Nobody yet</option>
+            {#each reviewers as member (member.id)}
+              <option value={member.id}>{member.display_name || member.username}</option>
+            {/each}
+          </select></label
+        >
+        <small
+          >Assigning records who is expected to look at this report. It does not give them
+          permission, and it does not stop anyone else who can already review it.</small
+        >
+      </div>
       <form
         onsubmit={(event) => {
           event.preventDefault();
@@ -229,5 +272,14 @@
   .report-text {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  .report-assignment {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0.5rem 0;
+  }
+  .report-assignment small {
+    color: var(--muted);
   }
 </style>

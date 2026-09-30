@@ -54,10 +54,20 @@ func (s *Service) Resolve(ctx context.Context, q db.Queryer, account db.User) (P
 	for _, roleID := range assigned {
 		granted[roleID] = true
 	}
+	// A moderation timeout suspends the account without touching its roles, so it
+	// cannot be a property of the role set: the roles are still there, and they must be
+	// exactly what expiry restores. It is read here, in the one place every request,
+	// delivery check and scoped query resolves its authority, so no path can answer
+	// "may this account act" while ignoring it. The row's own expiry decides, not a
+	// maintenance job having run.
+	suspended := false
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_timeouts WHERE user_id=? AND expires_at>?)`, current.ID, db.Now()).Scan(&suspended); err != nil {
+		return Principal{}, err
+	}
 	principal := Principal{
 		UserID: current.ID, IsOwner: current.IsOwner, AdminBridge: current.IsAdmin,
 		OwnerDesignated: owners > 0, OwnershipEstablished: established, Revision: revision,
-		Inactive: current.IsBanned || current.IsDeactivated,
+		Inactive: current.IsBanned || current.IsDeactivated || suspended,
 		Roles:    make([]Role, 0, len(catalog)),
 	}
 	for _, role := range catalog {

@@ -30,13 +30,17 @@ type messageReport struct {
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 	ExpiresAt    string `json:"expires_at"`
+	// Assignment is a claim about who is expected to look at this, not a grant: the
+	// review still requires the reviewer's own current capability (ADR 0018).
+	AssignedTo   string `json:"assigned_to"`
+	AssignedAt   string `json:"assigned_at"`
 }
 
-const reportColumns = `id,message_id,channel_id,COALESCE(reporter_id,''),COALESCE(author_id,''),reason,snapshot_text,status,review_note,COALESCE(reviewed_by,''),created_at,updated_at,expires_at`
+const reportColumns = `id,message_id,channel_id,COALESCE(reporter_id,''),COALESCE(author_id,''),reason,snapshot_text,status,review_note,COALESCE(reviewed_by,''),created_at,updated_at,expires_at,COALESCE(assigned_to,''),assigned_at`
 
 func scanReport(row interface{ Scan(...any) error }) (messageReport, error) {
 	var report messageReport
-	err := row.Scan(&report.ID, &report.MessageID, &report.ChannelID, &report.ReporterID, &report.AuthorID, &report.Reason, &report.SnapshotText, &report.Status, &report.ReviewNote, &report.ReviewedBy, &report.CreatedAt, &report.UpdatedAt, &report.ExpiresAt)
+	err := row.Scan(&report.ID, &report.MessageID, &report.ChannelID, &report.ReporterID, &report.AuthorID, &report.Reason, &report.SnapshotText, &report.Status, &report.ReviewNote, &report.ReviewedBy, &report.CreatedAt, &report.UpdatedAt, &report.ExpiresAt, &report.AssignedTo, &report.AssignedAt)
 	return report, err
 }
 

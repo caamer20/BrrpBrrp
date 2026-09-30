@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -24,7 +25,30 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, user db.User
 		s.failed(w, err)
 		return
 	}
-	respond(w, 200, users)
+	suspended, err := s.adminUserStates(r.Context(), users)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	// The timeout is a separate field rather than part of the user, so it is only
+	// visible here — to an account that may lift it — and never rides along on the
+	// user record that every other reader sees.
+	listed := make([]map[string]any, 0, len(users))
+	for _, member := range users {
+		entry := map[string]any{}
+		raw, err := json.Marshal(member)
+		if err != nil {
+			s.failed(w, err)
+			return
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			s.failed(w, err)
+			return
+		}
+		entry["in_timeout"] = suspended[member.ID]
+		listed = append(listed, entry)
+	}
+	respond(w, 200, listed)
 }
 
 // administratorRole loads the built-in administrator role inside the caller's

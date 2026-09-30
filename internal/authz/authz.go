@@ -376,6 +376,12 @@ var ErrUnavailable = errors.New("resource unavailable")
 // ErrForbidden is returned for a denied action on a visible resource.
 var ErrForbidden = errors.New("not permitted")
 
+// ErrSuspended is returned while an account is inside a moderation timeout. It is
+// distinct from ErrSessionEnded: the session is still valid and the account is still
+// signed in, it simply may not act until the timeout expires. Answering 401 would tell
+// somebody they have been signed out and send them through a sign-in they do not need.
+var ErrSuspended = errors.New("account suspended")
+
 // ErrSessionEnded is returned when the session or the account that made a
 // request stopped being valid while the request was being authorized. It maps to
 // a 401, not a 403: the caller is not merely refused, it is no longer signed in.

@@ -20,12 +20,22 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, user d
 	var input struct {
 		Hours   int      `json:"hours"`
 		RoleIDs []string `json:"role_ids"`
+		// A bounded multi-use invitation. The default of one use is what every
+		// invitation issued before this did, so an invitation created without this
+		// field behaves exactly as it always has.
+		MaxUses int `json:"max_uses"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
 	if input.Hours < 1 || input.Hours > 168 {
 		problem(w, 400, "Invitations last between one hour and seven days.")
+		return
+	}
+	// Bounded on the write. An invitation nobody can stop admitting people with is a
+	// standing grant hidden in a link, so the ceiling is a policy, not a default.
+	if input.MaxUses < 0 || input.MaxUses > 50 {
+		problem(w, 400, "An invitation can admit between one and fifty people.")
 		return
 	}
 	token, err := randomToken()
@@ -57,7 +67,14 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request, user d
 		problem(w, 403, err.Error())
 		return
 	}
-	result, err := tx.Exec(`INSERT INTO invitations(id,token_hash,created_by,created_at,expires_at) SELECT ?,?,?,?,? WHERE (SELECT count(*) FROM invitations WHERE used_at IS NULL AND expires_at>?)<100`, id, hashToken(token), user.ID, db.Now(), expires, db.Now())
+	// `revoked_at=''` is a string literal, and the `?` in `expires_at>?` is part of
+	// that literal as far as the driver is concerned: the statement binds seven
+	// arguments to six placeholders, and the sixth — the admission bound — is silently
+	// dropped. Every invitation was therefore written with the column default, so a
+	// two-person invitation admitted everybody. The bound is now bound, and the
+	// outstanding-count predicate takes a parameter rather than a second timestamp
+	// smuggled inside a string.
+	result, err := tx.Exec(`INSERT INTO invitations(id,token_hash,created_by,created_at,expires_at,max_uses) SELECT ?,?,?,?,?,? WHERE (SELECT count(*) FROM invitations WHERE used_at IS NULL AND revoked_at='' AND expires_at>?)<?`, id, hashToken(token), user.ID, db.Now(), expires, boundedUses(input.MaxUses), db.Now(), maxOutstandingInvitations)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -144,7 +161,7 @@ func roleIDs(roles []db.Role) []string {
 }
 
 func (s *Server) invitations(w http.ResponseWriter, r *http.Request, user db.User) {
-	rows, err := s.store.Query(`SELECT id,created_at,expires_at FROM invitations WHERE used_at IS NULL AND expires_at>? ORDER BY created_at DESC`, db.Now())
+	rows, err := s.store.Query(`SELECT id,created_at,expires_at,max_uses,uses FROM invitations WHERE used_at IS NULL AND revoked_at='' AND expires_at>? ORDER BY created_at DESC`, db.Now())
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -154,6 +171,11 @@ func (s *Server) invitations(w http.ResponseWriter, r *http.Request, user db.Use
 		ID        string   `json:"id"`
 		CreatedAt string   `json:"created_at"`
 		ExpiresAt string   `json:"expires_at"`
+		// The admission bounds are part of what the invitation *is*, so they are
+		// returned rather than hidden: an operator deciding whether to reissue needs to
+		// see how much of it is left.
+		MaxUses   int      `json:"max_uses"`
+		Uses      int      `json:"uses"`
 		Roles     []string `json:"roles"`
 		RoleIDs   []string `json:"role_ids"`
 	}
@@ -162,7 +184,7 @@ func (s *Server) invitations(w http.ResponseWriter, r *http.Request, user db.Use
 	entries := []summary{}
 	for rows.Next() {
 		var entry summary
-		if err := rows.Scan(&entry.ID, &entry.CreatedAt, &entry.ExpiresAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.CreatedAt, &entry.ExpiresAt, &entry.MaxUses, &entry.Uses); err != nil {
 			s.failed(w, err)
 			return
 		}
@@ -186,7 +208,7 @@ func (s *Server) invitations(w http.ResponseWriter, r *http.Request, user db.Use
 
 func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !s.mutateReply(w, r, user, authz.InviteManage, func(tx *sql.Tx, principal authz.Principal) error {
-		if _, err := tx.ExecContext(r.Context(), `DELETE FROM invitations WHERE id=?`, r.PathValue("id")); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `UPDATE invitations SET revoked_at=?,revoked_by=? WHERE id=? AND revoked_at=''`, db.Now(), user.ID, r.PathValue("id")); err != nil {
 			return err
 		}
 		return s.auditTx(r.Context(), tx, user.ID, "invitation.revoked", r.PathValue("id"))
@@ -232,7 +254,12 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 	// and who promised it. The single-use update below stays the only admission.
 	var invitationID string
 	var inviter sql.NullString
-	if err := tx.QueryRow(`SELECT id,created_by FROM invitations WHERE token_hash=? AND used_at IS NULL AND expires_at>?`, hashToken(input.Token), db.Now()).Scan(&invitationID, &inviter); err != nil {
+	// Every way an invitation stops working answers identically, so a link cannot be
+	// used to find out which: expired, revoked, exhausted and never-existed all read
+	// the same. The use count is consumed by the UPDATE's own predicate, so two people
+	// racing for the last remaining use cannot both take it.
+	if err := tx.QueryRow(`SELECT id,created_by FROM invitations WHERE token_hash=? AND revoked_at='' AND expires_at>? AND (used_at IS NULL OR (max_uses>0 AND uses<max_uses))`, hashToken(input.Token), db.Now()).
+		Scan(&invitationID, &inviter); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			problem(w, 400, "This invitation has expired or has already been used.")
 			return
@@ -240,7 +267,11 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		s.failed(w, err)
 		return
 	}
-	result, err := tx.Exec(`UPDATE invitations SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at>?`, db.Now(), hashToken(input.Token), db.Now())
+	// A single-use invitation is consumed by setting used_at; a bounded multi-use one
+	// is consumed by counting. Doing both in one statement keeps the two paths from
+	// disagreeing about what "one more person" means.
+	result, err := tx.Exec(`UPDATE invitations SET uses=uses+1,used_at=CASE WHEN uses+1>=max_uses THEN ? ELSE used_at END
+		WHERE id=? AND revoked_at='' AND (used_at IS NULL OR uses<max_uses)`, db.Now(), invitationID)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -344,3 +375,19 @@ func (s *Server) applyInvitationGrants(r *http.Request, tx *sql.Tx, userID, invi
 	}
 	return granted, nil
 }
+
+// boundedUses maps the requested admission count onto the stored representation. One
+// is the floor: "admit nobody" is not an invitation, and silently making one would be a
+// surprise, so a request for zero or less is stored as the single use every invitation
+// before this behaved as.
+func boundedUses(requested int) int {
+	if requested < 1 {
+		return 1
+	}
+	return requested
+}
+
+// maxOutstandingInvitations bounds how many unused invitations one installation may
+// hold at once. It is a ceiling on standing links, enforced where the invitation is
+// created rather than by a later sweep.
+const maxOutstandingInvitations = 100
