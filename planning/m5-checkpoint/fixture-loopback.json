@@ -1,0 +1,28 @@
+{
+  "label": "ad-hoc",
+  "generated_at": "2026-09-30T05:31:27.809Z",
+  "source_commit": "207aff7f2cfeeeb679d957520aaf8cbc0e0e38c6",
+  "base_url": "http://127.0.0.1:39111",
+  "requested": {
+    "accountCount": 4,
+    "channelCount": 3,
+    "messageCount": 24,
+    "privateTraffic": false
+  },
+  "created": {
+    "accounts": 4,
+    "channels": 3,
+    "messages": 24,
+    "replies": 0,
+    "reactions": 2,
+    "directConversations": 0
+  },
+  "reused": {
+    "accounts": 0,
+    "channels": 0
+  },
+  "duration_seconds": 15,
+  "rate_limited_requests": 6,
+  "rate_limited_wait_seconds": 14,
+  "notes": []
+}

@@ -1,0 +1,49 @@
+{
+  "label": "loopback development host",
+  "measured_at": "2026-09-30T05:34:52.922Z",
+  "source_commit": "1145dea1310dc101d6555f1d2ab4eb3a611e4a17",
+  "base_url": "http://127.0.0.1:39111",
+  "topology": {
+    "clients": 3,
+    "channels": 4,
+    "duration_seconds": 15,
+    "note": "one host, loopback clients; the master plan budgets are stated for the reference allocation and a LAN, so these figures are not comparable to them"
+  },
+  "sent": 30,
+  "delivery": {
+    "samples": 14,
+    "p50_ms": 6,
+    "p95_ms": 9,
+    "p99_ms": 9,
+    "max_ms": 9
+  },
+  "search": {
+    "samples": 30,
+    "p50_ms": 2,
+    "p95_ms": 4,
+    "p99_ms": 4
+  },
+  "reconnect": {
+    "samples": 3,
+    "p95_ms": 7
+  },
+  "budgets": {
+    "delivery_p95_ms": 500,
+    "delivery_p99_ms": 1000,
+    "search_p95_ms": 1000,
+    "search_p99_ms": 2000,
+    "reconnect_p95_ms": 10000
+  },
+  "verdict": {
+    "delivery_p95": true,
+    "search_p95": true,
+    "note": "a null verdict means the run measured nothing, not that the budget passed"
+  },
+  "wall_clock_seconds": 15,
+  "not_established": [
+    "This is one development host over loopback. The master plan budgets are stated for four cores, 8 GiB, a LAN and 100 Mbit/s symmetric; these figures are not comparable to them and no budget is claimed as met.",
+    "No capacity population was reached: the reference profile is 250 accounts, 100 channels and one million messages; this run measured a few dozen on an idle server.",
+    "No ramp, no two-hour peak, no 24-hour soak, no mixed private traffic under load, and no media.",
+    "No host qualification: this ran on a developer machine, not on the Windows or Linux Docker deployments."
+  ]
+}
