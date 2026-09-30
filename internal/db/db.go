@@ -73,6 +73,9 @@ var migration19 string
 //go:embed migration20.sql
 var migration20 string
 
+//go:embed migration21.sql
+var migration21 string
+
 //go:embed migration17.sql
 var migration17 string
 

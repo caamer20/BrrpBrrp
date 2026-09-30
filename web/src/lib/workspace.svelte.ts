@@ -76,6 +76,9 @@ class Workspace {
   membersOpen = $state(window.innerWidth > 900 && storage.getItem('brrp.members-open') !== 'false');
   searchOpen = $state(false);
   settingsOpen = $state(false);
+  // The member's own data export. It is a read path that leaves the building, so it
+  // is a deliberate action with its own panel rather than a link hidden somewhere.
+  exportOpen = $state(false);
   // The Preferences section is store state so a refused privileged action can
   // send the account straight to the panel that fixes it.
   preferencesSection = $state('Appearance');

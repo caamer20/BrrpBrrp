@@ -21,6 +21,7 @@
   import { drawerFocus } from '../drawer-focus';
   import { voice } from '../voice.svelte';
   import VoicePanel from './VoicePanel.svelte';
+  import ExportPanel from './ExportPanel.svelte';
   import VoiceControls from './VoiceControls.svelte';
   let narrow = $state(window.innerWidth <= 640);
   let overlayMembers = $state(window.innerWidth <= 900);
@@ -442,4 +443,5 @@
     close={() => (workspace.adminOpen = false)}
     load={() => import('./AdminPanel.svelte')}
   />{/if}
+{#if workspace.exportOpen}<ExportPanel />{/if}
 {#if voice.panelOpen}<VoicePanel />{/if}

@@ -67,6 +67,7 @@ func TestSensitiveRoutesRequireRecentStrongAuthentication(t *testing.T) {
 		}
 	}
 	want := []string{
+		"POST /api/me/export",
 		"POST /api/owner",
 		"POST /api/admin/users/{id}/anonymize",
 		"POST /api/admin/users/{id}/reset-password",

@@ -95,6 +95,13 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM sessions WHERE expires_at<?`, db.Timestamp(now)); err != nil {
 		return err
 	}
+	// A produced export's server copy has a lifetime (ADR 0019b). Keeping one account's
+	// history on the server after the member has taken their copy is a liability that
+	// grows with every export ever run, and the member can delete theirs sooner — but
+	// an undeleted one must not survive its own stated lifetime either.
+	if _, err := s.expireExports(s.ctx, s.store); err != nil {
+		return err
+	}
 	orphanCutoff := db.Timestamp(now.Add(-24 * time.Hour))
 	if _, err := s.store.ExecContext(s.ctx, `DELETE FROM invitations WHERE expires_at<?`, orphanCutoff); err != nil {
 		return err

@@ -251,6 +251,13 @@ func (s *Server) routes() []route {
 		{http.MethodPost, "/api/admin/reports/{id}/assign", routePolicy{Capability: authz.MessageDeleteAny, Note: "a claim about who reviews, not a grant; the reviewer still needs their own current capability"}, s.assignReport},
 		{http.MethodPost, "/api/admin/accounts/{id}/timeout", routePolicy{Capability: authz.MemberManage, Note: "the downward-only hierarchy check runs inside the transaction against current authority"}, s.applyTimeout},
 		{http.MethodDelete, "/api/admin/accounts/{id}/timeout", routePolicy{Capability: authz.MemberManage, Note: "lifting early is a recorded decision, distinct from expiry"}, s.liftTimeout},
+		// A member's own data. Gated on recent strong authentication because the file
+		// leaves the building, which is the only read path in the application that does
+		// (ADR 0019b).
+		{http.MethodPost, "/api/me/export", routePolicy{FreshAuth: true, Note: "one account's own data, gated on recent strong authentication because the file leaves the building"}, s.requestExport},
+		{http.MethodGet, "/api/me/export", routePolicy{Note: "this account's own export history, including what each file could not include"}, s.listExports},
+		{http.MethodGet, "/api/me/export/{id}", routePolicy{Note: "authority is re-read at download, not only at build: a file must not outlive the permission that made it"}, s.downloadExport},
+		{http.MethodDelete, "/api/me/export/{id}", routePolicy{Note: "the member's own deletion of a produced file"}, s.deleteExport},
 		{http.MethodGet, "/api/directs", routePolicy{Note: "own consented conversations and contact requests only; gated"}, s.listDirectConversations},
 		{http.MethodPost, "/api/directs", routePolicy{Note: "current consent/contact policy; new requests recheck message.send"}, s.createDirectConversation},
 		{http.MethodPost, "/api/directs/{id}/accept", routePolicy{Note: "only intended recipient may accept a direct request"}, s.acceptDirectConversation},
