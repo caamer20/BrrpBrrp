@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -286,4 +287,159 @@ func TestTheMediaEngineCarriesVideo(t *testing.T) {
 		t.Fatal("no offer was produced")
 	}
 	_ = sfu
+}
+
+// A screen's packets reach another participant. The previous forwarding path rewrote
+// every timestamp with audio's 48 kHz clock and a fixed 960 step, which is right for
+// Opus and meaningless for a 90 kHz video clock — so a screen that negotiated
+// successfully would have produced noise. This drives real RTP through the video
+// forwarder and checks the clock is video's.
+func TestScreenPacketsReachAnotherParticipant(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	// The screen publication is live.
+	sfu.mu.Lock()
+	sfu.announcePublication(sfu.peers["ana"], Publication{
+		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	viewerOutputs := len(sfu.peers["bo"].screens)
+	sfu.mu.Unlock()
+	// The viewer has no screen output until it renegotiates to receive one, which is
+	// the client's side of the exchange; the forwarding path is exercised directly
+	// below rather than through a full second renegotiation.
+	if viewerOutputs != 0 {
+		t.Fatalf("the viewer has %d screen outputs before asking for one", viewerOutputs)
+	}
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatalf("the viewer could not create a screen output: %v", err)
+	}
+
+	// Feed real video RTP through the forwarder.
+	output := sfu.peers["bo"].screens[0]
+	for index := range 30 {
+		output.write("ana", &rtp.Packet{
+			Header:  rtp.Header{Version: 2, SequenceNumber: uint16(index), Timestamp: uint32(index) * 3000, Marker: index%30 == 0},
+			Payload: []byte{0x00, 0x00, 0x00, 0x01, 0x65},
+		})
+	}
+	// The forwarder wrote 30 packets, and its timeline advanced on the video clock
+	// rather than audio's: 30 frames at 1/30s each is one second, which is 90,000
+	// ticks. On the old audio path this would have been 30 x 960.
+	output.mu.Lock()
+	elapsed := output.timestamp
+	output.mu.Unlock()
+	if elapsed != videoClockRate {
+		t.Fatalf("the forwarded timeline advanced to %d, want one second of video (%d)", elapsed, videoClockRate)
+	}
+}
+
+// A restarted publication does not inherit a stale timeline. Without the `started`
+// check the first packet of a new publication computes its delta against the last
+// packet of the previous one, and a decoder reads the result as a stream that has
+// been running for minutes.
+func TestARestartedScreenDoesNotInheritThePreviousTimeline(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "bo", "room")
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatal(err)
+	}
+	output := sfu.peers["bo"].screens[0]
+	// A first source running for a long time: its timeline is deliberately far from
+	// zero, so a restart that wrongly continued from it would be obvious.
+	output.write("ana", &rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 900000}})
+	output.mu.Lock()
+	first := output.timestamp
+	output.mu.Unlock()
+	// A new source, whose timestamps start from zero. Continuing the previous source's
+	// timeline would either jump by 900,000 or stall; restarting costs one frame.
+	output.write("cy", &rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 0}})
+	output.mu.Lock()
+	after := output.timestamp
+	output.mu.Unlock()
+	if after-first != videoClockRate/30 {
+		t.Fatalf("a restarted publication advanced by %d, want one frame interval (%d)", after-first, videoClockRate/30)
+	}
+}
+
+// A stopped screen stops forwarding. Otherwise a viewer who left the screen behind
+// keeps receiving a frozen frame from a publication nobody is watching.
+func TestAStoppedScreenForwardsNothing(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatal(err)
+	}
+	sfu.mu.Lock()
+	sfu.announcePublication(sfu.peers["ana"], Publication{
+		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	sharer := sfu.peers["ana"]
+	viewer := sfu.peers["bo"]
+
+	// While live, the packet reaches the viewer's forwarder.
+	sfu.forwardPublication(sharer, PublicationScreenVideo, &rtp.Packet{
+		Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 0},
+	})
+	viewer.screens[0].mu.Lock()
+	written := viewer.screens[0].sequence
+	viewer.screens[0].mu.Unlock()
+	if written == 0 {
+		t.Fatal("a live screen's first packet was not forwarded")
+	}
+	// After the stop, nothing more is written.
+	sfu.StopPublication("room", "s1")
+	sfu.forwardPublication(sharer, PublicationScreenVideo, &rtp.Packet{
+		Header: rtp.Header{Version: 2, SequenceNumber: 2, Timestamp: 3000},
+	})
+	viewer.screens[0].mu.Lock()
+	after := viewer.screens[0].sequence
+	viewer.screens[0].mu.Unlock()
+	if after != written {
+		t.Fatalf("a stopped screen kept forwarding: %d writes, want %d", after, written)
+	}
+}
+
+// A video packet is never written through an audio forwarder. The two are separate
+// types precisely so that a mistaken call is a compile error rather than noise.
+func TestAVideoPacketNeverReachesTheAudioForwarder(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatal(err)
+	}
+	sfu.mu.Lock()
+	sfu.announcePublication(sfu.peers["ana"], Publication{
+		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, &rtp.Packet{
+		Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 0},
+	})
+	// The audio outputs are untouched by a video packet.
+	before := 0
+	for _, output := range sfu.peers["bo"].outputs {
+		output.mu.Lock()
+		before += int(output.sequence)
+		output.mu.Unlock()
+	}
+	if before != 0 {
+		t.Fatalf("a video packet was written through %d audio outputs", before)
+	}
 }

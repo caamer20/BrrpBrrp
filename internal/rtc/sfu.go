@@ -59,6 +59,11 @@ type Peer struct {
 	slot         int
 	pc           *webrtc.PeerConnection
 	outputs      []*forwarder
+	// screens are this peer's video outputs, created when a screen publication is
+	// accepted rather than up front. The audio outputs are pre-created because a
+	// participant's microphone is known at join; a screen is not, and pre-creating
+	// nine video tracks for every participant would negotiate video nobody asked for.
+	screens []*screenForwarder
 	send         func(string, any)
 	receiving    atomic.Bool
 	signalMu     sync.Mutex
@@ -253,8 +258,25 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 			s.leavePeer(userID, peer)
 		}
 	})
+	// A peer may now carry more than one track, and the kind of the arriving track
+	// decides what it is rather than the order it arrived in. The previous code
+	// accepted the first audio track and silently dropped everything after it, which
+	// is why a screen — negotiated successfully, announced, and then discarded at the
+	// first packet — could never actually be seen.
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		if track.Kind() != webrtc.RTPCodecTypeAudio || !peer.receiving.CompareAndSwap(false, true) {
+		kind := PublicationMicrophone
+		if track.Kind() == webrtc.RTPCodecTypeVideo {
+			kind = PublicationScreenVideo
+		} else if track.Kind() != webrtc.RTPCodecTypeAudio {
+			// A kind this build does not carry is dropped here rather than forwarded
+			// into an audio forwarder, which would rewrite its sequence numbers with
+			// audio's clock and produce noise rather than a picture.
+			return
+		}
+		// The microphone is still a single track per connection, enforced where the
+		// renegotiation is accepted rather than here, so a client that renegotiates
+		// twice is told why instead of watching a second microphone vanish.
+		if kind == PublicationMicrophone && !peer.receiving.CompareAndSwap(false, true) {
 			return
 		}
 		for {
@@ -262,7 +284,7 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 			if err != nil {
 				return
 			}
-			s.forward(peer, packet)
+			s.forwardPublication(peer, kind, packet)
 		}
 	})
 	s.publish()
@@ -601,6 +623,14 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 	if publicationID == "" {
 		publicationID = PublicationID(uuid.NewString())
 	}
+	// The output track is added before the description is created, so the answer
+	// actually satisfies the offer. Creating it afterwards would produce an answer the
+	// client's offer did not ask for, which a peer connection rejects.
+	if !signal.Publication.Audio() {
+		if err := peer.addScreenOutput(); err != nil {
+			return err
+		}
+	}
 	if err := peer.pc.SetRemoteDescription(*signal.SDP); err != nil {
 		return err
 	}
@@ -716,4 +746,159 @@ func (s *SFU) setEmitter(userID string, send func(string, any)) {
 	if peer, ok := s.peers[userID]; ok {
 		peer.send = send
 	}
+}
+
+// forwardPublication routes a packet from a peer's publication to the peers watching
+// it. It is `forward` with the publication as an explicit parameter rather than
+// inferred from a slot, which is the whole point of the model: a screen's packets must
+// never be written through an audio forwarder, and a screen must never occupy a voice
+// slot that a listener is counting on.
+func (s *SFU) forwardPublication(source *Peer, kind PublicationKind, packet *rtp.Packet) {
+	s.mu.Lock()
+	// The same enforcement as the microphone, and for the same reason: forwarding is
+	// the boundary, not the state the client reported. A member whose permission was
+	// withdrawn has their packets dropped here even if their client still believes it
+	// is sharing.
+	if s.peers[source.state.UserID] != source || source.speakDenied ||
+		source.state.Muted || source.state.Deafened || source.state.AdminMuted || source.state.AdminDeafened {
+		s.mu.Unlock()
+		return
+	}
+	if kind == PublicationMicrophone {
+		// The microphone is the connection's own audio input and has always been
+		// forwarded by slot; it is not a registered publication. Routing it through the
+		// publication registry would count zero and drop every voice packet.
+		s.mu.Unlock()
+		s.forward(source, packet)
+		return
+	}
+	// Everything beyond the microphone is a registered publication, so a stopped one
+	// has nothing to forward to and its packets stop here. That is what makes a stop
+	// a stop rather than a silent track a viewer has to notice.
+	if s.room(source.state.ChannelID).countOfKind(kind) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.forwardScreen(source, kind, packet)
+}
+
+// screenForwarder rewrites a video publication's sequence numbers and timestamps.
+//
+// It exists as a separate type rather than a branch inside `forwarder` because the
+// audio forwarder's constants are *wrong* for video and reusing them would produce a
+// stream that looks like it connects and plays as noise: it steps the timestamp by a
+// fixed 960 against a 48 kHz clock, which is right for 20 ms of Opus and meaningless
+// for a 90 kHz video clock. A clock mismatch here is not a small error — it is a
+// broken picture, and a broken picture is worse than an absent one because a viewer
+// cannot tell the difference between "the sharer's screen froze" and "the server
+// mangled it".
+type screenForwarder struct {
+	mu                sync.Mutex
+	track             *webrtc.TrackLocalStaticRTP
+	sequence          uint16
+	timestamp         uint32
+	previousTimestamp uint32
+	source            string
+	// started says whether a previous timestamp has been seen. Without it, the first
+	// packet of a publication computes its delta against zero and produces a huge
+	// jump, which a decoder reads as a stream that has been running for minutes.
+	started bool
+}
+
+// videoClockRate is the RTP clock for the video this build carries. It is stated once,
+// here, so the forwarder's sanity bound and its codec registration cannot disagree.
+const videoClockRate = 90000
+
+// maxVideoTimestampJump bounds how far a video timestamp may advance between packets
+// before the stream is treated as discontinuous and restarted. A keyframe every few
+// seconds plus a frame interval is generous; anything beyond it is a different
+// publication or a reordered packet, and replaying the old delta would stall the
+// picture for as long as the gap.
+const maxVideoTimestampJump = videoClockRate * 5
+
+// minVideoTimestampJump is the smallest plausible advance, used only to catch a
+// backwards timestamp. A negative delta is a reorder, and applying it would move the
+// stream backwards.
+const minVideoTimestampJump = -(videoClockRate / 30)
+
+func (f *screenForwarder) write(source string, packet *rtp.Packet) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delta := int64(packet.Timestamp) - int64(f.previousTimestamp)
+	// A first packet, a new source, or a gap too large to be a frame interval all
+	// mean the previous timeline no longer applies, so it is restarted rather than
+	// continued from a number that would be wrong.
+	if !f.started || f.source != source || delta <= int64(minVideoTimestampJump) || delta > maxVideoTimestampJump {
+		delta = videoClockRate / 30
+	}
+	f.source = source
+	f.previousTimestamp = packet.Timestamp
+	f.started = true
+	f.sequence++
+	f.timestamp = f.timestamp + uint32(delta)
+	forwarded := rtp.Packet{
+		Header: rtp.Header{
+			Version: 2, Marker: packet.Marker,
+			SequenceNumber: f.sequence, Timestamp: f.timestamp,
+			PayloadType: packet.PayloadType,
+		},
+		Payload: packet.Payload,
+	}
+	// The payload type is carried through rather than assumed. A video stream whose
+	// payload type does not match the negotiated codec is not decodable, and the
+	// caller cannot be assumed to have rewritten it.
+	_ = f.track.WriteRTP(&forwarded)
+}
+
+// forwardScreen writes a video publication to every peer's screen output in the room.
+func (s *SFU) forwardScreen(source *Peer, kind PublicationKind, packet *rtp.Packet) {
+	s.mu.Lock()
+	room := source.state.ChannelID
+	var recipients []*screenForwarder
+	for _, destination := range s.peers {
+		if destination.state.ChannelID != room || destination == source {
+			continue
+		}
+		recipients = append(recipients, destination.screens...)
+	}
+	s.mu.Unlock()
+	// Writing happens outside the lock: a slow viewer must not hold up the room, and
+	// holding the lock across a network write is exactly the pattern the authority
+	// fence exists to avoid.
+	for _, output := range recipients {
+		output.write(source.state.UserID, packet)
+	}
+}
+
+// addScreenOutput creates one video output on this peer. There is one, not several:
+// the room's publication bound already decides how many screens a room carries, and a
+// second output per peer would be a way around it.
+func (p *Peer) addScreenOutput() error {
+	if len(p.screens) > 0 {
+		return nil
+	}
+	track, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate},
+		"screen", "screen-"+p.state.UserID)
+	if err != nil {
+		return err
+	}
+	transceiver, err := p.pc.AddTransceiverFromTrack(track,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	if err != nil {
+		return err
+	}
+	p.screens = append(p.screens, &screenForwarder{track: track})
+	// RTCP is drained rather than interpreted, as the audio outputs already do. The
+	// reason is the same: this build enforces publication at the forwarding boundary,
+	// not by answering feedback, and an unread RTCP channel blocks the sender.
+	go func(sender *webrtc.RTPSender) {
+		for {
+			if _, _, err := sender.ReadRTCP(); err != nil {
+				return
+			}
+		}
+	}(transceiver.Sender())
+	return nil
 }
