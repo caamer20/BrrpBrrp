@@ -684,5 +684,16 @@ refusing. And it does not make the grant permanent: a replacement can be replace
 is the whole point, and the alternative is the server needing a restart to hear somebody
 again.
 
-The client is told (`voice.microphone_replaced`) so it can redraw its input state instead
-of leaving a device selector showing hardware the server is no longer reading.
+**What the shipped client actually does.** It replaces the device in place, through
+`replaceTrack` on the existing transceiver, so a device change never produces a second
+track and never reaches the takeover. The takeover is therefore a statement about the
+*server's* handling of a second microphone track, not a client feature — which is why
+it emits no event. An event with no client handler is a claim about the interface that
+nobody made.
+
+**The classification is not by codec, and that is the trap.** Screen audio is an audio
+track, exactly like the microphone. Classifying a track as "audio therefore microphone"
+made a member sharing a screen *with system audio* hand their connection's single audio
+output to the screen's audio, and their real microphone stopped being forwarded. A track
+belongs to the publication it was negotiated under, so the classifier asks what the
+peer has published rather than what the codec is.

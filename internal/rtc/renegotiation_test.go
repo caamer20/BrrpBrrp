@@ -316,25 +316,7 @@ func TestASecondMicrophoneTakesOverTheConnectionInsteadOfLeavingItSilent(t *test
 	// A second microphone arrives on ana's connection — a headset plugged in
 	// mid-call. The old code returned here, so the new track was never read and
 	// ana was left with a connected microphone nobody could hear.
-	replaced := make(chan bool, 1)
-	ana.sendMu.RLock()
-	prior := ana.send
-	ana.sendMu.RUnlock()
-	ana.sendMu.Lock()
-	ana.send = func(kind string, data any) {
-		if kind == "voice.microphone_replaced" {
-			replaced <- true
-		}
-		prior(kind, data)
-	}
-	ana.sendMu.Unlock()
 	ana.takeMicrophone()
-
-	select {
-	case <-replaced:
-	default:
-		t.Fatal("the client was not told its microphone was replaced")
-	}
 
 	// One audio input, not two interleaved: the replacement's packets reach bo, and
 	// each forwarded frame advances this slot's sequence once rather than twice.
@@ -348,6 +330,67 @@ func TestASecondMicrophoneTakesOverTheConnectionInsteadOfLeavingItSilent(t *test
 	slot.mu.Unlock()
 	if after != 2 {
 		t.Fatalf("the slot advanced to sequence %d across two frames, want 2 — two inputs would double-step it", after)
+	}
+}
+
+// Screen audio is an audio track, exactly like the microphone, and the codec cannot
+// tell them apart. Classifying by codec made a member sharing a screen *with system
+// audio* hand their connection's single audio output to the screen's audio — their
+// real microphone stopped being forwarded, and the change that caused it read as an
+// improvement.
+//
+// A track belongs to the publication it was negotiated under. The classifier is
+// exercised through its decision, because the decision is what was wrong.
+func TestAScreenAudioTrackIsNotMistakenForTheMicrophone(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	ana := sfu.peers["ana"]
+	sfu.mu.Unlock()
+
+	// The connection's own audio input, with nothing else published, is the microphone.
+	if got := sfu.publicationForTrack(ana, webrtc.RTPCodecTypeAudio); got != PublicationMicrophone {
+		t.Fatalf("an audio track with no screen audio published is %q, want the microphone", got)
+	}
+
+	// Now the same member shares a screen with its system audio. The same codec is
+	// that publication, and must not be read as a replacement microphone.
+	sfu.mu.Lock()
+	sfu.announcePublication(ana, Publication{ID: "v1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.announcePublication(ana, Publication{ID: "a1", Owner: "ana", Kind: PublicationScreenAudio, Started: time.Now().UTC()})
+	sfu.mu.Unlock()
+	if got := sfu.publicationForTrack(ana, webrtc.RTPCodecTypeAudio); got != PublicationScreenAudio {
+		t.Fatalf("an audio track while screen audio is published is %q, want the screen's audio", got)
+	}
+
+	// A video track is the screen, and a codec this build does not carry is refused
+	// rather than guessed at.
+	if got := sfu.publicationForTrack(ana, webrtc.RTPCodecTypeVideo); got != PublicationScreenVideo {
+		t.Fatalf("a video track is %q, want the screen", got)
+	}
+	if got := sfu.publicationForTrack(ana, webrtc.RTPCodecType(0)); got != "" {
+		t.Fatalf("an uncarried track classified as %q, want it refused", got)
+	}
+
+	// And the screen's audio reaches a viewer through the screen forwarder rather than
+	// the microphone slots, so sharing a screen does not double-voice the room.
+	connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "bo to connect", func() bool {
+		return sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	bo := sfu.peers["bo"]
+	sfu.mu.Unlock()
+	if err := bo.addScreenOutput(); err != nil {
+		t.Fatalf("the viewer could not create a screen output: %v", err)
+	}
+	microphoneBefore := audioWrites(t, bo)
+	sfu.forwardPublication(ana, PublicationScreenAudio, audioFrame(9))
+	if got := audioWrites(t, bo); got != microphoneBefore {
+		t.Fatalf("screen audio wrote %d microphone packets, want 0 — it is not the microphone", got-microphoneBefore)
 	}
 }
 

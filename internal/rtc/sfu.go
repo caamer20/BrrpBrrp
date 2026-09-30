@@ -317,29 +317,25 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 	// is why a screen — negotiated successfully, announced, and then discarded at the
 	// first packet — could never actually be seen.
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		kind := PublicationMicrophone
-		if track.Kind() == webrtc.RTPCodecTypeVideo {
-			kind = PublicationScreenVideo
-		} else if track.Kind() != webrtc.RTPCodecTypeAudio {
-			// A kind this build does not carry is dropped here rather than forwarded
-			// into an audio forwarder, which would rewrite its sequence numbers with
-			// audio's clock and produce noise rather than a picture.
+		// Which publication a track belongs to is a property of what the client
+		// negotiated, not of its codec. The media kind alone cannot answer it: screen
+		// audio is an audio track, exactly like the microphone, and telling them apart
+		// here is what keeps sharing a screen's system audio from being mistaken for a
+		// replacement microphone.
+		kind := s.publicationForTrack(peer, track.Kind())
+		if kind == "" {
+			// A track this build does not carry, or one the peer published nothing for.
+			// Dropped rather than forwarded into an audio forwarder, which would rewrite
+			// its sequence numbers with audio's clock and produce noise rather than a
+			// picture.
 			return
 		}
-		// The microphone is still a single track per connection, enforced where the
-		// renegotiation is accepted rather than here, so a client that renegotiates
-		// twice is told why instead of watching a second microphone vanish.
 		if kind == PublicationMicrophone && !peer.receiving.CompareAndSwap(false, true) {
-			// Only reached once a `receiving` microphone was discarded by the check
-			// above, which the renegotiate path now clears before accepting a
-			// replacement. There is deliberately no `return` here: a track that
-			// arrives while another is live is audio nobody is listening to, and
-			// dropping it silently leaves the client with a microphone that looks
-			// connected and produces nothing. The newcomer instead takes this
-			// connection's single audio output, and the previous input stops the
-			// moment it does - which is the behaviour a member swapping devices
-			// expects, and is the same one a browser gives when a microphone is
-			// replaced mid-call.
+			// A second audio input on the microphone's own publication. This is the one
+			// case that is a replacement rather than a silence: a member who plugs in a
+			// headset mid-call has a track that connected, a level meter that moves, and
+			// no audio for anybody else. The newcomer takes the connection's single
+			// output; the previous input stops the moment it does.
 			peer.takeMicrophone()
 		}
 		for {
@@ -367,14 +363,13 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 // One connection carries one audio input. The outgoing track stops being read the
 // moment the newcomer claims the output, so the previous microphone's packets end
 // rather than interleave with the new one's.
-func (p *Peer) takeMicrophone() {
-	p.sendMu.RLock()
-	send := p.send
-	p.sendMu.RUnlock()
-	if send != nil {
-		send("voice.microphone_replaced", nil)
-	}
-}
+//
+// This deliberately emits nothing. No client in this build can reach this path — a
+// device change goes through `replaceTrack`, which reuses the connection's existing
+// transceiver and so never produces a second track — and an event with no handler is
+// a claim about the interface that nobody made. If a client is taught to add a
+// second microphone transceiver, the signal belongs with that change.
+func (p *Peer) takeMicrophone() {}
 
 func (s *SFU) announceJoin(userID string, peer *Peer) {
 	s.mu.Lock()
@@ -1318,6 +1313,36 @@ func peerIsViewing(peer *Peer) bool {
 		receiving = true
 	}
 	return receiving
+}
+
+// publicationForTrack decides which publication an arriving track belongs to.
+//
+// The codec cannot answer this. Screen audio is an audio track, exactly like the
+// microphone, so "is this audio" leaves two candidates and no way to choose — and
+// choosing wrongly is not cosmetic: mistaking a screen's system audio for a
+// replacement microphone hands the connection's single audio output to the wrong
+// input, and the member's actual microphone stops being forwarded.
+//
+// What distinguishes them is what the peer has published. A live screen audio
+// publication means an audio track on this connection is that publication; otherwise
+// the connection's own audio input is the microphone. That is a question about the
+// peer's negotiated state rather than about the packet, which is why it is asked once
+// per track rather than per packet.
+func (s *SFU) publicationForTrack(peer *Peer, codec webrtc.RTPCodecType) PublicationKind {
+	switch codec {
+	case webrtc.RTPCodecTypeVideo:
+		return PublicationScreenVideo
+	case webrtc.RTPCodecTypeAudio:
+	default:
+		return ""
+	}
+	s.mu.Lock()
+	sharesScreenAudio := s.existingRoom(peer.state.ChannelID).ownedBy(peer.state.UserID, PublicationScreenAudio)
+	s.mu.Unlock()
+	if sharesScreenAudio {
+		return PublicationScreenAudio
+	}
+	return PublicationMicrophone
 }
 
 // isScreenOutputTrack recognises the track the server added to send a screen, by the
