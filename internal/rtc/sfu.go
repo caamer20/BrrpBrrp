@@ -470,6 +470,21 @@ func (s *SFU) SetForceRelay(force bool) {
 	s.options.ForceRelay = force
 }
 
+// SetICEServers replaces the media engine's own ICE servers, and it is the only way
+// forced relay can actually work.
+//
+// The engine needs its own relay credentials, not just the clients'. Removing the
+// hardcoded public STUN server left the server with *no* ICE servers at all, so when
+// the policy forbade direct candidates there was nothing left for the server to
+// allocate from: a forced-relay deployment would have refused every call, or fallen
+// back to a direct path the policy was meant to forbid. Both halves need the relay —
+// the client's to reach it, the server's to be reachable through it.
+func (s *SFU) SetICEServers(servers []webrtc.ICEServer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.options.ICEServers = servers
+}
+
 // ForceRelayEnabled reports the policy the next connection will be offered. It is
 // the read side of SetForceRelay, so a caller — a test, or an operator-facing
 // surface — can confirm the setting reached the engine rather than inferring it from
@@ -1353,4 +1368,13 @@ func reportICECandidateType(stats webrtc.StatsReport, id string) string {
 	// token that appears in an SDP candidate line and the one an operator will search
 	// a log for.
 	return candidate.CandidateType.String()
+}
+
+// ICEServers reports the servers the media engine will use for its own connections,
+// so a caller can confirm a configuration reached the engine rather than inferring it
+// from the settings an operator typed.
+func (s *SFU) ICEServers() []webrtc.ICEServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]webrtc.ICEServer(nil), s.options.ICEServers...)
 }

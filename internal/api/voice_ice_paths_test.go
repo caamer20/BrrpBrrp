@@ -8,6 +8,7 @@ import (
 
 	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/db"
+	"github.com/pion/webrtc/v4"
 )
 
 // The ICE configuration a client is handed is the only thing that decides whether a
@@ -193,6 +194,16 @@ func voiceTestServer(t *testing.T) (*Server, *httptest.Server, http.Handler) {
 	return s, server, handler
 }
 
+// iceURLStrings flattens a set of ICE servers to their URLs, so a test can assert
+// on what was offered rather than on the shape of what was offered.
+func iceURLStrings(servers []webrtc.ICEServer) []string {
+	var urls []string
+	for _, server := range servers {
+		urls = append(urls, server.URLs...)
+	}
+	return urls
+}
+
 // saveSettings persists settings through the real operator endpoint, so a test
 // cannot assert on a configuration the product would refuse to accept.
 func saveSettings(t *testing.T, handler http.Handler, s *Server, admin *http.Cookie, settings db.Settings) {
@@ -354,4 +365,70 @@ func TestForcingTheRelayReachesTheMediaEngine(t *testing.T) {
 func forcedNow(t *testing.T, s *Server) bool {
 	t.Helper()
 	return s.voice.ForceRelayEnabled()
+}
+
+// The media engine needs the relay as much as the clients do. It is the other end of
+// the call, and forced relay forbids direct candidates on *both* sides — so an engine
+// with no relay of its own has nothing to allocate from, and a forced-relay
+// deployment refuses every call it was switched on to enable.
+func TestTheMediaEngineIsOfferedTheRelayToo(t *testing.T) {
+	s, _, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	configureTURNForTest(t, handler, s, admin)
+
+	servers := s.voice.ICEServers()
+	if len(servers) == 0 {
+		t.Fatal("a server running a relay gave its own media engine no ICE servers, so it has nothing to allocate from")
+	}
+	var relayed bool
+	for _, server := range servers {
+		for _, url := range server.URLs {
+			if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
+				relayed = true
+			}
+		}
+	}
+	if !relayed {
+		t.Fatalf("the media engine was offered %v, which contains no relay", iceURLStrings(servers))
+	}
+}
+
+// The operator's STUN server reaches the engine as well as the clients. It is one
+// setting; applying it to half of them is how a deployment ends up with a client that
+// finds a public address and a server that cannot.
+func TestTheOperatorsSTUNServerReachesTheMediaEngine(t *testing.T) {
+	s, _, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	settings := s.Settings()
+	settings.STUNServer = "stun:stun.example.com:3478"
+	saveSettings(t, handler, s, admin, settings)
+
+	var found bool
+	for _, url := range iceURLStrings(s.voice.ICEServers()) {
+		if url == "stun:stun.example.com:3478" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the operator's STUN server did not reach the media engine: %v", iceURLStrings(s.voice.ICEServers()))
+	}
+}
+
+// Turning the relay off must take it away from the engine too. A relay that is
+// stopped but still offered is a URL the client cannot connect to, which ICE reports
+// as a network fault.
+func TestTurningTheRelayOffRemovesItFromTheMediaEngine(t *testing.T) {
+	s, _, handler := voiceTestServer(t)
+	admin := setupAdmin(t, s, handler)
+	configureTURNForTest(t, handler, s, admin)
+
+	settings := s.Settings()
+	settings.TURN = false
+	saveSettings(t, handler, s, admin, settings)
+
+	for _, url := range iceURLStrings(s.voice.ICEServers()) {
+		if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
+			t.Fatalf("a stopped relay is still offered to the media engine: %s", url)
+		}
+	}
 }

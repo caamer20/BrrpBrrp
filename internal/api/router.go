@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"github.com/pion/webrtc/v4"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -477,6 +478,11 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 
+// turnEngineAccount is the account the media engine allocates its own relay
+// transport under. It is a fixed internal name, not a member's, so the engine's path
+// survives a member being removed from a call.
+const turnEngineAccount = "brrpbrrp-media"
+
 // configureTURN brings the relay up with the configured transports. A TCP fallback
 // that is off means the relay is offered over UDP alone, which is what this shipped
 // before the fallback existed and stays the default rather than becoming an error.
@@ -511,5 +517,23 @@ func (s *Server) configureTURN(settings db.Settings) error {
 			s.log.Warn("TURN TLS fallback was requested but the server certificate could not be read; the relay will be offered over UDP and plain TCP only", "error", err)
 		}
 	}
-	return s.turn.ConfigureWithFallback(settings.TURN, settings.TURNExternalIP, settings.TURNPort, tcpPort, tlsPort, settings.TURNAdvertisedHost, certificate)
+	if err := s.turn.ConfigureWithFallback(settings.TURN, settings.TURNExternalIP, settings.TURNPort, tcpPort, tlsPort, settings.TURNAdvertisedHost, certificate); err != nil {
+		return err
+	}
+	// The media engine needs the relay too, not only the clients. It is the other end
+	// of the call: forced relay forbids direct candidates on *both* sides, so an
+	// engine with no relay of its own has nothing to allocate from and a forced-relay
+	// deployment refuses every call it is supposed to be enabling.
+	//
+	// The engine's credentials are issued for the relay's own account rather than for
+	// a member, so revoking a member's voice does not take the server's own path out.
+	var engineServers []webrtc.ICEServer
+	if stun := strings.TrimSpace(settings.STUNServer); stun != "" {
+		engineServers = append(engineServers, webrtc.ICEServer{URLs: []string{stun}})
+	}
+	if engine, ok := s.turn.Credentials(turnEngineAccount); ok {
+		engineServers = append(engineServers, engine)
+	}
+	s.voice.SetICEServers(engineServers)
+	return nil
 }

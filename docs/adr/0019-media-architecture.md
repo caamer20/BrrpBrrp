@@ -363,6 +363,19 @@ naming it. After, it is `relay`/`relay`. This is the first evidence in the proje
 the relay path carries a call at all; everything before it established that the relay
 *starts* and issues credentials, which is not the same claim.
 
+**And then the fix itself was half an instruction.** Removing the hardcoded public
+STUN server left the *server* with no ICE servers at all, while forced relay forbids
+direct candidates on both sides. The engine had nothing to allocate from, so a
+forced-relay deployment would have refused every call it was switched on to enable.
+
+The engine is the other end of the call. It needs the relay for the same reason the
+clients do, and it needs its own credentials — issued for a fixed internal account
+rather than for a member, so revoking one person's voice does not take the server's
+own path out. Both halves need the relay: the client's to reach it, the server's to be
+reachable through it. The operator's STUN server reaches both, and turning the relay
+off removes it from both, because a stopped relay that is still offered is a URL the
+engine cannot connect to and ICE reports that as a network fault.
+
 Two more things the same work found:
 
 - **The setting never reached the media engine.** Saving it reconfigured the relay but
