@@ -109,6 +109,81 @@ export async function requestScreen(includeSystemAudio = false): Promise<ScreenS
 }
 
 /**
+ * Decides whether a returned capture may still be published.
+ *
+ * `getDisplayMedia` opens a browser-owned modal. While it is open the person can do
+ * anything the app allows: switch account, leave the call, move to another voice
+ * channel, or have the server withdraw their permission. The promise then resolves with
+ * a stream that belongs to *that* moment, and the caller is somewhere else entirely.
+ *
+ * Publishing it anyway is the failure this prevents, and it is a disclosure rather than
+ * a glitch: the person believed they were sharing into a room they had left, or as an
+ * account that no longer holds the permission, and the room they are in now receives a
+ * screen they never chose to show it. So the answer is a comparison against everything
+ * that identifies the audience, and a mismatch means the capture is stopped and dropped
+ * rather than renegotiated.
+ *
+ * `generation` is the call's identity: it advances on every leave, join, reconnect and
+ * authority change, so any of those is a mismatch without each being enumerated here.
+ */
+export interface CaptureAudience {
+  /** The call the share was started from. */
+  channelId: string;
+  /** The signed-in account the share was started under. */
+  userId: string;
+  /** The call's connection identity. */
+  connectionId: string;
+  /** The call's generation counter, advanced by any leave, join or authority change. */
+  generation: number;
+}
+
+/**
+ * Whether a capture started for `started` may be published now that the app is `now`.
+ *
+ * Returns the reason when it may not, because "stale" on its own tells the person
+ * nothing and a silent drop reads as the browser failing.
+ */
+export function captureStillWanted(
+  started: CaptureAudience,
+  now: CaptureAudience
+): { ok: true } | { ok: false; reason: string } {
+  // The account is checked first because it is the reason a person can act on, and the
+  // one that is true whenever several of these changed at once. Signing in as somebody
+  // else replaces the session and clears the call, so a generation move usually
+  // accompanies it — and reporting "the conversation changed" for that would send the
+  // person looking at the wrong thing. The conversation did not change; they did.
+  if (started.userId !== now.userId) {
+    // The sharpest case. The capture belongs to the previous account, and the next one
+    // would inherit it.
+    return {
+      ok: false,
+      reason: 'Your screen was not shared because you signed in to a different account.'
+    };
+  }
+  if (started.generation !== now.generation) {
+    return {
+      ok: false,
+      reason:
+        'Your screen was not shared because the conversation changed while you were choosing what to share.'
+    };
+  }
+  if (started.connectionId !== now.connectionId) {
+    return {
+      ok: false,
+      reason:
+        'Your screen was not shared because the call reconnected while you were choosing what to share.'
+    };
+  }
+  if (started.channelId !== now.channelId) {
+    return {
+      ok: false,
+      reason: 'Your screen was not shared because you moved to another conversation.'
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Watches a stream for a capture that ends on its own.
  *
  * The `ended` event is the only signal for the three ways a share stops without us:

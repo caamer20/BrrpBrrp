@@ -6,7 +6,8 @@ import {
   canShareScreen,
   onCaptureEnded,
   screenAudioOutcome,
-  screenAudioMessage
+  screenAudioMessage,
+  captureStillWanted
 } from '../src/lib/screen-share.ts';
 
 // A screen share is a user gesture with three ordinary failure modes, and the two
@@ -136,4 +137,72 @@ test('the unavailable message names the consequence, not the cause', () => {
   const message = screenAudioMessage('unavailable');
   assert.match(message, /without sound/);
   assert.doesNotMatch(message, /error|failed|cannot|unable/i);
+});
+
+// A capture is a promise about an audience, and the browser's picker takes as long as
+// the person needs.
+//
+// `getDisplayMedia` opens a modal the app cannot close or observe. While it is open the
+// person can sign in to another account, leave the call, move to another voice channel,
+// or have a moderator withdraw their permission. The stream that comes back belongs to
+// the moment the picker opened. Publishing it into whatever room they are in *now* is a
+// disclosure rather than a glitch: the previous account's screen appears in a room the
+// person never agreed to show it to, and the browser's own capture indicator is on the
+// whole time.
+//
+// So every field that identifies the audience is compared, and a mismatch means the
+// tracks are stopped rather than renegotiated.
+
+test('a capture whose audience is unchanged may be published', () => {
+  const audience = { channelId: 'room-1', userId: 'u1', connectionId: 'c1', generation: 7 };
+  assert.deepEqual(captureStillWanted(audience, { ...audience }), { ok: true });
+});
+
+test('a capture is dropped when the account changed under the picker', () => {
+  const started = { channelId: 'room-1', userId: 'u1', connectionId: 'c1', generation: 7 };
+  const verdict = captureStillWanted(started, { ...started, userId: 'u2' });
+  assert.equal(verdict.ok, false, 'a capture was accepted across an account switch');
+  // The reason has to say what happened, because a silent drop reads as the browser
+  // failing and sends the person looking in the wrong place.
+  assert.match(verdict.reason, /account/i);
+});
+
+test('a capture is dropped when the call moved, reconnected or was re-entered', () => {
+  const started = { channelId: 'room-1', userId: 'u1', connectionId: 'c1', generation: 7 };
+  for (const [label, now] of [
+    ['moved to another conversation', { ...started, channelId: 'room-2' }],
+    ['the call reconnected', { ...started, connectionId: 'c2' }],
+    ['left and rejoined', { ...started, generation: 8 }]
+  ]) {
+    assert.equal(
+      captureStillWanted(started, now).ok,
+      false,
+      `a capture was accepted after ${label}`
+    );
+  }
+});
+
+test('a leave alongside every other change is reported as the conversation changing', () => {
+  // A leave clears the channel and advances the generation at the same time. Reporting
+  // "you moved to another conversation" for an empty channel id would name a move the
+  // person never made, so the generation is asked before the channel. The order is part
+  // of the contract, not an implementation detail.
+  const started = { channelId: 'room-1', userId: 'u1', connectionId: 'c1', generation: 7 };
+  const verdict = captureStillWanted(started, {
+    channelId: '',
+    userId: 'u1',
+    connectionId: '',
+    generation: 9
+  });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /conversation changed/i);
+});
+
+test('an account switch is named as such even when the generation also moved', () => {
+  // Signing in as somebody else replaces the session without necessarily advancing the
+  // call's generation, so this pair is reachable on its own.
+  const started = { channelId: 'room-1', userId: 'u1', connectionId: 'c1', generation: 7 };
+  const verdict = captureStillWanted(started, { ...started, userId: 'u2', generation: 8 });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /account/i);
 });

@@ -697,3 +697,30 @@ made a member sharing a screen *with system audio* hand their connection's singl
 output to the screen's audio, and their real microphone stopped being forwarded. A track
 belongs to the publication it was negotiated under, so the classifier asks what the
 peer has published rather than what the codec is.
+
+
+## A capture belongs to the audience that was there when the picker opened
+
+`getDisplayMedia` opens a modal the app cannot observe or close. While it is open the
+person can do anything the app allows: sign in to another account, leave the call, move
+to another voice channel, or have a moderator withdraw their permission. The promise
+resolves with a stream that belongs to *that* moment, and the caller is somewhere else.
+
+The share path read the channel id before the picker opened and never re-read it, so a
+returned capture was published into whatever room the person was in *now*. That is a
+disclosure rather than a glitch: the previous account's screen appears in a room nobody
+agreed to see it, the previous room's occupants watch a share that has nothing to do with
+them, and the browser's own capture indicator is lit throughout — so the person sharing
+sees every sign of a working capture and never learns it went somewhere else.
+
+`captureStillWanted` compares everything that identifies the audience — account, call
+channel, connection identity and the call's generation counter — and a mismatch stops
+the returned tracks and releases the indicator rather than renegotiating them. The
+generation is what covers leave, join, reconnect and authority change without each
+being enumerated, and it is the same counter the join and reconnect paths already use.
+
+**The order of the reasons is part of the contract.** The account is checked first
+because it is the one a person can act on, and because signing in as somebody else
+replaces the session and usually moves the generation too: reporting "the conversation
+changed" for that would send them looking at the wrong thing. The conversation did not
+change — they did.

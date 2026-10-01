@@ -14,7 +14,9 @@ import {
   requestScreen,
   screenShareMessage,
   stopScreen,
-  type ScreenShareState
+  type ScreenShareState,
+  captureStillWanted,
+  type CaptureAudience
 } from './screen-share';
 
 class Voice {
@@ -890,6 +892,16 @@ class Voice {
     }
     this.screenState = 'asking';
     this.screenMessage = screenShareMessage('asking');
+    // Everything that identifies who the share would go to, read *before* the browser's
+    // own modal opens. The modal blocks nothing in the app: the person can switch
+    // account, leave, move to another call, or lose the permission while it is open, and
+    // the stream that comes back belongs to the moment they opened it.
+    const started: CaptureAudience = {
+      channelId: this.channelId,
+      userId: workspace.user?.id ?? '',
+      connectionId: this.connectionId ?? '',
+      generation: this.generation
+    };
     // System audio is asked for, never required. A browser or platform that cannot
     // provide it returns video-only rather than failing the whole share, and the
     // user is told what they got rather than what they asked for.
@@ -907,6 +919,23 @@ class Voice {
     this.screenLabel = result.label ?? '';
     this.screenMessage = result.error || screenShareMessage(result.state);
     if (result.state !== 'sharing' || !result.stream) return;
+
+    // The audience check, before anything is held. Publishing a stale capture would
+    // broadcast a screen into a room the person had already left, or as an account that
+    // no longer holds the permission — so the returned tracks are stopped and the
+    // browser's indicator is released rather than renegotiated.
+    const wanted = captureStillWanted(started, {
+      channelId: this.channelId,
+      userId: workspace.user?.id ?? '',
+      connectionId: this.connectionId ?? '',
+      generation: this.generation
+    });
+    if (!wanted.ok) {
+      stopScreen(result.stream);
+      this.screenState = 'failed';
+      this.screenMessage = wanted.reason;
+      return;
+    }
 
     this.screenStream = result.stream;
     // The browser can end a share without telling us through any path we control:
