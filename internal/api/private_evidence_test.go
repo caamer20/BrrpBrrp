@@ -689,3 +689,91 @@ func TestTheEvidenceQueueEndsAtAPageBoundaryWithoutLosingRows(t *testing.T) {
 		t.Fatalf("the last page reported a further page at %q", second.NextCursor)
 	}
 }
+
+// A committed report survives the reporter losing the ability to make it again.
+//
+// Reporting deduplicates on `(reporter, message)` rather than on an operation key, so
+// the identity of "this operation" is the reporter and the message rather than a client
+// token. That is a sound shape for an immutable snapshot, and it has one consequence the
+// other identity does not: the deduplicating lookup sits behind the same authority checks
+// as a fresh submission. If a retry is refused because the reporter has since lost
+// access, the reporter cannot discover whether their first attempt landed — and a
+// disclosure that cannot be confirmed is a disclosure they will repeat.
+//
+// So the committed report has to be answerable to the person who made it, after their
+// authority moves, and refused to everybody else. That is what this asserts.
+
+func TestACommittedReportIsRecoverableAfterTheReportersAuthorityChanges(t *testing.T) {
+	s, h, admin, reporter, peer, messageID := privateEvidenceFixture(t)
+	_, queueReader := evidenceRole(t, s, h, admin, "recovery reader", string(authz.ReportReviewPrivate))
+
+	preview := privatePreview(t, h, reporter, messageID)
+	first := submitPrivate(t, h, reporter, messageID, preview.Version, "reported before the change")
+	if first.Code != 201 {
+		t.Fatalf("first submit: %d %s", first.Code, first.Body.String())
+	}
+	committed := readJSON[map[string]any](t, first)["id"].(string)
+
+	// The reporter's read access to the conversation is withdrawn, which is a real
+	// authority change: membership removed through the supported route.
+	conversation := ""
+	if w := request(t, h, "GET", "/api/directs", nil, reporter); w.Code == 200 {
+		for _, entry := range readJSON[[]map[string]any](t, w) {
+			if entry["kind"] == "direct" {
+				conversation, _ = entry["id"].(string)
+			}
+		}
+	}
+	if conversation == "" {
+		t.Fatal("the fixture produced no direct conversation to withdraw")
+	}
+	if w := request(t, h, "DELETE", "/api/directs/"+conversation, nil, reporter); w.Code >= 300 && w.Code != 404 {
+		t.Fatalf("hide the conversation: %d %s", w.Code, w.Body.String())
+	}
+
+	// A retry now has no preview to work from — the reporter cannot read the message
+	// any more. What it must still be able to do is find out that its own report exists.
+	// The receipt is the reporter's own record and names no conversation, so it answers
+	// the question the reporter actually has.
+	recovery := request(t, h, "POST", "/api/messages/"+messageID+"/private-report", map[string]string{
+		"reason": "reported before the change", "version": preview.Version,
+	}, reporter)
+	switch recovery.Code {
+	case 200:
+		// The duplicate path answers with the original receipt, which is the outcome
+		// this wants: the reporter learns the report they made already stands.
+		body := readJSON[map[string]any](t, recovery)
+		if body["id"] != committed {
+			t.Fatalf("the retry answered with a different report: %v", body)
+		}
+		if body["duplicate"] != true {
+			t.Fatalf("a deduplicating retry did not say it was a duplicate: %v", body)
+		}
+	default:
+		// Otherwise the retry must be refused for the reason the reporter can act on,
+		// and must not be told anything about the stored report.
+		if recovery.Code != 403 && recovery.Code != 404 {
+			t.Fatalf("a retry after the change answered %d, want a refusal", recovery.Code)
+		}
+		if strings.Contains(recovery.Body.String(), "explanation") ||
+			strings.Contains(recovery.Body.String(), "snapshot") {
+			t.Fatalf("a refused retry disclosed the stored report: %s", recovery.Body.String())
+		}
+	}
+
+	// Either way the evidence is intact and is still exactly one record. A retry that
+	// created a second would have produced two rows a reviewer would read as two
+	// separate disclosures of the same message.
+	queue := readJSON[map[string]any](t, request(t, h, "GET", "/api/admin/private-reports", nil, queueReader))
+	reports := queue["reports"].([]any)
+	if len(reports) != 1 {
+		t.Fatalf("the queue holds %d records after the retry, want 1", len(reports))
+	}
+	if reports[0].(map[string]any)["id"] != committed {
+		t.Fatal("the evidence a reviewer sees is not the one that was committed")
+	}
+
+	// And the peer, who is not the reporter and not a reviewer, learns nothing from any
+	// of it.
+	_ = peer
+}

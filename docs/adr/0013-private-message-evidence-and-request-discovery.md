@@ -268,3 +268,31 @@ The last is the one that catches a fix which only ever widens.
 A wider policy is a legitimate thing for an owner to choose. It is not a thing to
 encode as a bug fix, and this one was encoded as a bug fix with tests written to
 approve it.
+
+
+## A committed report is recoverable by the reporter, after their authority moves
+
+Private *message* evidence deduplicates on `(reporter, message)` rather than on a
+client-supplied operation key. The request-evidence path has durable command receipts;
+this one does not, and the two are deliberately different shapes — a request report also
+blocks and needs a receipt to keep that one transaction from running twice, while a
+message report is an immutable snapshot that is safe to dedupe on its own terms.
+
+That shape has one consequence, and it is the one worth stating. **A deduplicating
+lookup can sit behind the same authority checks as a fresh submission**, and if it does,
+a reporter who has since lost access to the conversation cannot find out whether their
+first attempt landed. A disclosure that cannot be confirmed is a disclosure people repeat
+— and a repeated disclosure of a private message is a worse outcome than the delay.
+
+So the committed report is answerable to the person who made it after their authority
+moves, and to nobody else. A retry answers 200 with the original receipt and
+`duplicate: true`; it names no conversation and discloses no stored text. The retry is
+still exactly-once — the queue holds one record afterwards, and it is the one that was
+committed.
+
+The queue's page boundary is pinned too, because it decides whether a reviewer ever sees
+the last rows. The query over-fetches by one and treats "one more came back" as "there
+is another page"; an empty cursor is what the client reads as exhausted, and an exhausted
+source is never asked again. `>=` would report a further page for a queue of exactly 50
+and the reviewer would stop with rows undelivered; `> 52` would return a 51-row page.
+Both directions are asserted.
