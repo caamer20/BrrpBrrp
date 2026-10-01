@@ -119,7 +119,7 @@ func (s *SFU) publishRouting() {
 	s.routingVersion++
 	version := s.routingVersion
 	for _, destination := range s.peers {
-		slots := make([]string, MaxParticipants-1)
+		slots := make([]string, MaxRoomParticipants-1)
 		for _, source := range s.peers {
 			if source == destination || source.state.ChannelID != destination.state.ChannelID {
 				continue

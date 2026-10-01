@@ -238,7 +238,7 @@ func DefaultPublicationLimits() PublicationLimits {
 	return PublicationLimits{
 		PerRoomScreenVideo: 1,
 		ServerScreenVideo:  2,
-		PerRoomMicrophones: MaxParticipants,
+		PerRoomMicrophones: MaxRoomParticipants,
 		ServerMicrophones:  20,
 	}
 }

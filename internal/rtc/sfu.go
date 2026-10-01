@@ -16,7 +16,17 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-const MaxParticipants = 10
+// MaxServerParticipants bounds the whole process's voice peers, and MaxRoomParticipants
+// the largest room it will admit. They are separate because they are separate facts:
+// a room's size is a conversation's decision (the channel's own bound up to ten, or a
+// private call's two), while the serverwide number is what the process will carry —
+// twenty peers forwarding media at once (master plan, reference capacity). Treating one
+// number as both made the serverwide ceiling ten, which the plan's twenty-participant
+// profile never had room to reach (review 17).
+const (
+	MaxServerParticipants = 20
+	MaxRoomParticipants   = 10
+)
 
 type Options struct {
 	// Log records which network path carried each call. It is optional: media tests
@@ -205,9 +215,9 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 		s.mu.Unlock()
 		return errors.New("you are already in voice, possibly in another tab")
 	}
-	if len(s.peers) >= MaxParticipants {
+	if len(s.peers) >= MaxServerParticipants {
 		s.mu.Unlock()
-		return errors.New("the server's ten voice places are occupied")
+		return errors.New("the server's voice places are all occupied")
 	}
 	used := make(map[int]bool)
 	for _, peer := range s.peers {
@@ -246,7 +256,7 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 		pc.Close()
 		return err
 	}
-	for index := 0; index < MaxParticipants-1; index++ {
+	for index := 0; index < MaxRoomParticipants-1; index++ {
 		track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, fmt.Sprintf("audio-%d", index), fmt.Sprintf("voice-%d", index))
 		if err != nil {
 			s.mu.Unlock()

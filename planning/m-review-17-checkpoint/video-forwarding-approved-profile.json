@@ -1,0 +1,32 @@
+{
+  "measured_at": "2026-10-01T21:30:37Z",
+  "go_version": "go1.27.1",
+  "host_num_cpu": 16,
+  "host_gomaxprocs": 16,
+  "result": {
+    "spec": {
+      "ScreenPublishers": 2,
+      "ViewersPerShare": 9,
+      "BitrateKbps": 2500,
+      "Seconds": 20
+    },
+    "publishers": 2,
+    "viewers": 9,
+    "duration_seconds": 20.000014509,
+    "packets_forwarded": 97038,
+    "bytes_forwarded": 116445600,
+    "mean_egress_mbit_per_second": 46.5782062098403,
+    "peak_egress_mbit_per_second": 47.17374324714652,
+    "plan_arithmetic_mbit_per_second": 50,
+    "peak_server_heap_bytes": 81811640,
+    "mean_goroutines": 2226,
+    "not_established": [
+      "synthetic RTP in one process: the forwarding path's cost, not an encoded video pipeline, a network, a browser or a codec",
+      "the server's writes to each viewer's output are counted, not a client's receipt of them: a receive-only renegotiation is not currently accepted by the signal path, so no client receives a screen through this harness",
+      "the combination is the plan's profile — two publishers with nine viewers each, twenty peers in two rooms of ten — measured at the serverwide bound; the forwarding figures are the server's writes to each viewer's output, not a client's receipt",
+      "loopback: no NIC, no TURN relay, and no measure of the network the plan's budgets are stated for",
+      "no decoder and no client, so nothing here says a picture arrives intact",
+      "not run on the reference allocation (four cores, 8 GiB) and not run on either required deployment"
+    ]
+  }
+}

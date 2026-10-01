@@ -137,21 +137,32 @@ func runVideoForwardingLoad(t *testing.T, spec VideoLoadSpec) VideoLoadResult {
 	}
 	defer sfu.Close()
 
-	// The combination is capped at what the server admits, and that cap is a finding
-	// rather than a limitation of the harness. `MaxParticipants` bounds the *whole
-	// server* at ten, while the master plan's target is twenty serverwide with no more
-	// than ten in one room — so a two-publisher, nine-viewer-each combination is not
-	// reachable today. The measurement runs at the largest combination the product
-	// admits and records the shortfall rather than measuring something the product
-	// cannot do.
-	if spec.ScreenPublishers+spec.ScreenPublishers*spec.ViewersPerShare > MaxParticipants {
+	// The combination is capped at what the server admits. Serverwide that is twenty
+	// peers (MaxServerParticipants); one room carries at most ten
+	// (MaxRoomParticipants). The plan's profile — two publishers with nine viewers
+	// each, twenty in total, in two rooms of ten — is exactly the serverwide bound,
+	// so it is reachable as stated and measured as stated rather than at a reduced
+	// combination (review 17).
+	if spec.ScreenPublishers+spec.ScreenPublishers*spec.ViewersPerShare > MaxServerParticipants {
 		spec.ScreenPublishers = 1
-		spec.ViewersPerShare = MaxParticipants - 1
+		spec.ViewersPerShare = MaxServerParticipants - 1
+	}
+	if spec.ViewersPerShare+1 > MaxRoomParticipants {
+		spec.ViewersPerShare = MaxRoomParticipants - 1
 	}
 	total := spec.ScreenPublishers + spec.ScreenPublishers*spec.ViewersPerShare
+	groupSize := spec.ViewersPerShare + 1
 	peers := make([]*testPeer, 0, total)
 	for index := range total {
-		peers = append(peers, connectPeerWithCapacity(t, sfu, fmt.Sprint(index), "load", total))
+		// Each publisher leads one room, and its viewers follow it: the arrangement the
+		// plan's profile describes, with no room above the per-room bound. The
+		// publishers come first in this slice, so a viewer's room is derived from how
+		// far it sits past them.
+		room := fmt.Sprintf("load-%d", index)
+		if index >= spec.ScreenPublishers {
+			room = fmt.Sprintf("load-%d", (index-spec.ScreenPublishers)/spec.ViewersPerShare)
+		}
+		peers = append(peers, connectPeerWithCapacity(t, sfu, fmt.Sprint(index), room, groupSize))
 	}
 
 	// Each publisher announces a screen publication and is given a screen output, so
@@ -318,7 +329,7 @@ func runVideoForwardingLoad(t *testing.T, spec VideoLoadSpec) VideoLoadResult {
 		NotEstablished: []string{
 			"synthetic RTP in one process: the forwarding path's cost, not an encoded video pipeline, a network, a browser or a codec",
 			"the server's writes to each viewer's output are counted, not a client's receipt of them: a receive-only renegotiation is not currently accepted by the signal path, so no client receives a screen through this harness",
-			"the combination measured is one publisher and nine viewers rather than the plan's two and nine each, because MaxParticipants bounds the whole server at ten while the plan targets twenty serverwide — a capacity gap, not a harness one",
+			"the combination is the plan's profile — two publishers with nine viewers each, twenty peers in two rooms of ten — measured at the serverwide bound; the forwarding figures are the server's writes to each viewer's output, not a client's receipt",
 			"loopback: no NIC, no TURN relay, and no measure of the network the plan's budgets are stated for",
 			"no decoder and no client, so nothing here says a picture arrives intact",
 			"not run on the reference allocation (four cores, 8 GiB) and not run on either required deployment",

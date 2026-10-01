@@ -172,7 +172,7 @@ func (s *Server) voiceEvent(ctx context.Context, client *ws.Client, user db.User
 		// conversation. A private call's events must not be broadcast to a channel
 		// audience, and the client needs to know which it is in to avoid rendering a
 		// conversation's participants in a channel sidebar.
-		client.Send("voice.join.accept", map[string]any{"channel_id": room.ID, "private": room.Private, "display_name": room.DisplayName, "connection_id": s.voice.ConnectionID(user.ID, client.ID), "resume_token": s.voice.ResumeToken(user.ID, client.ID), "ice_servers": iceServers, "turn_enabled": enabled, "force_relay": forced, "relay_available": enabled, "bitrate": settings.VoiceBitrate * 1000, "receive_slots": rtc.MaxParticipants - 1, "may_speak": principal.Allowed(authz.VoiceSpeak)})
+		client.Send("voice.join.accept", map[string]any{"channel_id": room.ID, "private": room.Private, "display_name": room.DisplayName, "connection_id": s.voice.ConnectionID(user.ID, client.ID), "resume_token": s.voice.ResumeToken(user.ID, client.ID), "ice_servers": iceServers, "turn_enabled": enabled, "force_relay": forced, "relay_available": enabled, "bitrate": settings.VoiceBitrate * 1000, "receive_slots": rtc.MaxRoomParticipants - 1, "may_speak": principal.Allowed(authz.VoiceSpeak)})
 	case "voice.leave":
 		s.leaveVoice(user.ID, client.ID)
 	case "voice.state", "voice.speaking":
