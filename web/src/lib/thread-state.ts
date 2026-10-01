@@ -13,13 +13,18 @@ export type ThreadSendState = 'ready' | 'refused' | 'uncertain';
  * committed with the response lost, so it is *uncertain* rather than refused: telling
  * a person a send failed when it succeeded invites them to send it again as new work,
  * and the receipt would then answer a different intent (ADR 0014).
+ *
+ * A caller that already knows which of the two it is — the workspace names its
+ * outcome, because only it can tell a definite answer from a lost one — passes
+ * `outcome` and the status is not consulted.
  */
 export function threadSubmitState(
   busy: boolean,
-  error: { status?: number } | null
+  error: { status?: number; outcome?: 'refused' | 'uncertain' } | null
 ): ThreadSendState {
   if (busy) return 'ready';
   if (!error) return 'ready';
+  if (error.outcome) return error.outcome;
   if (error.status === 400 || error.status === 403 || error.status === 429) return 'refused';
   return 'uncertain';
 }

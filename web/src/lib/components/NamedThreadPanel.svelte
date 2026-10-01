@@ -21,10 +21,16 @@
   // the same way a channel message is.
   const draftSlot = $derived(`thread:${id}`);
   let draft = $state('');
-  // The send key is frozen for the life of an unresolved send. It is only replaced
-  // after the server has said what happened, so a lost response is reconciled rather
-  // than retried as new work.
-  let operationKey = $state(crypto.randomUUID());
+  // The identity this panel was mounted under. A cleanup, an effect or a completion
+  // that runs after a sign-out or an account switch presents it, and the store refuses
+  // to let this panel's text or its saved draft move into the account that replaced it.
+  const owner = untrack(() => workspace.composerOwner());
+  // The operation still awaiting a definite answer in this thread, if there is one. Its
+  // words are its immutable intent: retrying them under its own key reconciles, while
+  // edited words are different work and are sent under a new key, leaving the original
+  // here for its own retry or discard. The key is never adopted blindly, and never into
+  // a composer that no longer belongs to the session that submitted it.
+  const unresolved = $derived(workspace.unresolvedThreadOperation(id));
   let reason = $state('');
   let stateError = $state('');
   let focusTarget: HTMLTextAreaElement | null = $state(null);
@@ -40,9 +46,8 @@
     draft = workspace.composerDrafts.get(draftSlot)?.text ?? workspace.drafts[draftSlot] ?? '';
   });
   function captureDraft() {
-    if (!draft.trim()) return;
-    workspace.composerDrafts.set(draftSlot, { text: draft, attachments: [] });
-    workspace.saveDraft(draftSlot, draft);
+    if (draft.trim()) workspace.saveComposerDraft(draftSlot, draft, [], owner);
+    else workspace.clearComposerDraft(draftSlot, owner);
   }
 
   const locked = $derived(view.thread?.state === 'locked');
@@ -78,22 +83,33 @@
 
   async function send() {
     if (!canSend) return;
-    const key = operationKey;
     const text = draft;
+    const submitted = text.trim();
     view.sendError = null;
+    // The key identifies one immutable intent. The same words as an unresolved operation
+    // are that same operation, and retrying them under its own key reconciles against its
+    // receipt instead of creating the reply twice. Edited words are new work and get a
+    // fresh key; the unresolved operation stays in this thread — visible as a pending row
+    // with its own Retry and Discard — and is not silently rewritten by the edit.
+    const key =
+      unresolved && unresolved.content === submitted ? unresolved.key : crypto.randomUUID();
     // The text is cleared *after* the outcome, not before. Clearing it first meant a
-    // refusal and a lost response both left an empty composer, and the key rotation
-    // below then made the lost response a second message on retry.
-    await view.send(text, key);
-    // Only a committed send clears the composer. Everything else keeps the text, so
-    // the author can copy it, and keeps the key, so a retry reconciles against the
-    // operation's receipt instead of becoming new work.
-    if (view.sendError) {
-      draft = text;
+    // refusal and a lost response both left an empty composer, and the next attempt then
+    // made the lost response a second message.
+    const outcome = await view.send(text, key);
+    if (outcome === 'sent') {
+      // Only the text that was sent is cleared. Anything typed while the request was in
+      // flight — or newer text already in the slot — is left alone, and the saved draft
+      // is cleared only when it still holds what was sent, so reopening cannot resurrect
+      // a reply that already exists.
+      if (draft === text) draft = '';
+      workspace.clearSentDraft(draftSlot, submitted, owner);
       return;
     }
-    draft = '';
-    operationKey = crypto.randomUUID();
+    if (outcome === 'dropped') return;
+    // A definite refusal and an unknown outcome both keep the text. If the author emptied
+    // the composer while it was in flight, their words are put back rather than lost.
+    if (!draft.trim()) draft = text;
   }
 
   async function older() {
@@ -256,6 +272,12 @@
             placeholder="Reply to this thread…"
             rows="2"
             maxlength="4000"></textarea>
+          {#if unresolved && draft.trim() && draft.trim() !== unresolved.content}
+            <p class="thread-notice" role="status">
+              An earlier reply here was not confirmed. It stays in this thread for you to retry or
+              discard, and this text will be sent as a new reply.
+            </p>
+          {/if}
           {#if sendState === 'refused' && view.sendError}
             <p class="thread-send-error" role="alert">{view.sendError.message}</p>
           {:else if sendState === 'uncertain' && view.sendError}

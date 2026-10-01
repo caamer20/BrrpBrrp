@@ -6,6 +6,7 @@ import { disableNotifications } from './notifications';
 import { readDrafts, writeDrafts } from './drafts';
 import {
   clearOutbox,
+  isOperationKey,
   operationExpired,
   recoveryEntry,
   outcomeExplanation,
@@ -36,10 +37,22 @@ interface ChannelView {
 }
 type MessageChange = { channel: string; kind: string; revision: number };
 
+// ThreadSendOutcome is what one thread send left behind, as the caller needs it.
+// `sent` is the only outcome that resolved as a stored message. `refused` provably
+// wrote nothing — a definite answer, a missing destination or no capability — so the
+// operation key is still free. `uncertain` may have committed and must be reconciled
+// under the same key and text. `dropped` belongs to a view that no longer exists, so
+// there is nothing to show in it.
+export type ThreadSendOutcome =
+  | { state: 'sent'; message: Message }
+  | { state: 'refused'; error?: unknown }
+  | { state: 'uncertain'; error: unknown }
+  | { state: 'dropped' };
+
 // RequestIdentity is the identity a request was issued under. It is captured before
 // the request is sent and compared again when it completes, so a completion is only
 // applied to the account and authority that asked for it.
-interface RequestIdentity {
+export interface RequestIdentity {
   session: number;
   account: string;
   generation: number;
@@ -159,6 +172,10 @@ class Workspace {
   // submitted once, so restoring one is a reconciliation against the operation's durable
   // record rather than a new send (ADR 0010, Decision 5).
   private outbox = $state<OutboxEntry[]>([]);
+  // The account the queue in memory belongs to. Entries are loaded and written for one
+  // account, and a session that has moved must not write them under the new account's
+  // key: that would move one account's unconfirmed sends into another's device scope.
+  private outboxAccount = '';
   get recoveredMessages() {
     return this.outbox.filter((entry) => entry.recovery);
   }
@@ -198,6 +215,10 @@ class Workspace {
   private sessionVersion = 0;
   private lastTyping = 0;
   private readMarker = '';
+  // The account whose persisted drafts were deliberately cleared in this page session:
+  // a sign-out, or draft saving turned off. A mounted composer that unmounts afterwards
+  // must not write its text back into a scope the person just asked to clear.
+  private draftsClearedFor = '';
   private pending = $state<Record<string, Message>>({});
   get hasPendingMessages() {
     return Object.keys(this.pending).length > 0;
@@ -1188,15 +1209,30 @@ class Workspace {
   // acknowledgement for, bounded by the store itself.
   private persistOutbox() {
     if (!this.saveDrafts || !this.user) return;
+    if (this.outboxAccount !== '' && this.outboxAccount !== this.user.id) return;
+    this.outboxAccount = this.user.id;
     writeOutbox(storage, this.user.id, this.outbox);
   }
 
   // trackOutbox records one submitted send so a lost acknowledgement is recoverable.
+  // The destination is recorded whole — thread and conversation — so a restored
+  // operation is retried where it was going, never where the app happens to be.
+  //
+  // The first record of an operation is its immutable intent. A later write under the
+  // same key — an attempted edit, a retry, a restored entry — must not be able to
+  // rewrite what the key means: the server reconciles the key against the work it
+  // recorded, and the client has to keep the same answer to give back to it.
   private trackOutbox(message: Message, attachments: string[]) {
     if (!this.user) return;
+    if (this.outbox.some((item) => item.key === message.idempotency_key && !item.recovery)) return;
+    // The queue keeps only keys this client can submit and reconcile, and those are the
+    // UUIDs it generates. A key it cannot validate is not persisted as a recoverable
+    // operation, because restoring it could not be trusted to mean the same send.
+    if (!isOperationKey(message.idempotency_key)) return;
     const entry: OutboxEntry = {
       key: message.idempotency_key,
       conversation: this.conversationId(message),
+      thread_id: message.thread_id || '',
       content: message.content,
       attachments: attachments.slice(0, 5),
       reply_to: message.reply_to_id || '',
@@ -1235,6 +1271,7 @@ class Workspace {
     if (!this.saveDrafts || !this.user) return;
     const request = this.identity();
     const entries = readOutbox(storage, this.user.id);
+    this.outboxAccount = this.user.id;
     // Keep the entire queue durable before the first await. A reload during reconciliation
     // must not lose the entries after the request currently in flight.
     this.outbox = entries;
@@ -1261,6 +1298,10 @@ class Workspace {
       idempotency_key: entry.key,
       channel_id: this.isDirect(entry.conversation) ? '' : entry.conversation,
       conversation_id: entry.conversation,
+      // A restored thread operation retries into its thread, through the same path
+      // builder a live send uses. Restoring it into the conversation instead posted
+      // the original text and key to the channel it lives in.
+      thread_id: entry.thread_id || undefined,
       user_id: this.user.id,
       content: entry.content,
       reply_to_id: entry.reply_to,
@@ -1272,8 +1313,10 @@ class Workspace {
     };
     this.pending[entry.key] = message;
     // A restored send for the conversation on screen belongs in it, exactly as a send from
-    // the composer does, so its outcome is visible where it happened.
+    // the composer does, so its outcome is visible where it happened. A thread reply is
+    // not part of that conversation's listing: it is shown in the thread's own panel.
     if (
+      !message.thread_id &&
       this.conversationId(message) === this.activeId &&
       !this.messages.some((item) => item.id === entry.key)
     )
@@ -1289,8 +1332,22 @@ class Workspace {
     return entry ? entry.attachments : message.attachments.map((attachment) => attachment.id);
   }
 
+  // One thread's outstanding operations, matched by destination: a pending reply is
+  // the one named by `reply_to_id` in a channel, and the one filed into `thread_id` in
+  // a named thread. Matching only `reply_to_id` left a pending named-thread send
+  // invisible in the thread it belonged to.
   pendingReplies(id: string) {
-    return Object.values(this.pending).filter((message) => message.reply_to_id === id);
+    return Object.values(this.pending).filter(
+      (message) => message.reply_to_id === id || message.thread_id === id
+    );
+  }
+
+  // unresolvedThreadOperation is this client's durable record of one thread send whose
+  // outcome is still unknown. The panel adopts its key, so a reply attempted before a
+  // lost response is reconciled as the same operation rather than sent again as new
+  // work after the panel is closed or the page reloaded.
+  unresolvedThreadOperation(threadID: string) {
+    return this.outbox.find((entry) => !entry.recovery && entry.thread_id === threadID);
   }
 
   discardPending(message: Message) {
@@ -1372,28 +1429,68 @@ class Workspace {
    * committed into a second message, which is the one outcome a recoverable send
    * exists to prevent.
    *
-   * The result is the stored message, or nothing if the request was dropped because
-   * the account, session or authority moved under it. Nothing is thrown, because the
-   * throw case — an unknown outcome that may have committed — is exactly the one the
-   * caller must show rather than swallow.
+   * The initiating account, session and authority are captured before the destination
+   * lookup — the first asynchronous step — and checked again before anything is
+   * persisted or posted. A lookup that resolves after another account took the view
+   * can therefore never send the first account's text as the second, and a lookup
+   * that fails never falls back to the conversation that happens to be open
+   * (review 15, V15-01).
+   *
+   * The result names what happened, because the caller must treat them differently:
+   * `sent` is the stored message; `refused` provably wrote nothing, so the key is
+   * still free and the composer keeps the text; `uncertain` may have committed and
+   * must be reconciled under the same key; `dropped` belongs to a view that no
+   * longer exists.
    */
-  async sendIntoThread(threadID: string, content: string, idempotencyKey: string) {
-    if (!this.user || this.authorizationUnverified || !this.can('message.send')) return;
-    if (!threadID) return;
+  async sendIntoThread(
+    threadID: string,
+    content: string,
+    idempotencyKey: string
+  ): Promise<ThreadSendOutcome> {
+    if (!this.user || this.authorizationUnverified || !this.can('message.send'))
+      return { state: 'refused' };
+    if (!threadID) return { state: 'refused' };
+    const sender = this.user.id;
+    const request = this.identity();
     const key = idempotencyKey;
-    const thread = await api<{ conversation_id: string } | null>(
-      `/threads/${encodeURIComponent(threadID)}`,
-      'GET'
-    ).catch(() => null);
-    const conversationID = thread?.conversation_id || this.activeId;
-    if (!conversationID) return;
+    // A key already has a meaning. An unresolved operation's key identifies the words it
+    // was submitted with, and it cannot be reused for other words: the server reconciles
+    // the key against the intent it recorded, and the client must not rewrite its own
+    // copy of that intent to match an edit. Edited text is new work under a new key,
+    // while the original stays for its own retry or discard.
+    const recorded = this.outbox.find((item) => item.key === key && !item.recovery);
+    if (recorded && recorded.content !== content.trim())
+      return {
+        state: 'refused',
+        error: new Error('This reply was already submitted with its own text.')
+      };
+    let thread: { conversation_id: string } | null = null;
+    try {
+      thread = await api<{ conversation_id: string } | null>(
+        `/threads/${encodeURIComponent(threadID)}`,
+        'GET'
+      );
+    } catch (error) {
+      if (!this.admitted(request)) return { state: 'dropped' };
+      // No destination, no send. The failed lookup used to fall back to the active
+      // conversation, which filed a thread reply into whatever channel happened to
+      // be open.
+      this.showToast(errorMessage(error));
+      return { state: 'refused', error };
+    }
+    // The account, session or authority moved while the destination was being
+    // resolved. Nothing has been persisted and no key has been claimed, so dropping
+    // the operation cannot send one account's text under another.
+    if (!this.admitted(request)) return { state: 'dropped' };
+    const conversationID = thread?.conversation_id || '';
+    if (!conversationID) return { state: 'refused' };
     const message: Message = {
       id: key,
       idempotency_key: key,
       channel_id: this.isPrivate(conversationID) ? '' : conversationID,
       conversation_id: conversationID,
       thread_id: threadID,
-      user_id: this.user.id,
+      user_id: sender,
       content,
       attachments: [],
       reactions: [],
@@ -1401,7 +1498,6 @@ class Workspace {
       created_at: new Date().toISOString(),
       pending: 'sending'
     };
-    const request = this.identity();
     this.pending[key] = message;
     this.trackOutbox(message, []);
     try {
@@ -1415,36 +1511,37 @@ class Workspace {
       );
       // A completion that arrives after the account, session or authority moved
       // belongs to a view that no longer exists. The message is on the server and
-      // returns with the refetched history if this account may still read it, so
+      // returns with the refetched thread if this account may still read it, so
       // nothing is written into the cleared view — and the outbox entry is released
       // rather than left retryable, because the operation did complete.
       if (!this.admitted(request)) {
         this.releaseOutbox(key);
-        return;
+        return { state: 'dropped' };
       }
       this.releaseOutbox(key);
       delete this.pending[key];
       this.onConversationEvent?.({ t: 'message.created', d: saved });
-      return saved;
+      return { state: 'sent', message: saved };
     } catch (error) {
       if (!this.admitted(request)) {
         // Same rule as the channel path: keep the author's operation retryable under
         // its own key rather than leaving it in `sending` forever, and do not apply an
         // answer that belongs to a view that has been cleared.
         if (this.pending[key]) this.pending[key] = { ...message, pending: 'failed' };
-        return;
+        return { state: 'dropped' };
       }
       const status = error instanceof APIError ? error.status : 0;
       if (!retryableStatus(status)) {
-        // The server will answer this operation the same way again, so it is not
-        // retried: the text is handed back to the person with what happened, in the
-        // server's own words.
+        // The server answered definitely and will answer the same way again, so the
+        // operation is over: the text is handed back for the author to recover, and
+        // the caller keeps their draft. Treating this as an ordinary failure left the
+        // composer looking as if nothing had been attempted.
         this.finishUnsendable(message, outcomeExplanation(status, errorMessage(error)));
-        return;
+        return { state: 'refused', error };
       }
       this.showToast(errorMessage(error));
       this.pending[key] = { ...message, pending: 'failed' };
-      throw error;
+      return { state: 'uncertain', error };
     }
   }
 
@@ -1501,6 +1598,10 @@ class Workspace {
       if (saved.reply_to_id) this.queueParentRefresh(saved.reply_to_id, this.conversationId(saved));
       if (
         this.activeId === this.conversationId(message) &&
+        // A thread reply belongs to its thread's window. The channel listing does not
+        // carry thread replies, so inserting one here would put it back where the
+        // server deliberately stopped showing it.
+        !saved.thread_id &&
         !(message.preserve_position && (this.viewingHistory || !this.atLatest))
       ) {
         this.messages = this.messages.filter(
@@ -1969,11 +2070,17 @@ class Workspace {
     if (this.user) {
       storage.setItem(`brrp.save-drafts.${this.user.id}`, String(this.saveDrafts));
       if (this.saveDrafts) {
+        // Saving drafts was re-enabled deliberately, so a late cleanup from before is
+        // no longer something to hold back.
+        this.draftsClearedFor = '';
         writeDrafts(storage, this.user.id, this.drafts);
         this.persistOutbox();
       } else {
         storage.removeItem(`brrp.drafts.${this.user.id}`);
         clearOutbox(storage, this.user.id);
+        // The device scope was just cleared on purpose; a composer that unmounts now
+        // must not write the text back into it.
+        this.draftsClearedFor = this.user.id;
       }
     }
   }
@@ -1981,6 +2088,55 @@ class Workspace {
   saveDraft(channel: string, text: string) {
     this.drafts[channel] = text;
     if (this.saveDrafts && this.user) writeDrafts(storage, this.user.id, this.drafts);
+  }
+
+  // composerOwner is the identity a composer belongs to. A component captures it when
+  // it mounts and presents it when it writes, so a cleanup, effect or completion that
+  // runs after a sign-out or an account switch is recognized as belonging to a session
+  // that no longer exists.
+  composerOwner(): RequestIdentity {
+    return this.identity();
+  }
+
+  // saveComposerDraft records one mounted composer's unsent draft under the identity it
+  // was typed in. While that identity is still the session's, the draft goes into the
+  // shared store exactly as a keystroke would. After it has moved — a stop, a sign-out, a
+  // new account — nothing is written into the live store: the text goes into the account
+  // it belongs to instead, and only when that account had draft saving on. One account's
+  // unsent words are never handed to the next.
+  saveComposerDraft(slot: string, text: string, attachments: Attachment[], owner: RequestIdentity) {
+    if (!text.trim() && !attachments.length) return;
+    if (this.admitted(owner)) {
+      this.composerDrafts.set(slot, { text, attachments });
+      this.saveDraft(slot, text);
+      return;
+    }
+    if (!owner.account || owner.account === this.draftsClearedFor) return;
+    if (storage.getItem(`brrp.save-drafts.${owner.account}`) !== 'true') return;
+    const saved = readDrafts(storage, owner.account);
+    saved[slot] = text.slice(0, 4000);
+    writeDrafts(storage, owner.account, saved);
+  }
+
+  // clearComposerDraft removes one composer slot. Like writes, a cleanup for a session
+  // that has moved removes nothing: the slot in the live store now belongs to whoever
+  // is signed in.
+  clearComposerDraft(slot: string, owner: RequestIdentity) {
+    if (!this.admitted(owner)) return;
+    this.composerDrafts.delete(slot);
+    delete this.drafts[slot];
+    if (this.saveDrafts && this.user) writeDrafts(storage, this.user.id, this.drafts);
+  }
+
+  // clearSentDraft clears one composer slot after the text it held has been committed.
+  // Only the text that was actually sent is cleared: anything newer — typed while the
+  // request was in flight, or restored into the slot since — is the author's current
+  // work, and clearing it would be deleting a draft nobody sent.
+  clearSentDraft(slot: string, sent: string, owner: RequestIdentity) {
+    if (!this.admitted(owner)) return;
+    const live = this.composerDrafts.get(slot)?.text ?? this.drafts[slot] ?? '';
+    if (live.trim() && live.trim() !== sent) return;
+    this.clearComposerDraft(slot, owner);
   }
 
   /**
@@ -2098,6 +2254,9 @@ class Workspace {
       if (this.user) {
         storage.removeItem(`brrp.drafts.${this.user.id}`);
         clearOutbox(storage, this.user.id);
+        // A sign-out clears this account's drafts and unconfirmed sends from the
+        // device; a composer unmounting afterwards must not put them back.
+        this.draftsClearedFor = this.user.id;
       }
       this.outbox = [];
       this.drafts = {};
@@ -2136,6 +2295,7 @@ class Workspace {
     this.stopped = true;
     this.pending = {};
     this.outbox = [];
+    this.outboxAccount = '';
     this.readCursors = {};
     this.channelNotificationMutes = {};
     this.channelNotificationsReady = false;

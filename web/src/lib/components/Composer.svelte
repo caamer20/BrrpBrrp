@@ -52,10 +52,16 @@
       : []
   );
   const drafts = workspace.composerDrafts;
+  // The identity this composer was mounted under. Its cleanup presents it so a draft
+  // captured while the component is going away cannot be written into an account that
+  // replaced the one that typed it — and cannot delete the slot of a draft that does
+  // belong to the new account.
+  const owner = workspace.composerOwner();
   const captureDrafts = () => {
     if (!draftChannel) return;
-    if (text.trim() || attachments.length) drafts.set(draftChannel, { text, attachments });
-    else drafts.delete(draftChannel);
+    if (text.trim() || attachments.length)
+      workspace.saveComposerDraft(draftChannel, text, attachments, owner);
+    else workspace.clearComposerDraft(draftChannel, owner);
   };
   workspace.composerCaptures.add(captureDrafts);
   onDestroy(() => {

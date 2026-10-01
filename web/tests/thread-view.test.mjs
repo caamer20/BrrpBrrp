@@ -32,13 +32,33 @@ test('a page is walked by its first row, not its last', () => {
   assert.doesNotMatch(source, /before = page\[page\.length - 1\]\.id;/);
 });
 
-test('the send key is released only after the outcome is known', () => {
+test('the composer keeps one immutable intent per unresolved operation', () => {
   const source = readSource('src/lib/components/NamedThreadPanel.svelte');
-  // The key is captured before the send and replaced after it, so a retry within the
-  // same failure is the same operation rather than new work.
-  assert.match(source, /const key = operationKey;/);
-  assert.match(source, /await view\.send\(text, key\);/);
-  assert.match(source, /operationKey = crypto\.randomUUID\(\);/);
+  // The key follows the words being sent rather than being frozen blindly: the same
+  // words as an unresolved operation retry under its own key and reconcile, while
+  // edited words are new work and get a fresh key.
+  assert.match(
+    source,
+    /unresolved && unresolved\.content === submitted \? unresolved\.key : crypto\.randomUUID\(\)/
+  );
+  // The old design adopted a stored key into component state whose type was the UUID
+  // the first `crypto.randomUUID()` produced; the restored key was a plain string, and
+  // adopting it without validation would let stored data decide what key a send is
+  // submitted under.
+  assert.doesNotMatch(source, /operationKey/);
+  // And the durable record is immutable on the store's side too, so an edit can never
+  // rewrite what the key means.
+  const workspace = readSource('src/lib/workspace.svelte.ts');
+  assert.match(workspace, /recorded\.content !== content\.trim\(\)/);
+  assert.match(workspace, /item\.key === message\.idempotency_key && !item\.recovery/);
+});
+
+test('edited text after an uncertain send is announced as a new reply', () => {
+  const source = readSource('src/lib/components/NamedThreadPanel.svelte');
+  // The unresolved operation stays in the thread for its own retry or discard, and the
+  // edited words are not silently submitted under its key or presented as a retry.
+  assert.match(source, /unresolved && draft\.trim\(\) && draft\.trim\(\) !== unresolved\.content/);
+  assert.match(source, /will be sent as a new reply/);
 });
 
 test('a thread that is not found is not re-requested', () => {
@@ -164,28 +184,39 @@ test("the caller's key is used, so a retry reconciles rather than duplicating", 
   assert.match(bounded, /idempotency_key: message\.idempotency_key/);
 });
 
-test('a thread composer clears its draft only after the outcome is known', () => {
+test('a thread composer acts on the named outcome, not on the absence of an error', () => {
   const source = readSource('src/lib/components/NamedThreadPanel.svelte');
   const body = source.slice(source.indexOf('async function send()'));
   const bounded = body.slice(0, body.indexOf('\n  async function older'));
+  // The resolved outcome decides. Inferring success from `sendError` being null made a
+  // dropped send — one whose view no longer exists — run the success cleanup.
+  assert.match(bounded, /const outcome = await view\.send\(text, key\);/);
+  assert.match(bounded, /if \(outcome === 'sent'\) \{/);
+  assert.match(bounded, /if \(outcome === 'dropped'\) return;/);
   // Clearing before the await meant a refusal and a lost response both left an empty
-  // composer, and the rotation below then made the lost response a second message.
-  const clearAt = bounded.indexOf("draft = ''");
-  const sendAt = bounded.indexOf('await view.send(');
-  assert.ok(clearAt > sendAt, 'the composer clears its draft before the send completes');
-  // And a failed outcome puts the text back rather than discarding it.
+  // composer, and the next attempt then made the lost response a second message. Only
+  // the text that was actually sent is cleared.
+  const clearAt = bounded.indexOf("if (draft === text) draft = '';");
+  const sentAt = bounded.indexOf("if (outcome === 'sent')");
+  assert.ok(clearAt > sentAt, 'the composer clears its draft outside the sent outcome');
   assert.match(
     bounded,
-    /if \(view\.sendError\) \{[\s\S]{0,80}draft = text/,
-    'a refused or uncertain send does not restore the text'
+    /workspace\.clearSentDraft\(draftSlot, submitted, owner\)/,
+    'the committed send does not clear its saved draft'
   );
+  // And a refused or uncertain outcome keeps the author's words, restoring them if the
+  // composer was emptied while the request was in flight.
+  assert.match(bounded, /if \(!draft\.trim\(\)\) draft = text;/);
 });
 
-test('a thread draft is held in the shared, account-scoped store', () => {
+test('a thread draft is captured through the account-owning store, not component state', () => {
   const source = readSource('src/lib/components/NamedThreadPanel.svelte');
   // Local panel state dies with the panel, so closing a thread to look at a channel
-  // and coming back lost an unsent reply. The store is already account-scoped, so this
-  // cannot carry into the next account.
-  assert.match(source, /workspace\.composerDrafts/, 'the thread draft is not in the shared store');
+  // and coming back lost an unsent reply. The capture goes through the store, which is
+  // account-scoped by the identity the panel mounted under — so a teardown after a
+  // switch cannot write the text into the account that replaced it.
+  assert.match(source, /workspace\.saveComposerDraft\(draftSlot, draft, \[\], owner\)/);
+  assert.match(source, /workspace\.clearComposerDraft\(draftSlot, owner\)/);
+  assert.match(source, /const owner = untrack\(\(\) => workspace\.composerOwner\(\)\)/);
   assert.match(source, /captureDraft\(\)/, 'the draft is never captured on close');
 });

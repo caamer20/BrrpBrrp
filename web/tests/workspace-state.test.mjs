@@ -47,6 +47,9 @@ const localStorage = storage;
 const window = { innerWidth: 1200 };
 const Notification = { permission: 'default' };
 const navigator = {};
+// The workspace's sign-out path asks the notification worker to stop first. The real
+// module is stripped with the other imports, so the shell stands in for it.
+const disableNotifications = async () => {};
 export const setNotificationWorker = ready => {
   if (ready) {
     window.Notification = Notification;
@@ -341,6 +344,7 @@ test('an opted-in outbox reconciles a held send under its own key and clears it 
       {
         key,
         conversation,
+        thread_id: '',
         content: 'held text',
         attachments: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
         reply_to: '',
@@ -386,6 +390,7 @@ test('a refusal the server will repeat releases the entry and keeps the text', a
       {
         key,
         conversation,
+        thread_id: '',
         content: 'unsendable text',
         attachments: [],
         reply_to: '',
@@ -1129,6 +1134,7 @@ function savedSend(extra = {}) {
   return {
     key: crypto.randomUUID(),
     conversation: recoveryChannel,
+    thread_id: '',
     content: 'text to keep',
     attachments: [],
     reply_to: '',
@@ -1887,4 +1893,428 @@ test('an entry whose conversation is gone opens nothing rather than the wrong th
   await value.followActivityDestination({ kind: 'message', conversation_id: 'somebody-elses' });
   assert.deepEqual(opened, [], 'an unopenable conversation was opened anyway');
   assert.equal(value.messagesOpen, true);
+});
+
+// Review 15, V15-01: the initiating account, session and authority are captured
+// before the first asynchronous step, and the destination is never inferred from
+// whatever conversation happens to be open.
+test('a thread lookup that resolves after an account switch sends nothing as the new account', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const key = '30000000-0000-4000-8000-000000000001';
+  const lookup = deferred();
+  const calls = [];
+  setHandler((path, method) => {
+    calls.push({ path, method });
+    if (method === 'GET') return lookup.promise;
+    return Promise.resolve(message('saved', { idempotency_key: key }));
+  });
+  const sending = value.sendIntoThread('thread-1', 'A wrote this', key);
+  // A opened the send; B takes the view while the thread lookup is still in flight.
+  value.state.user = { id: crypto.randomUUID() };
+  lookup.resolve({ conversation_id: 'a' });
+  const outcome = await sending;
+  assert.equal(outcome.state, 'dropped', 'a moved view completed the operation anyway');
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'POST'),
+    [],
+    'the first account\u2019s text was posted as the second'
+  );
+  assert.equal(value.pending[key], undefined);
+  assert.equal(value.outbox.length, 0);
+  assert.equal(store.getItem(`brrp.outbox.${value.state.user.id}`), null);
+});
+
+test('a failed thread lookup never falls back to the active conversation', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const key = '30000000-0000-4000-8000-000000000002';
+  const calls = [];
+  setHandler((path, method) => {
+    calls.push({ path, method });
+    if (method === 'GET') return Promise.reject(new Error('offline'));
+    return Promise.resolve(message('saved', { idempotency_key: key }));
+  });
+  const outcome = await value.sendIntoThread('thread-1', 'held text', key);
+  assert.equal(outcome.state, 'refused');
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'POST'),
+    [],
+    'a failed lookup sent the text into the open channel instead'
+  );
+  assert.equal(value.outbox.length, 0, 'nothing was persisted for an operation that never started');
+  assert.equal(value.toast, 'offline');
+});
+
+test('a pending named-thread send is visible in its thread and not in the channel', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const key = '30000000-0000-4000-8000-000000000003';
+  setHandler((path, method) => {
+    if (method === 'GET') return Promise.resolve({ conversation_id: 'a' });
+    return Promise.reject(apiError('server busy', 503));
+  });
+  const outcome = await value.sendIntoThread('thread-1', 'a thread reply', key);
+  assert.equal(outcome.state, 'uncertain');
+  const pending = value.pendingReplies('thread-1');
+  assert.equal(pending.length, 1, 'the pending reply is not shown in its thread');
+  assert.equal(pending[0].pending, 'failed');
+  assert.equal(pending[0].thread_id, 'thread-1');
+  assert.deepEqual(value.messages, [], 'a thread reply became a channel-history row');
+});
+
+// The destination a thread operation was submitted to survives a reload: a lost
+// response is reconciled under the same key against the same thread, and a failure
+// before commit retries into the thread rather than into its parent channel.
+test('a lost thread-send response replays under the same key after a reload', async (t) => {
+  const first = workspace();
+  t.after(() => first.stop());
+  // Durable outbox storage is account-scoped by UUID. A fixture that is not a valid
+  // account id persists nothing, and a test that persists nothing cannot establish
+  // recovery.
+  first.state.user.id = recoveryAccount;
+  first.saveDrafts = true;
+  store.clear();
+  const key = '30000000-0000-4000-8000-000000000004';
+  const thread = crypto.randomUUID();
+  const conversation = crypto.randomUUID();
+  first.state.channels = [...first.state.channels, { id: conversation, type: 'text' }];
+  first.activeId = conversation;
+  setHandler((path, method) => {
+    if (method === 'GET') return Promise.resolve({ conversation_id: conversation });
+    // The server stored the message and the response was lost on the way back.
+    return Promise.reject(new Error('connection lost after delivery'));
+  });
+  const outcome = await first.sendIntoThread(thread, 'lost acknowledgement', key);
+  assert.equal(outcome.state, 'uncertain');
+  const account = first.state.user.id;
+  const durable = store.getItem(`brrp.outbox.${account}`);
+  assert.ok(durable, 'the uncertain operation was never persisted');
+  const held = JSON.parse(durable);
+  assert.equal(held[0].thread_id, thread, 'the destination is durable');
+  assert.equal(held[0].content, 'lost acknowledgement', 'the intent is durable');
+  first.stop();
+
+  const second = workspace();
+  t.after(() => second.stop());
+  second.state.user.id = account;
+  second.state.channels = [...second.state.channels, { id: conversation, type: 'text' }];
+  second.activeId = conversation;
+  second.saveDrafts = true;
+  const calls = [];
+  setHandler((path, method, body) => {
+    calls.push({ path, method, body });
+    return Promise.resolve(
+      message('88888888-8888-4888-8888-888888888888', {
+        idempotency_key: key,
+        thread_id: thread,
+        user_id: account,
+        content: 'lost acknowledgement'
+      })
+    );
+  });
+  await second.restoreOutbox();
+  const posts = calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'the operation was submitted a different number of times');
+  assert.equal(posts[0].path, `/threads/${thread}/messages`, 'the replay left its thread');
+  assert.equal(posts[0].body.idempotency_key, key, 'the immutable key was not reused');
+  assert.equal(posts[0].body.content, 'lost acknowledgement');
+  assert.equal(store.getItem(`brrp.outbox.${account}`), null, 'the answer releases the entry');
+  assert.equal(second.pending[key], undefined);
+});
+
+test('a thread operation that failed before commit retries into its thread, never the channel', async (t) => {
+  const first = workspace();
+  t.after(() => first.stop());
+  first.state.user.id = recoveryAccount;
+  first.saveDrafts = true;
+  store.clear();
+  const key = '30000000-0000-4000-8000-000000000005';
+  const thread = crypto.randomUUID();
+  const conversation = crypto.randomUUID();
+  first.state.channels = [...first.state.channels, { id: conversation, type: 'text' }];
+  first.activeId = conversation;
+  setHandler((path, method) => {
+    if (method === 'GET') return Promise.resolve({ conversation_id: conversation });
+    return Promise.reject(apiError('server busy', 503));
+  });
+  const outcome = await first.sendIntoThread(thread, 'retry me into the thread', key);
+  assert.equal(outcome.state, 'uncertain');
+  const account = first.state.user.id;
+  assert.ok(store.getItem(`brrp.outbox.${account}`), 'the operation is durable');
+  first.stop();
+
+  const second = workspace();
+  t.after(() => second.stop());
+  second.state.user.id = account;
+  second.state.channels = [...second.state.channels, { id: conversation, type: 'text' }];
+  second.activeId = conversation;
+  second.saveDrafts = true;
+  const calls = [];
+  setHandler((path, method, body) => {
+    calls.push({ path, method, body });
+    return Promise.resolve(
+      message('99999999-9999-4999-8999-999999999999', {
+        idempotency_key: key,
+        thread_id: thread,
+        user_id: account
+      })
+    );
+  });
+  await second.restoreOutbox();
+  const posts = calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'exactly one message is created');
+  assert.equal(posts[0].path, `/threads/${thread}/messages`);
+  assert.ok(
+    !calls.some((call) => call.path === `/channels/${conversation}/messages`),
+    'a thread reply was routed into the channel it lives in'
+  );
+  assert.deepEqual(
+    second.messages.filter((item) => item.id === key),
+    [],
+    'a channel-history row was created for the thread reply'
+  );
+  assert.equal(store.getItem(`brrp.outbox.${account}`), null);
+});
+
+// Review 15, V15-01: account isolation includes component teardown, not only requests
+// and storage keys. A composer that unmounts after the session has moved presents the
+// identity it was mounted under; its text goes into that account's own device scope at
+// most, and never into the store or storage of the account that replaced it.
+test('a composer cleanup that runs after a switch cannot write into the new account', (t) => {
+  const first = workspace();
+  t.after(() => first.stop());
+  first.state.user.id = recoveryAccount;
+  first.saveDrafts = true;
+  store.clear();
+  // The old account had draft saving on, so its text is still recoverable in its own
+  // scope rather than being silently dropped.
+  store.setItem(`brrp.save-drafts.${recoveryAccount}`, 'true');
+  const owner = first.composerOwner();
+  const slot = `thread:${crypto.randomUUID()}`;
+  first.stop();
+
+  const second = workspace();
+  t.after(() => second.stop());
+  second.state.user.id = crypto.randomUUID();
+  second.composerDrafts.set(slot, { text: 'B owns this slot now', attachments: [] });
+
+  first.saveComposerDraft(slot, 'A wrote this', [], owner);
+  assert.equal(
+    second.composerDrafts.get(slot).text,
+    'B owns this slot now',
+    "A's late cleanup overwrote B's draft"
+  );
+  assert.equal(second.drafts[slot], undefined, "A's text leaked into B's drafts");
+  assert.equal(
+    store.getItem(`brrp.drafts.${second.state.user.id}`),
+    null,
+    "A's text was persisted into B's storage scope"
+  );
+  const kept = JSON.parse(store.getItem(`brrp.drafts.${recoveryAccount}`));
+  assert.equal(kept[slot], 'A wrote this', "A's own draft was not recoverable in its own scope");
+});
+
+// The other half of teardown isolation: a cleanup must not delete the new account's
+// draft either. An empty composer closing late used to clear a slot the new account
+// had already filled.
+test('a composer cleanup cannot clear the new account\u2019s draft', (t) => {
+  const first = workspace();
+  t.after(() => first.stop());
+  first.state.user.id = recoveryAccount;
+  const owner = first.composerOwner();
+  const slot = `thread:${crypto.randomUUID()}`;
+  first.stop();
+
+  const second = workspace();
+  t.after(() => second.stop());
+  second.state.user.id = crypto.randomUUID();
+  second.composerDrafts.set(slot, { text: 'B is still typing', attachments: [] });
+  second.drafts[slot] = 'B is still typing';
+
+  first.clearComposerDraft(slot, owner);
+  assert.equal(second.composerDrafts.get(slot).text, 'B is still typing');
+  assert.equal(second.drafts[slot], 'B is still typing');
+});
+
+// A sign-out deliberately clears the account's drafts and unconfirmed sends from the
+// device. A composer unmounting afterwards must not write them back.
+test('a sign-out clears the device scope and a late cleanup cannot put it back', async (t) => {
+  const value = recoveryWorkspace();
+  t.after(() => value.stop());
+  value.saveDrafts = true;
+  store.setItem(`brrp.save-drafts.${recoveryAccount}`, 'true');
+  const owner = value.composerOwner();
+  const slot = `thread:${crypto.randomUUID()}`;
+  setHandler(async () => ({}));
+  await value.logout();
+  assert.equal(store.getItem(`brrp.drafts.${recoveryAccount}`), null);
+  value.saveComposerDraft(slot, 'signed-out text', [], owner);
+  assert.equal(
+    store.getItem(`brrp.drafts.${recoveryAccount}`),
+    null,
+    'a late cleanup resurrected text the sign-out cleared'
+  );
+});
+
+// The same rule for the preference: turning draft saving off clears the scope, and a
+// pending composer must not write the text back after the person asked for it to go.
+test('turning draft saving off blocks a late cleanup from rewriting the cleared scope', (t) => {
+  const value = recoveryWorkspace();
+  t.after(() => value.stop());
+  value.saveDrafts = true;
+  store.setItem(`brrp.save-drafts.${recoveryAccount}`, 'true');
+  const owner = value.composerOwner();
+  const slot = `thread:${crypto.randomUUID()}`;
+  value.saveDrafts = false;
+  value.savePreferences();
+  assert.equal(store.getItem(`brrp.drafts.${recoveryAccount}`), null);
+  value.saveComposerDraft(slot, 'late text', [], owner);
+  assert.equal(store.getItem(`brrp.drafts.${recoveryAccount}`), null);
+});
+
+// An unresolved operation's key is its immutable intent. Other words submitted under
+// that key are refused before they reach the server, and the durable record keeps the
+// original words so the original retry still reconciles.
+test('an unresolved operation keeps its original intent when other text reuses its key', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.state.user.id = recoveryAccount;
+  value.saveDrafts = true;
+  store.clear();
+  const key = '30000000-0000-4000-8000-000000000006';
+  const thread = crypto.randomUUID();
+  const conversation = crypto.randomUUID();
+  value.state.channels = [{ id: conversation, type: 'text' }];
+  value.activeId = conversation;
+  const posts = [];
+  setHandler((path, method, body) => {
+    if (method === 'GET') return Promise.resolve({ conversation_id: conversation });
+    posts.push(body);
+    return Promise.reject(apiError('server busy', 503));
+  });
+  assert.equal((await value.sendIntoThread(thread, 'the original reply', key)).state, 'uncertain');
+  assert.equal(value.unresolvedThreadOperation(thread).content, 'the original reply');
+  const durable = JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`));
+  assert.equal(durable[0].content, 'the original reply', 'the durable intent changed');
+
+  const reused = await value.sendIntoThread(thread, 'an edited reply', key);
+  assert.equal(reused.state, 'refused');
+  assert.equal(
+    value.unresolvedThreadOperation(thread).content,
+    'the original reply',
+    'the edit rewrote the operation it reused'
+  );
+  assert.equal(posts.length, 1, 'the edited words were submitted under the original key');
+  assert.equal(
+    JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`))[0].content,
+    'the original reply',
+    'the stored intent changed'
+  );
+
+  // The original operation still retries with its own words and key.
+  const retried = [];
+  setHandler((path, method, body) => {
+    if (method === 'GET') return Promise.resolve({ conversation_id: conversation });
+    retried.push({ path, body });
+    return Promise.resolve(
+      message('77777777-7777-4777-8777-777777777777', {
+        idempotency_key: key,
+        thread_id: thread,
+        user_id: recoveryAccount,
+        content: 'the original reply'
+      })
+    );
+  });
+  await value.retryMessage(value.pending[key]);
+  assert.equal(retried.length, 1);
+  assert.equal(retried[0].path, `/threads/${thread}/messages`);
+  assert.equal(retried[0].body.idempotency_key, key);
+  assert.equal(retried[0].body.content, 'the original reply');
+});
+
+// A successful send clears the saved draft it came from — and only that text. Newer
+// words typed while the request was in flight are the author's current work.
+test('a committed send clears its saved draft without erasing newer text', (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.state.user.id = recoveryAccount;
+  value.saveDrafts = true;
+  store.clear();
+  store.setItem(`brrp.save-drafts.${recoveryAccount}`, 'true');
+  const owner = value.composerOwner();
+  const slot = `thread:${crypto.randomUUID()}`;
+  value.composerDrafts.set(slot, { text: 'sent text', attachments: [] });
+  value.saveDraft(slot, 'sent text');
+  assert.ok(store.getItem(`brrp.drafts.${recoveryAccount}`));
+
+  value.clearSentDraft(slot, 'sent text', owner);
+  assert.equal(value.composerDrafts.get(slot), undefined, 'the in-memory draft stayed');
+  assert.equal(value.drafts[slot], undefined);
+  assert.deepEqual(
+    JSON.parse(store.getItem(`brrp.drafts.${recoveryAccount}`) || '{}'),
+    {},
+    'the sent draft stayed saved and would be restored on reopen'
+  );
+
+  value.composerDrafts.set(slot, { text: 'newer text', attachments: [] });
+  value.saveDraft(slot, 'newer text');
+  value.clearSentDraft(slot, 'sent text', owner);
+  assert.equal(value.drafts[slot], 'newer text', 'newer text typed during the send was erased');
+  assert.equal(
+    JSON.parse(store.getItem(`brrp.drafts.${recoveryAccount}`))[slot],
+    'newer text',
+    'newer text was erased from the saved drafts'
+  );
+});
+
+// A success that completes after the account moved belongs to a view that no longer
+// exists: it is reported as dropped so the composer never runs its success cleanup for
+// a session it no longer owns. The durable entry is released rather than left retryable,
+// because the operation did complete.
+test('a success that lands after a switch is dropped and releases its record', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.state.user.id = recoveryAccount;
+  value.saveDrafts = true;
+  store.clear();
+  const key = '30000000-0000-4000-8000-000000000007';
+  const thread = crypto.randomUUID();
+  const conversation = crypto.randomUUID();
+  value.state.channels = [{ id: conversation, type: 'text' }];
+  value.activeId = conversation;
+  const post = deferred();
+  setHandler((path, method) => {
+    if (method === 'GET') return Promise.resolve({ conversation_id: conversation });
+    return post.promise;
+  });
+  const sending = value.sendIntoThread(thread, 'completed late', key);
+  await new Promise((resolve) => setImmediate(resolve));
+  value.state.user.id = crypto.randomUUID();
+  post.resolve(
+    message('66666666-6666-4666-8666-666666666666', {
+      idempotency_key: key,
+      thread_id: thread,
+      user_id: recoveryAccount,
+      content: 'completed late'
+    })
+  );
+  const outcome = await sending;
+  assert.equal(outcome.state, 'dropped');
+  assert.equal(
+    value.outbox.length,
+    0,
+    'a completed operation was left retryable in the moved view'
+  );
+  assert.equal(
+    store.getItem(`brrp.outbox.${value.state.user.id}`),
+    null,
+    "the first account's queue was written into the second account's scope"
+  );
+  // The operation's own device scope keeps the record until that account signs back in
+  // and reconciles it — it completed, so the answer it then gets releases it.
+  assert.ok(
+    store.getItem(`brrp.outbox.${recoveryAccount}`),
+    "the first account's own scope lost its unconfirmed record"
+  );
 });

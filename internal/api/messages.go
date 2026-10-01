@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -56,6 +57,35 @@ func sendIntentDigest(conversationID, threadID, content string, attachmentIDs []
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
+// legacySendIntentDigest is the encoding that was in use before thread identity
+// became part of a send's destination. A durable receipt written then hashes the
+// conversation, the content, the attachments and the reply target and nothing else,
+// so a retry of the same work can only be recognized through the older encoding: the
+// current one writes a thread field that receipt has never heard of (review 15,
+// V15-02). The function is frozen — it exists to read old records, never to write new
+// ones — and it deliberately keeps the pre-change field order.
+//
+// A legacy digest is deliberately not treated as identifying a destination on its
+// own. Named threads existed before the thread joined the digest, so a legacy receipt
+// may describe a thread send; both kinds hash the same parent conversation, content,
+// attachments and reply target. The destination is established from the surviving
+// result instead, through recordedSendDestination, and the legacy digest only proves
+// that the request means the same work.
+func legacySendIntentDigest(conversationID, content string, attachmentIDs []string, replyToID string) string {
+	hasher := sha256.New()
+	field := func(value string) { fmt.Fprintf(hasher, "%d:%s", len(value), value) }
+	field(conversationID)
+	field(content)
+	field(replyToID)
+	field(strconv.Itoa(len(attachmentIDs)))
+	attachments := append([]string(nil), attachmentIDs...)
+	sort.Strings(attachments)
+	for _, id := range attachments {
+		field(id)
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
 // sendReceiptDeadline is when the automatic retry window closes for one operation.
 func sendReceiptDeadline(created string) string {
 	at, err := time.Parse(time.RFC3339Nano, created)
@@ -65,42 +95,108 @@ func sendReceiptDeadline(created string) string {
 	return db.Timestamp(at.Add(sendReceiptWindow))
 }
 
+// recordedSendDestination is where a receipt's surviving message was actually sent,
+// for the receipts whose digest does not name the thread: the pre-thread encoding and
+// the empty digest the migration backfilled. The destination is derived from the
+// retained result rather than trusted from the retrying request, because the same
+// legacy digest is written by a channel send and by a thread send of the same words.
+//
+// A message's thread membership is almost always the destination it was sent to, with
+// one deliberate exception: a thread's root is an ordinary channel message that was
+// promoted later, so its original send was to the channel. The unique root index is
+// what tells the two apart; comparing messages.thread_id alone would refuse the
+// legitimate channel retry of every message a thread was ever started from.
+func (s *Server) recordedSendDestination(ctx context.Context, message db.Message) (string, error) {
+	if message.ThreadID == "" {
+		return "", nil
+	}
+	var root string
+	err := s.store.QueryRowContext(ctx, `SELECT COALESCE(root_message_id,'') FROM threads WHERE id=?`, message.ThreadID).Scan(&root)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The thread row is gone. The reply still records where it was sent, which is
+		// the destination its receipt has to match.
+		return message.ThreadID, nil
+	case err != nil:
+		return "", err
+	case root == message.ID:
+		return "", nil
+	default:
+		return message.ThreadID, nil
+	}
+}
+
 // answerSendReceipt answers a retry from the operation's durable record instead of creating
 // content. The committed message is returned when it still exists and the caller may still read
 // it; otherwise the outcome is a conflict that never recreates anything. The two conflicts are
 // distinguishable on purpose: one says the send was committed and its content is gone, the other
 // says the retry window closed and the unsent text can be recovered and sent again with a new
 // key.
-func (s *Server) answerSendReceipt(w http.ResponseWriter, r *http.Request, user db.User, receipt db.Receipt, conversationID, intent string) {
+//
+// threadID is the destination being retried: the thread, or "" for the channel itself.
+// legacyIntent carries the pre-thread encoding of the same request. A receipt that
+// names its thread in the digest (the current encoding) binds the destination by
+// itself. A receipt written before that, and a backfilled receipt with no digest at
+// all, bind only the conversation; for those the destination comes from the surviving
+// result through recordedSendDestination, and a retry aimed anywhere else — a sibling
+// thread, the parent channel, a different thread of the same channel — conflicts
+// without replaying or creating anything.
+func (s *Server) answerSendReceipt(w http.ResponseWriter, r *http.Request, user db.User, receipt db.Receipt, conversationID, threadID, intent, legacyIntent string) {
 	if receipt.ConversationID == "" && receipt.Deleted() {
 		problem(w, http.StatusConflict, "That send has expired. Your text can be recovered; send it again with a new key.")
 		return
 	}
-	// Legacy receipts have no intent digest. Their recorded destination still limits
-	// replay: permission to post in one room must not reveal a message from another.
+	// Receipts without an intent digest still bind their destination. Permission to
+	// post in one room must not reveal a message from another.
 	if receipt.ConversationID != conversationID {
 		problem(w, http.StatusConflict, "That message key was used for a different message.")
 		return
 	}
-	if receipt.IntentDigest != "" && receipt.IntentDigest != intent {
-		problem(w, http.StatusConflict, "That message key was used for a different message.")
-		return
-	}
+	// The recorded result is read once: it is both what a permitted replay returns and,
+	// for a receipt that cannot name its thread, what establishes where the operation
+	// was sent. sql.ErrNoRows means deleted, purged, or no longer readable — in every
+	// case there is no replay to give and nothing is recreated.
+	var recorded db.Message
+	haveRecord := false
 	if receipt.ResultMessageID != "" {
 		message, err := s.store.Message(r.Context(), user.ID, receipt.ResultMessageID)
 		if err == nil {
-			if _, _, ok := s.requireScope(w, r, user, message.ConversationID, false); !ok {
-				return
-			}
-			respond(w, http.StatusOK, message)
-			return
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+			recorded, haveRecord = message, true
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			s.failed(w, err)
 			return
 		}
-		// The recorded message is no longer readable: deleted, purged, or the caller no longer
-		// has access to the conversation. Nothing is recreated either way.
+	}
+	if receipt.IntentDigest != intent {
+		// The current digest did not match. Either the request changed, or the receipt
+		// predates thread identity and has to be recognized through the old encoding —
+		// in which case the destination, not the digest, decides where it may replay.
+		if receipt.IntentDigest != "" && (legacyIntent == "" || receipt.IntentDigest != legacyIntent) {
+			problem(w, http.StatusConflict, "That message key was used for a different message.")
+			return
+		}
+		if haveRecord {
+			destination, err := s.recordedSendDestination(r.Context(), recorded)
+			if err != nil {
+				s.failed(w, err)
+				return
+			}
+			if destination != threadID {
+				problem(w, http.StatusConflict, "That message key was used for a different message.")
+				return
+			}
+		}
+		// Nothing survived to say where the operation was sent. There is no replay to
+		// give either, so the answer stays the terminal outcome below: the operation
+		// expired, or it was committed and its content is gone. Missing evidence is
+		// never permission to send the same key somewhere else.
+	}
+	if haveRecord {
+		if _, _, ok := s.requireScope(w, r, user, recorded.ConversationID, false); !ok {
+			return
+		}
+		respond(w, http.StatusOK, recorded)
+		return
 	}
 	if receipt.ExpiresAt != "" && receipt.ExpiresAt < db.Now() {
 		problem(w, http.StatusConflict, "That send has expired. Your text can be recovered; send it again with a new key.")
@@ -278,9 +374,15 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 	// the message: a retry of a send whose content was deleted or purged is answered from the
 	// record, never by creating the message again.
 	intent := sendIntentDigest(scope.ID, r.PathValue("thread"), input.Content, input.AttachmentIDs, input.ReplyToID)
+	// The older encoding of the same request, which is how a receipt written before
+	// thread identity joined the digest is recognized. It is computed for thread sends
+	// too: named threads existed before the thread joined the digest, so a pre-change
+	// receipt may describe a thread send, and refusing those would strand an unchanged
+	// retry at the only endpoint that can answer it.
+	legacyIntent := legacySendIntentDigest(scope.ID, input.Content, input.AttachmentIDs, input.ReplyToID)
 	if receipt, receiptErr := s.store.Receipt(r.Context(), tx, user.ID, input.IdempotencyKey); receiptErr == nil {
 		tx.Rollback()
-		s.answerSendReceipt(w, r, user, receipt, scope.ID, intent)
+		s.answerSendReceipt(w, r, user, receipt, scope.ID, r.PathValue("thread"), intent, legacyIntent)
 		return
 	} else if !errors.Is(receiptErr, sql.ErrNoRows) {
 		s.failed(w, receiptErr)
@@ -358,7 +460,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 			s.failed(w, err)
 			return
 		}
-		s.answerSendReceipt(w, r, user, receipt, scope.ID, intent)
+		s.answerSendReceipt(w, r, user, receipt, scope.ID, r.PathValue("thread"), intent, legacyIntent)
 		return
 	}
 	if input.ReplyToID != "" {

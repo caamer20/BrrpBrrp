@@ -1,5 +1,6 @@
 import { api, APIError, errorMessage } from './api';
 import { workspace } from './workspace.svelte';
+import type { ThreadSendOutcome } from './workspace.svelte';
 import type { Message, RealtimeEvent } from './types';
 
 // A thread is a channel conversation with a subject (ADR 0017). This store holds one
@@ -8,6 +9,10 @@ import type { Message, RealtimeEvent } from './types';
 // than it shows. The generation guard is what stops a slow page from landing after the
 // person has moved on, and `missing` is what stops a deleted thread from being
 // re-requested on every render.
+
+// ThreadSendResult is what one reply attempt left behind, as the composer needs it to
+// decide what to do with the author's text: only `sent` may clear it.
+export type ThreadSendResult = 'sent' | 'refused' | 'uncertain' | 'dropped';
 
 export interface Thread {
   id: string;
@@ -30,7 +35,14 @@ export class ThreadView {
   loading = $state(true);
   sending = $state(false);
   error = $state('');
-  sendError = $state<{ status?: number; message: string } | null>(null);
+  // The outcome of the last send, named rather than inferred: a definite refusal and
+  // an unknown outcome both keep the author's text and key, and only the second says
+  // "this may have been sent".
+  sendError = $state<{
+    status?: number;
+    outcome?: 'refused' | 'uncertain';
+    message: string;
+  } | null>(null);
   missing = $state(false);
   hasOlder = $state(false);
   pages = $state(1);
@@ -126,28 +138,49 @@ export class ThreadView {
   // The caller's key is passed in rather than generated, because a thread composer
   // freezes its key for the life of an unresolved send: rotating it after a caught
   // failure is what turns a send that may have committed into a second message.
-  async send(content: string, idempotencyKey: string) {
-    if (this.sending || this.missing) return;
+  //
+  // The resolved outcome is returned as well as recorded, because the composer's next
+  // step differs for every one of them: only `sent` may clear a draft or a saved draft,
+  // `dropped` belongs to a view that no longer exists, and the other two keep the
+  // author's text. Inferring that from the absence of an error is what made a dropped
+  // send look successful.
+  async send(content: string, idempotencyKey: string): Promise<ThreadSendResult> {
+    if (this.sending || this.missing) return 'refused';
     const trimmed = content.trim();
-    if (!trimmed || !this.thread) return;
+    if (!trimmed || !this.thread) return 'refused';
     this.sending = true;
     this.sendError = null;
     const key = idempotencyKey;
     try {
-      const message = await workspace.sendIntoThread(this.id, trimmed, key);
-      if (!message) return;
-      this.pending.delete(key);
-      if (!this.messages.some((existing) => existing.id === message.id))
-        this.messages = [...this.messages, message];
+      const result: ThreadSendOutcome = await workspace.sendIntoThread(this.id, trimmed, key);
+      if (result.state === 'sent') {
+        const message = result.message;
+        this.pending.delete(key);
+        if (!this.messages.some((existing) => existing.id === message.id))
+          this.messages = [...this.messages, message];
+        return 'sent';
+      }
+      // The view has been cleared; there is nothing left to show the answer in.
+      if (result.state === 'dropped') return 'dropped';
+      // A definite refusal and an unknown outcome are different things, and neither is
+      // a send that happened: the composer keeps the text and the operation key, and
+      // only the unknown one warns that it may have been sent.
+      this.sendError = {
+        status: result.error instanceof APIError ? result.error.status : undefined,
+        outcome: result.state,
+        message: (result.error ? errorMessage(result.error) : '') || 'That reply was not sent.'
+      };
+      return result.state;
     } catch (error) {
-      // A definite refusal wrote nothing, so the same key is still free. An unknown
-      // outcome may well have committed, and the receipt is what says so — so the
-      // error is kept rather than cleared, and the person is not invited to send it
-      // again under a new key.
+      // An unexpected throw still belongs to the person who pressed Reply, not to a
+      // console they will never read. It is an unknown outcome: the request may have
+      // committed before the throw.
       this.sendError = {
         status: error instanceof APIError ? error.status : undefined,
+        outcome: 'uncertain',
         message: errorMessage(error)
       };
+      return 'uncertain';
     } finally {
       this.sending = false;
     }
