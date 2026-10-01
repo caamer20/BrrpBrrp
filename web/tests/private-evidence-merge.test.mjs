@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   beforeParam,
   exhausted,
   mergeEvidence,
-  rowKey
+  rowKey,
+  skippedPage
 } from '../src/lib/private-evidence-merge.ts';
 
 // The reviewer queue merges two separately paginated tables. They were merged
@@ -120,6 +122,75 @@ test('rows from both sources are merged newest first without duplicates', () => 
   );
 });
 
+test('the component\u2019s own walk finishes a large uneven queue without refetching an exhausted source', () => {
+  // The reproduced defect: 120 message reports and 70 request reports all arrived,
+  // but the walk never finished. An exhausted source was skipped by handing back its
+  // last cursor, which the merge reads as "this source still has rows" — so `done`
+  // stayed false and the source was fetched again from the page it had already
+  // delivered. This walks exactly the shape the component builds.
+  const messagePages = [
+    page(ids('message', 50, 0), 'message-0049'),
+    page(ids('message', 50, 50), 'message-0099'),
+    page(ids('message', 20, 100), '')
+  ];
+  const requestPages = [
+    page(ids('request', 50, 0), 'request-0049'),
+    page(ids('request', 20, 50), '')
+  ];
+  let previous = [];
+  let messageCursor = '';
+  let requestCursor = '';
+  let messageExhausted = false;
+  let requestExhausted = false;
+  let done = false;
+  let older = false;
+  let rounds = 0;
+  let messageFetches = 0;
+  let requestFetches = 0;
+  while (!done) {
+    rounds += 1;
+    assert.ok(rounds <= 10, 'the walk did not terminate');
+    const messages =
+      older && messageExhausted
+        ? skippedPage()
+        : ((messageFetches += 1), serve(messagePages, older ? messageCursor : ''));
+    const requests =
+      older && requestExhausted
+        ? skippedPage()
+        : ((requestFetches += 1), serve(requestPages, older ? requestCursor : ''));
+    const result = mergeEvidence(older ? previous : [], messages, requests, {
+      message: messageCursor,
+      request: requestCursor
+    });
+    previous = result.rows;
+    messageCursor = result.messageCursor;
+    requestCursor = result.requestCursor;
+    messageExhausted = result.messageExhausted;
+    requestExhausted = result.requestExhausted;
+    done = result.done;
+    older = true;
+  }
+  assert.equal(previous.length, 120 + 70, 'not every row was reachable');
+  assert.equal(new Set(previous.map(rowKey)).size, 120 + 70, 'a row was delivered twice');
+  assert.equal(messageFetches, 3, 'the exhausted message source was fetched again');
+  assert.equal(requestFetches, 2, 'the exhausted request source was fetched again');
+});
+
+test('a skipped exhaustion still reports the source finished', () => {
+  // The shape the component contributes for a source it does not ask again: empty,
+  // with an empty cursor. The preserved cursor stays in the merge, not in the page.
+  const skipped = skippedPage();
+  const result = mergeEvidence(
+    [{ id: 'message-0001', source_kind: 'message' }],
+    skipped,
+    page(ids('request', 1, 0), ''),
+    { message: 'message-0001', request: '' }
+  );
+  assert.equal(result.messageExhausted, true, 'a skipped source looked active again');
+  assert.equal(result.messageCursor, 'message-0001', 'the last real cursor was lost');
+  assert.equal(result.done, true, 'the queue never finished with both sources exhausted');
+});
+
 test('a large uneven population is fully reachable exactly once', () => {
   // 51 message rows over two pages and 101 request rows over three, walked to
   // exhaustion: every row appears once, with no repeats and none lost.
@@ -173,4 +244,24 @@ test('a large uneven population is fully reachable exactly once', () => {
   assert.equal(seen.size, 51 + 101, 'not every row was reachable');
   assert.equal(messageExhausted, true);
   assert.equal(requestExhausted, true);
+});
+
+// The identity of a row is its source and its id, everywhere the component keeps
+// per-row state. Two tables can hand out the same id; keying notes or busy state by
+// id alone made one record's note and one record's review button belong to the other.
+test('the component keys rows, notes and busy state by source and id together', () => {
+  const source = readFileSync(
+    new URL('../src/lib/components/admin/PrivateEvidence.svelte', import.meta.url),
+    'utf8'
+  );
+  assert.match(source, /\{#each reports as report \(rowKey\(report\)\)\}/);
+  assert.match(source, /notes\[rowKey\(report\)\] \?\?= report\.review_note/);
+  assert.match(source, /bind:value=\{notes\[rowKey\(report\)\]\}/);
+  assert.match(source, /const claimed = rowKey\(report\)/);
+  assert.match(source, /busy === rowKey\(report\)/);
+  // And an exhausted source contributes the finished page, never its preserved
+  // cursor, which would read as "still has rows".
+  assert.match(source, /Promise\.resolve\(skippedPage<Evidence>\(\)\)/);
+  assert.doesNotMatch(source, /next_cursor: messageCursor/);
+  assert.doesNotMatch(source, /next_cursor: requestCursor/);
 });

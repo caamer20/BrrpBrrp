@@ -3,7 +3,7 @@
   import { api, errorMessage } from '../../api';
   import { workspace } from '../../workspace.svelte';
   import Icon from '../Icon.svelte';
-  import { beforeParam, mergeEvidence } from '../../private-evidence-merge';
+  import { beforeParam, mergeEvidence, rowKey, skippedPage } from '../../private-evidence-merge';
 
   // The private evidence queue (ADR 0013).
   //
@@ -102,15 +102,17 @@
       // An exhausted source is not asked again at all. Suppressing only the `before`
       // parameter was not enough: the request still went out, and with no cursor it
       // asked for the first page — so "load older" re-delivered rows the reviewer
-      // had already read whenever one source ran out before the other.
+      // had already read whenever one source ran out before the other. Its contribution
+      // has to say it is finished, not hand back its last cursor: that cursor reads as
+      // "still has rows", which is how the list stopped ever reaching done.
       const [messages, requests] = await Promise.all([
         older && messageExhausted
-          ? Promise.resolve({ reports: [] as Evidence[], next_cursor: messageCursor })
+          ? Promise.resolve(skippedPage<Evidence>())
           : api<{ reports: Evidence[]; next_cursor: string }>(
               `/admin/private-reports?status=${status}${older ? beforeParam(messageCursor, messageExhausted) : ''}`
             ),
         older && requestExhausted
-          ? Promise.resolve({ reports: [] as Evidence[], next_cursor: requestCursor })
+          ? Promise.resolve(skippedPage<Evidence>())
           : api<{ reports: Evidence[]; next_cursor: string }>(
               `/admin/request-reports?status=${status}${older ? beforeParam(requestCursor, requestExhausted) : ''}`
             )
@@ -128,7 +130,9 @@
       // The list is finished only when both sources are, not when one is.
       done = merged.done;
       loadedFor = `${request.account}:${request.generation}:${status}`;
-      for (const report of merged.rows) notes[report.id] ??= report.review_note;
+      // Notes are keyed the same way the rows are: two sources can hand out the same
+      // id, and keying by id alone would make one record's note follow the other.
+      for (const report of merged.rows) notes[rowKey(report)] ??= report.review_note;
     } catch (failure) {
       if (admittedRead(request)) error = errorMessage(failure);
     } finally {
@@ -165,14 +169,16 @@
       report.source_kind === 'request'
         ? `/admin/request-reports/${report.id}`
         : `/admin/private-reports/${report.id}`;
-    const claimed = report.id;
+    // The same identity everywhere: a colliding id from the other source must not make
+    // two different records share one busy state or one note.
+    const claimed = rowKey(report);
     busy = claimed;
     error = '';
     notice = '';
     try {
       await api<Evidence>(path, 'PATCH', {
         status: next,
-        note: (notes[report.id] ?? '').trim()
+        note: (notes[claimed] ?? '').trim()
       });
       if (!admittedAccount(request)) return;
       // A resolve moves the record out of this view; a reopen brings it back. The
@@ -224,7 +230,7 @@
   {#if loadedFor && `${workspace.user?.id}:${workspace.authorizationGeneration}:${status}` !== loadedFor && !error}
     <p role="alert">Your access to this queue changed. Reload to see what you may still read.</p>
   {/if}
-  {#each reports as report (report.id)}
+  {#each reports as report (rowKey(report))}
     <article
       class="report-card"
       aria-label={`${report.source_kind === 'request' ? 'Request introduction' : 'Message'} reported by ${who(report.reporter_id)}`}
@@ -257,18 +263,20 @@
       <h5>The reporter's explanation</h5>
       <p class="report-text">{report.reason}</p>
       <label
-        >Review note (optional)<textarea bind:value={notes[report.id]} maxlength="2000" rows="2"
-        ></textarea></label
+        >Review note (optional)<textarea
+          bind:value={notes[rowKey(report)]}
+          maxlength="2000"
+          rows="2"></textarea></label
       >
       <div class="button-row">
         {#if report.status === 'open'}<button
             class="secondary"
-            disabled={busy === report.id}
+            disabled={busy === rowKey(report)}
             onclick={() => void review(report, 'resolved')}
             ><Icon name="check" />Mark reviewed</button
           >{:else}<button
             class="secondary"
-            disabled={busy === report.id}
+            disabled={busy === rowKey(report)}
             onclick={() => void review(report, 'open')}><Icon name="undo" />Reopen</button
           >{/if}
       </div>

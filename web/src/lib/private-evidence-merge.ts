@@ -101,6 +101,18 @@ export function mergeEvidence<T extends EvidenceRow>(
 }
 
 /**
+ * The page a source contributes when it is exhausted and therefore not asked again.
+ *
+ * It is empty, and its `next_cursor` is empty too: that is what marks the source
+ * finished. Handing back its last real cursor would read as "this source still has
+ * rows" on the next merge, so the queue would never finish and the source would be
+ * fetched again from a cursor that points at the page it already delivered.
+ */
+export function skippedPage<T>(): SourcePage<T> {
+  return { reports: [], next_cursor: '' };
+}
+
+/**
  * The `before` parameter to send for a source on the next "load older".
  *
  * An exhausted source is not asked again: the request is dropped rather than sent
