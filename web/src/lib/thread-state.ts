@@ -33,6 +33,7 @@ export function threadSubmitState(
 export function canSendThreadReply(options: {
   open: boolean;
   locked: boolean;
+  archived: boolean;
   missing: boolean;
   sending: boolean;
   draft: string;
@@ -40,6 +41,7 @@ export function canSendThreadReply(options: {
   return (
     options.open &&
     !options.locked &&
+    !options.archived &&
     !options.missing &&
     !options.sending &&
     options.draft.trim().length > 0

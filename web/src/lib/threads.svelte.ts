@@ -45,7 +45,11 @@ export class ThreadView {
   } | null>(null);
   missing = $state(false);
   hasOlder = $state(false);
-  pages = $state(1);
+  // Whether the window currently includes the newest reply of the thread. A deep link
+  // to the newest reply lands there without any scrolling, and reading it must clear
+  // the thread's unread count exactly as scrolling to the bottom does; a link to an
+  // older reply must not.
+  atNewest = $state(true);
   private generation = 0;
   private disposed = false;
   // The replies already held locally, matched by the account's own send key. A send
@@ -53,6 +57,14 @@ export class ThreadView {
   private pending = new Map<string, Message>();
 
   constructor(readonly id: string) {}
+
+  // A thread is read as a bounded window, not as an ever-growing list: the point of
+  // a window is that a thousand-reply thread costs the same as a fifty-reply one, in
+  // memory, in DOM nodes and in requests. Loading older replies fetches the page
+  // before the oldest held one and drops the newest page once the window is full;
+  // the same bound applies to replies arriving live.
+  private static readonly pageLimit = 50;
+  private static readonly windowLimit = 200;
 
   async load() {
     if (this.disposed || this.missing) return;
@@ -62,7 +74,11 @@ export class ThreadView {
     try {
       this.thread = await api<Thread>(`/threads/${encodeURIComponent(this.id)}`);
       if (this.disposed || generation !== this.generation) return;
-      await this.readPage(generation);
+      const page = await api<Message[]>(`/threads/${encodeURIComponent(this.id)}/messages`);
+      if (this.disposed || generation !== this.generation) return;
+      this.messages = page;
+      this.hasOlder = page.length >= ThreadView.pageLimit;
+      this.atNewest = true;
     } catch (error) {
       if (this.disposed || generation !== this.generation) return;
       // A thread that is not found is not found, whether because it was archived
@@ -75,32 +91,63 @@ export class ThreadView {
     }
   }
 
-  private async readPage(generation: number) {
-    let before = '';
-    let messages: Message[] = [];
-    let page: Message[] = [];
-    for (let i = 0; i < this.pages; i++) {
-      const path = `/threads/${encodeURIComponent(this.id)}/messages${
-        before ? `?before=${encodeURIComponent(before)}` : ''
-      }`;
-      page = await api<Message[]>(path);
+  // loadAround opens the window positioned at one reply, for a deep link: the pages
+  // immediately before and after it, so the linked reply is present and reachable
+  // whether it is the newest reply or the thousandth.
+  async loadAround(messageID: string) {
+    if (this.disposed || this.missing || !messageID) return;
+    const generation = ++this.generation;
+    this.loading = true;
+    this.error = '';
+    try {
+      this.thread = await api<Thread>(`/threads/${encodeURIComponent(this.id)}`);
       if (this.disposed || generation !== this.generation) return;
-      messages = [...page, ...messages];
-      if (page.length < 50) break;
-      // The server returns the page oldest-first, so the next older page starts
-      // before its first row. Taking the last would re-read the page just fetched.
-      before = page[0].id;
+      const [older, newer, target] = await Promise.all([
+        api<Message[]>(
+          `/threads/${encodeURIComponent(this.id)}/messages?before=${encodeURIComponent(messageID)}`
+        ),
+        api<Message[]>(
+          `/threads/${encodeURIComponent(this.id)}/messages?after=${encodeURIComponent(messageID)}`
+        ),
+        api<Message>(`/messages/${encodeURIComponent(messageID)}`)
+      ]);
+      if (this.disposed || generation !== this.generation) return;
+      this.messages = [...older, target, ...newer].slice(-ThreadView.windowLimit);
+      this.hasOlder = older.length >= ThreadView.pageLimit;
+      this.atNewest = newer.length === 0;
+    } catch (error) {
+      if (this.disposed || generation !== this.generation) return;
+      if (error instanceof APIError && error.status === 404) this.missing = true;
+      else this.error = errorMessage(error);
+    } finally {
+      if (!this.disposed && generation === this.generation) this.loading = false;
     }
-    this.messages = messages;
-    this.hasOlder = page.length >= 50;
   }
 
+  // older prepends exactly one page and keeps the window bounded: the overflow is
+  // dropped from the newest end, which is where the reader is not looking. The
+  // earlier design incremented a page count and re-read every accumulated page, so
+  // each "load earlier" cost more than the last and the window never stopped
+  // growing.
   async older() {
+    if (this.disposed || !this.hasOlder || !this.messages.length) return;
     const generation = ++this.generation;
-    this.pages += 1;
     this.loading = true;
     try {
-      await this.readPage(generation);
+      const oldest = this.messages[0].id;
+      const page = await api<Message[]>(
+        `/threads/${encodeURIComponent(this.id)}/messages?before=${encodeURIComponent(oldest)}`
+      );
+      if (this.disposed || generation !== this.generation) return;
+      // The server returns the page oldest-first, so the next older page starts
+      // before its first row. Taking the last would re-read the page just fetched.
+      const combined = [...page, ...this.messages];
+      this.messages =
+        combined.length > ThreadView.windowLimit
+          ? combined.slice(0, ThreadView.windowLimit)
+          : combined;
+      this.hasOlder = page.length >= ThreadView.pageLimit;
+      this.atNewest = false;
     } catch (error) {
       if (this.disposed || generation !== this.generation) return;
       this.error = errorMessage(error);
@@ -120,9 +167,25 @@ export class ThreadView {
   }
 
   private async reloadOnNewReply() {
-    const generation = this.generation;
+    if (this.disposed) return;
+    if (!this.messages.length) {
+      await this.load();
+      return;
+    }
+    const generation = ++this.generation;
     try {
-      await this.readPage(generation);
+      // Only what is newer than the window's newest row is fetched, so a live reply
+      // costs one page rather than the whole history — and the window stays bounded
+      // when it arrives.
+      const newest = this.messages[this.messages.length - 1].id;
+      const page = await api<Message[]>(
+        `/threads/${encodeURIComponent(this.id)}/messages?after=${encodeURIComponent(newest)}`
+      );
+      if (this.disposed || generation !== this.generation) return;
+      if (!page.length) return;
+      const combined = [...this.messages, ...page];
+      this.messages = combined.slice(-ThreadView.windowLimit);
+      if (combined.length > ThreadView.windowLimit) this.hasOlder = true;
     } catch {
       // A live refresh that fails leaves the window as it was; the person can still
       // ask for older replies, and the next live event will try again.
@@ -192,6 +255,27 @@ export class ThreadView {
       state
     });
     this.thread = updated;
+  }
+
+  // markRead moves this reader's position in the thread, and only in this thread.
+  //
+  // The cursor is the server's to keep and monotonic there, so the same position is
+  // never re-sent: the panel calls this whenever the newest replies are on screen, and
+  // a refused position is simply offered again later rather than assumed to have
+  // landed. It deliberately never touches the channel's cursor — the channel the
+  // thread lives in has its own position, and reading forty replies here must not
+  // mark the channel read up to the thread's newest reply.
+  private lastReadMarker = '';
+  async markRead(messageID: string) {
+    if (!messageID || messageID <= this.lastReadMarker) return;
+    try {
+      await api(`/threads/${encodeURIComponent(this.id)}/read`, 'POST', {
+        last_read_message_id: messageID
+      });
+      if (messageID > this.lastReadMarker) this.lastReadMarker = messageID;
+    } catch {
+      /* A position the server did not confirm is not progress. */
+    }
   }
 
   async setFollow(follow: boolean) {

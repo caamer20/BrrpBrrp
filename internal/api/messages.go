@@ -517,6 +517,10 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, user db.U
 			s.failed(w, err)
 			return
 		}
+		if state == "archived" {
+			problem(w, 403, "This thread is archived. Reopen it to reply.")
+			return
+		}
 		if state == "locked" {
 			problem(w, 403, "This thread is locked. You can still read it and follow it.")
 			return

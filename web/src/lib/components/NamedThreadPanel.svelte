@@ -56,11 +56,15 @@
   }
 
   const locked = $derived(view.thread?.state === 'locked');
+  // Archived and locked both stop replies, and the interface distinguishes them:
+  // archived is out of the way until a manager reopens it, locked is a pause.
+  const archived = $derived(view.thread?.state === 'archived');
   const sendState = $derived(threadSubmitState(view.sending, view.sendError));
   const canSend = $derived(
     canSendThreadReply({
       open: !!view.thread,
       locked,
+      archived,
       missing: view.missing,
       sending: view.sending,
       draft
@@ -163,18 +167,58 @@
       });
   });
 
+  // The reader's position follows what is actually on screen: while the newest
+  // replies are shown — whether by scrolling to the bottom or by arriving there
+  // through a deep link — the thread's own cursor moves to the newest stored one. It
+  // never touches the channel's cursor, and a newer draft being typed is not a
+  // message to point at.
+  $effect(() => {
+    view.messages.length;
+    view.atNewest;
+    if ((!atLatest && !view.atNewest) || !view.messages.length) return;
+    void view.markRead(view.messages[view.messages.length - 1].id);
+  });
+
   // A live reply or a state change for this thread. Anything for another thread, or
   // for a thread the person no longer has, is ignored here rather than re-rendered.
+  // A reply arriving while the reader is at the newest replies is folded in; while
+  // they are reading history it must not yank them to the bottom, so the window says
+  // that something new exists and offers the jump instead.
+  let newerReplies = $state(false);
   $effect(() => {
     const events = workspace.conversationEvents;
     const last = events.at(-1);
     if (!last) return;
     const data = last.d as { thread_id?: string; conversation_id?: string };
-    if (data?.thread_id === view.id) void view.load();
+    if (data?.thread_id !== view.id) return;
+    if (atLatest) void view.load();
+    else newerReplies = true;
   });
 
-  onMount(() => {
+  function jumpToLatest() {
+    newerReplies = false;
+    atLatest = true;
     void view.load();
+  }
+
+  onMount(() => {
+    // A deep link names one reply to open the thread at. It is consumed once, and the
+    // bounded window is positioned around it rather than at the newest replies, so a
+    // link to the thousandth reply lands on that reply.
+    const jump = workspace.threadJumpId === id ? workspace.threadJumpId : '';
+    if (jump) workspace.threadJumpId = '';
+    if (jump) {
+      atLatest = false;
+      void view.loadAround(jump).then(async () => {
+        await tick();
+        const target = log?.querySelector<HTMLElement>(
+          `[data-thread-message="${CSS.escape(jump)}"]`
+        );
+        target?.scrollIntoView({ block: 'center' });
+      });
+    } else {
+      void view.load();
+    }
     return () => {
       // The author keeps their unsent text when the panel closes. The store is
       // account-scoped, so this cannot carry into the next account, and the key the
@@ -205,22 +249,19 @@
           {view.thread.following ? 'Following' : 'Follow'}
         </button>
         {#if workspace.canManageChannels}
-          <button class="text-button" onclick={() => setState(locked ? 'active' : 'locked')}>
-            {locked ? 'Unlock' : 'Lock'}
-          </button>
-          <button class="text-button" onclick={() => setState('archived')}>Archive</button>
+          {#if archived}
+            <button class="text-button" onclick={() => setState('active')}>Reopen</button>
+          {:else}
+            <button class="text-button" onclick={() => setState(locked ? 'active' : 'locked')}>
+              {locked ? 'Unlock' : 'Lock'}
+            </button>
+            <button class="text-button" onclick={() => setState('archived')}>Archive</button>
+          {/if}
         {/if}
       {/if}
     </div>
 
     {#if stateError}<p class="thread-error" role="alert">{stateError}</p>{/if}
-
-    {#if view.thread?.state === 'archived'}
-      <p class="thread-notice" role="status">
-        This thread is archived. Its messages are still here, and reopening it puts it back in the
-        channel list.
-      </p>
-    {/if}
 
     {#if view.missing}
       <div class="thread-error" role="alert">
@@ -242,9 +283,12 @@
         role="log"
         aria-label="Thread messages"
         aria-busy={view.loading}
-        onscroll={() =>
-          (atLatest =
-            (log?.scrollHeight ?? 0) - (log?.scrollTop ?? 0) - (log?.clientHeight ?? 0) < 64)}
+        onscroll={() => {
+          const atBottom =
+            (log?.scrollHeight ?? 0) - (log?.scrollTop ?? 0) - (log?.clientHeight ?? 0) < 64;
+          atLatest = atBottom;
+          if (atBottom && newerReplies) jumpToLatest();
+        }}
       >
         {#if view.hasOlder}
           <button class="history-button" disabled={view.loading} onclick={older}>
@@ -266,10 +310,23 @@
         {/each}
       </div>
 
+      {#if newerReplies}
+        <div class="thread-newer">
+          <button class="secondary" onclick={jumpToLatest}>New replies in this thread</button>
+        </div>
+      {/if}
+
       {#if locked}
         <p class="thread-notice" role="status">
           This thread is locked. You can still read everything here and follow it, but no new
           replies can be added.
+        </p>
+      {:else if archived}
+        <p class="thread-notice" role="status">
+          This thread is archived, so new replies are closed. Its messages are still here and it
+          stays in the channel's thread list. {workspace.canManageChannels
+            ? 'Reopen it to reply.'
+            : 'A channel manager can reopen it.'}
         </p>
       {:else if view.thread}
         <form
@@ -335,6 +392,11 @@
     gap: 0.4rem;
     border-top: 1px solid var(--border);
     padding-top: 0.6rem;
+  }
+  .thread-newer {
+    display: flex;
+    justify-content: center;
+    padding: 0.3rem 0;
   }
   .thread-composer button {
     align-self: flex-end;

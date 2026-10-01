@@ -361,4 +361,9 @@ export interface Thread {
   last_reply_at: string;
   followers: number;
   following: boolean;
+  // This reader's own position in the thread, measured against the thread cursor —
+  // never the channel's. A thread badge and a channel badge answer different
+  // questions and each moves only when its own position moves.
+  unread: number;
+  unread_mentions: number;
 }

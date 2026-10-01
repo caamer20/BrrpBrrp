@@ -42,6 +42,11 @@ type threadSummary struct {
 	LastReplyAt   string `json:"last_reply_at"`
 	Followers     int    `json:"followers"`
 	Following     bool   `json:"following"`
+	// Unread counts the replies after this reader's own thread cursor, and
+	// UnreadMentions the mentions among them. A thread's reading position is its own:
+	// these numbers never move with the channel's cursor and never move it.
+	Unread         int `json:"unread"`
+	UnreadMentions int `json:"unread_mentions"`
 }
 
 // resolveThread finds a thread and the channel it inherits from. A thread that does
@@ -87,9 +92,14 @@ func (s *Server) threadAccess(ctx context.Context, q db.Queryer, principal authz
 	if scope.Kind != "channel" {
 		return t, scope, authz.ErrUnavailable
 	}
-	// Locked stops replies and leaves everything else alone. It is a statement about
-	// writing, not about access, which is why a locked thread is still readable,
-	// searchable and followed.
+	// Locked and archived both stop replies and leave everything else alone. They are
+	// statements about writing, not about access, which is why a locked or archived
+	// thread is still readable, searchable and followed. They differ in intent —
+	// locked is a pause, archived is out of the way until somebody reopens it — and
+	// the refusal says which state the writer must resolve.
+	if write && t.State == "archived" {
+		return t, scope, refuse(403, "This thread is archived. Reopen it to reply.")
+	}
 	if write && t.State == "locked" {
 		return t, scope, refuse(403, "This thread is locked. You can still read it and follow it.")
 	}
@@ -128,9 +138,13 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request, user db.Use
 		(SELECT count(*) FROM messages m WHERE m.thread_id=t.id),
 		(SELECT COALESCE(max(m.created_at),'') FROM messages m WHERE m.thread_id=t.id),
 		(SELECT count(*) FROM thread_follows f WHERE f.thread_id=t.id),
-		(SELECT count(*) FROM thread_follows f WHERE f.thread_id=t.id AND f.user_id=?)
-		FROM threads t WHERE t.conversation_id=?`
-	args := []any{user.ID, r.PathValue("id")}
+		(SELECT count(*) FROM thread_follows f WHERE f.thread_id=t.id AND f.user_id=?),
+		(SELECT count(*) FROM messages m WHERE m.thread_id=t.id AND m.user_id<>? AND m.id>COALESCE(tr.last_read_message_id,'')),
+		(SELECT count(*) FROM mentions mn WHERE mn.target_user_id=? AND mn.message_id IN
+			(SELECT m.id FROM messages m WHERE m.thread_id=t.id AND m.id>COALESCE(tr.last_read_message_id,'')))
+		FROM threads t LEFT JOIN thread_reads tr ON tr.thread_id=t.id AND tr.user_id=?
+		WHERE t.conversation_id=?`
+	args := []any{user.ID, user.ID, user.ID, user.ID, r.PathValue("id")}
 	if !wantArchived {
 		clause += ` AND t.state!='archived'`
 	}
@@ -145,7 +159,7 @@ func (s *Server) listThreads(w http.ResponseWriter, r *http.Request, user db.Use
 	for rows.Next() {
 		var t threadSummary
 		if err := rows.Scan(&t.ID, &t.ConversationID, &t.RootMessageID, &t.Title, &t.State, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &t.RootDeletedAt,
-			&t.ReplyCount, &t.LastReplyAt, &t.Followers, &t.Following); err != nil {
+			&t.ReplyCount, &t.LastReplyAt, &t.Followers, &t.Following, &t.Unread, &t.UnreadMentions); err != nil {
 			s.failed(w, err)
 			return
 		}
@@ -286,6 +300,15 @@ func (s *Server) createThread(w http.ResponseWriter, r *http.Request, user db.Us
 // threadWithCounts fills the summary fields that are computed rather than stored.
 func (s *Server) threadWithCounts(r *http.Request, user db.User, t threadSummary) threadSummary {
 	t.ReplyCount, t.Followers, t.LastReplyAt = s.countThread(r.Context(), s.store, t.ID)
+	// The reader's own position in this thread, not the channel's: the two projections
+	// are independent, so opening a thread neither clears the channel's count nor is
+	// cleared by the channel being read.
+	_ = s.store.QueryRowContext(r.Context(), `SELECT
+		(SELECT count(*) FROM messages m WHERE m.thread_id=t.id AND m.user_id<>? AND m.id>COALESCE(tr.last_read_message_id,'')),
+		(SELECT count(*) FROM mentions mn WHERE mn.target_user_id=? AND mn.message_id IN
+			(SELECT m.id FROM messages m WHERE m.thread_id=t.id AND m.id>COALESCE(tr.last_read_message_id,'')))
+		FROM threads t LEFT JOIN thread_reads tr ON tr.thread_id=t.id AND tr.user_id=?
+		WHERE t.id=?`, user.ID, user.ID, user.ID, t.ID).Scan(&t.Unread, &t.UnreadMentions)
 	if err := s.store.QueryRowContext(r.Context(), `SELECT 1 FROM thread_follows WHERE thread_id=? AND user_id=?`, t.ID, user.ID).Scan(new(int)); err == nil {
 		t.Following = true
 	}

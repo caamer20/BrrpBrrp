@@ -144,6 +144,10 @@ class Workspace {
   // separately so closing a reply thread does not close the named one, and so the two
   // can never be confused for each other's history.
   namedThreadId = $state('');
+  // The reply a deep link asked this thread to open at. The panel consumes it on
+  // mount and clears it, so the position is used once and a reopened thread is not
+  // dragged back to an old reply.
+  threadJumpId = $state('');
   // A channel's thread list, opened from the channel header.
   threadsOpen = $state(false);
 
@@ -560,6 +564,10 @@ class Workspace {
   }
 
   async enter() {
+    // The fragment this boot arrived with, captured before anything navigates: the
+    // initial channel selection rewrites the URL to the conversation it opens, which
+    // would drop a permalink's hash before it is read (review 17, V17-03).
+    const entryHash = location.hash;
     await this.refreshState();
     this.saveDrafts = !!this.user && storage.getItem(`brrp.save-drafts.${this.user.id}`) === 'true';
     if (this.saveDrafts && this.user) this.drafts = readDrafts(storage, this.user.id);
@@ -577,20 +585,13 @@ class Workspace {
     }
     this.setupRequired = false;
     this.stopped = false;
-    const openSettings = location.hash === '#server-settings';
+    const openSettings = entryHash === '#server-settings';
     // A push notification's payload says `/messages`, and a notification click
     // navigates the app there. Nothing opened that path, so clicking a private
     // notification landed on whatever the account happened to be looking at — or on
     // nothing at all. It is handled here, on a supported route under current
     // authority, and the hash is cleared so a reload does not reopen it.
-    // A message permalink is resolved before anything else opens, so a link somebody
-    // was sent lands on the message rather than on whatever the account last had open.
-    if (location.hash.startsWith('#message=')) {
-      await this.openPermalink(location.hash);
-      history.replaceState(null, '', location.pathname + location.search);
-    }
-    const notifyActivity = location.hash === '#messages' || location.hash === '#activity';
-    if (notifyActivity) {
+    if (entryHash === '#messages' || entryHash === '#activity') {
       this.openMessagesTab('activity');
       history.replaceState(null, '', location.pathname + location.search);
     }
@@ -601,11 +602,11 @@ class Workspace {
     // Both are acted on before the history is cleared, and both fall through to the
     // ordinary conversation selection below when they name nothing openable — a stale
     // link lands on the workspace rather than on an error.
-    const entryTarget = /^(#requests|#conversation=)/.exec(location.hash);
+    const entryTarget = /^(#requests|#conversation=)/.exec(entryHash);
     if (entryTarget) {
-      if (location.hash === '#requests') this.openMessagesTab('requests');
+      if (entryHash === '#requests') this.openMessagesTab('requests');
       else {
-        const wanted = decodeURIComponent(location.hash.slice('#conversation='.length));
+        const wanted = decodeURIComponent(entryHash.slice('#conversation='.length));
         if (
           this.isPrivate(wanted) ||
           this.state?.channels.some((c) => c.id === wanted && c.type === 'text')
@@ -622,6 +623,15 @@ class Workspace {
       this.state?.channels.find((channel) => channel.type === 'text');
     if (requested && this.isPrivate(requested)) await this.selectChannel(requested);
     else if (initial) await this.selectChannel(initial.id);
+    // A message permalink is resolved *after* the ordinary initial selection: the
+    // selection resets the panels (a channel switch closes the thread panel), so a
+    // link resolved first was closed again by the default channel load before the
+    // person ever saw it. The permalink is the explicit destination and takes
+    // precedence; the hash is cleared so a reload does not reopen it.
+    if (entryHash.startsWith('#message=')) {
+      await this.openPermalink(entryHash);
+      history.replaceState(null, '', location.pathname + location.search);
+    }
     if (restored?.reply) {
       const channel = this.activeId;
       const request = this.identity();
@@ -2353,6 +2363,24 @@ class Workspace {
       this.activeId = this.conversationId(target);
       this.position = null;
       this.scrollRestore = null;
+      // A reply inside a thread opens that thread at the reply. Showing it in the
+      // channel would put it back into a listing the server deliberately excludes it
+      // from — and the channel window filters thread replies out — so the linked row
+      // would not even be on screen. The thread panel positions its bounded window at
+      // the reply instead (review 17, V17-04).
+      if (target.thread_id) {
+        this.threadJumpId = id;
+        this.namedThreadId = target.thread_id;
+        this.viewingHistory = false;
+        this.atLatest = false;
+        this.highlightId = '';
+        this.replyTo = null;
+        this.searchOpen = false;
+        this.pinsOpen = false;
+        this.threadId = '';
+        history.replaceState(null, '', this.conversationURL(this.conversationId(target)));
+        return;
+      }
       this.viewingHistory = true;
       this.messages = context;
       this.messagesLoading = false;

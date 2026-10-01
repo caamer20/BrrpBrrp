@@ -23,13 +23,20 @@ test('a refusal keeps the action available; an unknown outcome does not', () => 
   assert.equal(threadSubmitState(true, null), 'ready');
 });
 
-test('a page is walked by its first row, not its last', () => {
-  // The server returns each page oldest-first, so the next older page begins before
-  // the first row. Taking the last re-reads the page just fetched, which is a cursor
-  // walk that never terminates.
+test('a page is walked by its first row, and the window stays bounded', () => {
   const source = readSource('src/lib/threads.svelte.ts');
-  assert.match(source, /before = page\[0\]\.id;/);
-  assert.doesNotMatch(source, /before = page\[page\.length - 1\]\.id;/);
+  // The server returns each page oldest-first, so the next older page begins before
+  // the first row of the one just fetched — and the request names the oldest row the
+  // window holds, because the window is what is on screen.
+  assert.match(source, /const oldest = this\.messages\[0\]\.id;/);
+  assert.match(source, /\?before=\$\{encodeURIComponent\(oldest\)\}/);
+  assert.doesNotMatch(source, /this\.pages \+= 1/);
+  assert.doesNotMatch(source, /for \(let i = 0; i < this\.pages; i\+\+\)/);
+  // One page per "load earlier", and the overflow leaves from the newest end, so a
+  // thousand-reply thread costs the same as a fifty-reply one.
+  assert.match(source, /windowLimit = 200/);
+  assert.match(source, /combined\.slice\(0, ThreadView\.windowLimit\)/);
+  assert.match(source, /combined\.slice\(-ThreadView\.windowLimit\)/);
 });
 
 test('the composer keeps one immutable intent per unresolved operation', () => {
@@ -106,18 +113,57 @@ test('the follow control reflects what the server decided', () => {
 });
 
 // The reply control is live only when there is somewhere to reply, the thread is
-// writable, the person has typed something and no send is in flight. A locked or
-// vanished thread must not offer a control whose handler cannot succeed.
+// writable, the person has typed something and no send is in flight. A locked,
+// archived or vanished thread must not offer a control whose handler cannot succeed.
 test('the reply control follows the thread, not just the draft', () => {
-  const ready = { open: true, locked: false, missing: false, sending: false, draft: 'hello' };
+  const ready = {
+    open: true,
+    locked: false,
+    archived: false,
+    missing: false,
+    sending: false,
+    draft: 'hello'
+  };
   assert.equal(canSendThreadReply(ready), true);
   assert.equal(canSendThreadReply({ ...ready, draft: '   ' }), false);
   assert.equal(canSendThreadReply({ ...ready, sending: true }), false);
   // A locked thread is still readable and followable, but nothing can be added to it.
   assert.equal(canSendThreadReply({ ...ready, locked: true }), false);
+  // Archived is the same refusal with a different resolution: reopen it first.
+  assert.equal(canSendThreadReply({ ...ready, archived: true }), false);
   // A thread that is gone offers nothing, rather than a control that fails on press.
   assert.equal(canSendThreadReply({ ...ready, missing: true }), false);
   assert.equal(canSendThreadReply({ ...ready, open: false }), false);
+});
+
+// Archiving must withdraw the control and offer Reopen as its own action; the server
+// refuses the same way, and both sides say which state blocks the reply.
+test('an archived thread withdraws the composer and offers reopen', () => {
+  const source = readSource('src/lib/components/NamedThreadPanel.svelte');
+  assert.match(source, /const archived = \$derived\(view\.thread\?\.state === 'archived'\)/);
+  assert.match(source, /locked,\s*archived,/);
+  assert.match(source, /onclick=\{\(\) => setState\('active'\)\}>Reopen</);
+  assert.match(source, /\{:else if archived\}/);
+  assert.match(source, /This thread is archived, so new replies are closed/);
+});
+
+// Reading a thread moves the thread's own position — the server keeps it — and never
+// the channel's. The panel marks read only what is on screen at the live end.
+test('reading a thread moves only that thread\u2019s position', () => {
+  const view = readSource('src/lib/threads.svelte.ts');
+  assert.match(view, /\/threads\/\$\{encodeURIComponent\(this\.id\)\}\/read/);
+  assert.match(view, /last_read_message_id: messageID/);
+  // No channel read call exists on this path at all.
+  assert.doesNotMatch(view, /channels\/\$\{[^}]+\}\/read/);
+  const panel = readSource('src/lib/components/NamedThreadPanel.svelte');
+  assert.match(
+    panel,
+    /if \(\(!atLatest && !view\.atNewest\) \|\| !view\.messages\.length\) return;/
+  );
+  assert.match(panel, /void view\.markRead\(view\.messages\[view\.messages\.length - 1\]\.id\)/);
+  // And the list shows the thread's own count.
+  const list = readSource('src/lib/components/ThreadListPanel.svelte');
+  assert.match(list, /thread\.unread > 0/);
 });
 
 // A thread reply belongs to the thread, not to the channel it was branched off from.
@@ -168,11 +214,12 @@ test('a stored message carries the thread it belongs to', () => {
 // was made, not that it was made through the recoverable path.
 test('a thread reply is sent through the shared, recoverable send', () => {
   const source = readSource('src/lib/threads.svelte.ts');
-  // It no longer issues its own request...
+  // It no longer posts a reply itself — the messages path is only ever *read* here;
+  // writes go through the workspace's shared send below.
   assert.doesNotMatch(
     source,
-    /`\/threads\/\$\{[^}]+\}\/messages`/,
-    'the thread view still posts directly instead of using the shared send'
+    /\/threads\/\$\{[^}]+\}\/messages`,\s*'POST'/,
+    'the thread view still posts replies directly instead of using the shared send'
   );
   // ...it hands the caller's key to the workspace, which owns the receipt and outbox.
   assert.match(

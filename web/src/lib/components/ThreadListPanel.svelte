@@ -102,6 +102,20 @@
                 {thread.title}
                 {#if thread.state === 'archived'}<span class="badge">Archived</span>{/if}
                 {#if thread.state === 'locked'}<span class="badge">Locked</span>{/if}
+                {#if thread.unread > 0}
+                  <span
+                    class="badge unread"
+                    aria-label="{thread.unread} unseen {thread.unread === 1
+                      ? 'reply'
+                      : 'replies'}{thread.unread_mentions
+                      ? `, ${thread.unread_mentions} mentioning you`
+                      : ''}"
+                  >
+                    {thread.unread} new{thread.unread_mentions
+                      ? ` · @${thread.unread_mentions}`
+                      : ''}
+                  </span>
+                {/if}
               </span>
               <span class="thread-row-meta">
                 {thread.reply_count}
@@ -168,5 +182,9 @@
     border-radius: 4px;
     padding: 0 0.3rem;
     margin-left: 0.3rem;
+  }
+  .badge.unread {
+    color: var(--accent);
+    border-color: var(--accent);
   }
 </style>

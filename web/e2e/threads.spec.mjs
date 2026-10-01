@@ -271,3 +271,93 @@ test('two uncertain thread replies retry under their own keys', async ({ page, r
   expect(storedFirst[0].idempotency_key).toBe(firstPosts[0].key);
   expect(storedSecond[0].idempotency_key).toBe(secondPosts[0].key);
 });
+
+// Review 17, V17-03, through the member interface: an unseen thread reply must not
+// raise the channel's badge — a thread is a conversation with its own reading
+// position — and it must show on the thread itself until that thread is read.
+// Archiving then closes replies (the composer is withdrawn and the server refuses)
+// while the history stays readable, and Reopen is an explicit action that restores
+// writing.
+test('a thread reply moves only the thread, and archiving closes replies until reopened', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  await signInOverApi(request);
+  await signIn(page, OWNER);
+  const channelButton = page.getByRole('button', { name: new RegExp(CHANNEL, 'i') }).first();
+  await channelButton.click();
+  const composer = page.locator('.composer textarea').first();
+  await composer.fill('A root line for the unread and archive journey.');
+  await composer.press('Enter');
+  await expect(
+    page.locator('article.message:has-text("unread and archive journey")').first()
+  ).toBeVisible();
+  await startThreadFrom(page, 'unread and archive journey', 'Unread and archive');
+  // The thread closes unread while the reply lands, so the test observes a reply
+  // nobody has read rather than one the open panel consumed.
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+
+  const state = await (await request.get('/api/state')).json();
+  const channelID = state.channels.find((item) => item.name === CHANNEL).id;
+  const threads = await (await request.get(`/api/channels/${channelID}/threads`)).json();
+  const target = threads.find((item) => item.title === 'Unread and archive');
+  expect(target, 'the journey thread is missing').toBeTruthy();
+  // The reply must be somebody else's: an author's own reply is never counted unread
+  // for them, and a journey that posted it as the owner would assert nothing.
+  await signInOverApi(request, REPLIER);
+  const reply = await request.post(`/api/threads/${target.id}/messages`, {
+    data: { content: 'the only unseen reply', idempotency_key: 'journey-unread-1' }
+  });
+  expect(reply.status()).toBe(201);
+  await signInOverApi(request);
+  const replyBody = await reply.json();
+
+  // The channel badge must not move: nothing arrived in the channel itself.
+  await expect(channelButton.locator('.unread-dot')).toHaveCount(0);
+  await expect(channelButton.locator('.unread-badge')).toHaveCount(0);
+
+  // The thread list carries the count.
+  await page.getByRole('button', { name: 'Threads in this channel' }).click();
+  const list = page.getByRole('dialog');
+  const row = list.getByRole('button', { name: /Unread and archive/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByText('1 new')).toBeVisible();
+
+  // The thread is read through a deep link to the reply. The channel listing
+  // deliberately excludes thread replies, so a link resolved through the channel
+  // would not even have the row on screen; the thread panel positions its window at
+  // the linked reply instead.
+  await page.goto('about:blank');
+  await page.goto(`/#message=${replyBody.id}`);
+  const panel = page.getByRole('dialog');
+  await expect(panel.getByText('Unread and archive')).toBeVisible();
+  await expect(panel.locator('article.message:has-text("the only unseen reply")')).toBeVisible();
+  await panel.getByRole('button', { name: 'Close' }).click();
+
+  // Reading it cleared the thread's own count — and left the channel's alone.
+  await page.getByRole('button', { name: 'Threads in this channel' }).click();
+  const reloaded = page.getByRole('dialog');
+  const readRow = reloaded.getByRole('button', { name: /Unread and archive/ });
+  await expect(readRow).toBeVisible();
+  await expect(reloaded.getByText('1 new')).toHaveCount(0);
+  await expect(channelButton.locator('.unread-dot')).toHaveCount(0);
+
+  // Archiving withdraws the composer before anything is pressed, keeps the history,
+  // and the server refuses a reply from another member while it holds.
+  await readRow.click();
+  const open = page.getByRole('dialog');
+  await open.getByRole('button', { name: 'Archive' }).click();
+  await expect(open.getByText(/This thread is archived, so new replies are closed/)).toBeVisible();
+  await expect(open.getByLabel('Reply to this thread')).toHaveCount(0);
+  await expect(open.locator('article.message:has-text("the only unseen reply")')).toBeVisible();
+  const refused = await request.post(`/api/threads/${target.id}/messages`, {
+    data: { content: 'a reply to an archived thread', idempotency_key: 'journey-unread-2' }
+  });
+  expect(refused.status()).toBe(403);
+
+  // Reopen is offered as its own action and restores writing.
+  await open.getByRole('button', { name: 'Reopen' }).click();
+  await expect(open.getByText(/This thread is archived, so new replies are closed/)).toHaveCount(0);
+  await expect(open.getByLabel('Reply to this thread')).toBeVisible();
+});
