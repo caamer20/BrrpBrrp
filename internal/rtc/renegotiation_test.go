@@ -1630,3 +1630,36 @@ func TestAPublicationThatCannotBeNegotiatedIsNotLeftRegistered(t *testing.T) {
 			got, before+1)
 	}
 }
+
+// A screen and its audio are one share. A stop that released only the video left the
+// screen-audio publication in the room's registry: the listing kept advertising a
+// share whose capture had already been released, and the audio's forwarders stayed
+// attached to it (review 17, media scout). The stop is taken once — the client names
+// the share, not each track — so the server owns releasing both.
+func TestStoppingAShareReleasesItsScreenAudioToo(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.announcePublication(peer, Publication{ID: "screen-1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.announcePublication(peer, Publication{ID: "screen-audio-1", Owner: "ana", Kind: PublicationScreenAudio, Started: time.Now().UTC()})
+	sfu.mu.Unlock()
+	if got := len(sfu.Publications("room")); got != 2 {
+		t.Fatalf("the fixture published %d of the share's two tracks", got)
+	}
+
+	if err := sfu.Signal("ana", "ana", Signal{ConnectionID: peer.connectionID, PublicationStopped: true}); err != nil {
+		t.Fatalf("stop the share: %v", err)
+	}
+	if left := sfu.Publications("room"); len(left) != 0 {
+		t.Fatalf("a stopped share left %v in the room", left)
+	}
+	// The room's one-screen allowance is back for the next person, which is the
+	// observable consequence of the registry being the bound's source of truth.
+	if err := sfu.renegotiate(peer, Signal{ConnectionID: peer.connectionID, Publication: PublicationScreenAudio}); err == nil {
+		t.Fatal("screen audio was accepted with no screen published")
+	}
+}

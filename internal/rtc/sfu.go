@@ -1482,11 +1482,17 @@ func (s *SFU) answerViewOnly(peer *Peer) error {
 	return nil
 }
 
-// stopPublication withdraws a peer's publication and tells the room.
+// stopPublication withdraws a peer's screen share and tells the room.
 //
 // A stop *removes* the publication rather than marking it inactive: the room's screen
 // bound is one, and a publication that is still counted after the person stopped
 // sharing means the next person to try is refused by a share that ended minutes ago.
+//
+// A screen and its audio are one share — `admits` refuses screen audio without a
+// screen and bounds neither separately — so stopping withdraws both kinds. Removing
+// only the video left the audio publication in the room's registry: the listing kept
+// advertising a share that had ended, and the audio's forwarders stayed attached to a
+// capture that was already released (review 17, media scout).
 //
 // It takes no locks beyond the SFU's and touches no forwarder state, which is
 // deliberate — an earlier version reached into the viewer's forwarders here and
@@ -1503,10 +1509,14 @@ func (s *SFU) stopPublication(userID string, signal Signal) error {
 	registry := s.room(room)
 	stopped := false
 	for _, publication := range registry.list() {
-		if publication.Owner == userID && publication.Kind == PublicationScreenVideo {
-			registry.remove(publication.ID)
-			stopped = true
+		if publication.Owner != userID {
+			continue
 		}
+		if publication.Kind != PublicationScreenVideo && publication.Kind != PublicationScreenAudio {
+			continue
+		}
+		registry.remove(publication.ID)
+		stopped = true
 	}
 	if !stopped {
 		s.mu.Unlock()
