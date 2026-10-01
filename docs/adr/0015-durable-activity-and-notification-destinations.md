@@ -200,3 +200,34 @@ any particular browser: browser automation is not physical notification qualific
 and a recorded delivery is not a delivered one. The deep link it opens is resolved
 against current authority at the moment it is followed, so a revoked grant produces a
 refusal rather than a conversation.
+
+
+## A notification is for a conversation the member is not looking at
+
+Two paths asked "is this person watching this happen?" and got different answers. The
+read cursor asked about four conditions — tab visible, tab focused, scrolled to the newest
+message, not reading back through history. The desktop notification asked about one:
+`document.hidden`.
+
+`document.hidden` is true only when the whole tab is in the background. It is false for a
+visible tab in another window, and it says nothing about which conversation is open or
+whether the member is scrolled away from the newest message. So a member with the app in
+front of them, reading the channel the mention arrived in, got an operating system banner
+over that very conversation. On a laptop that is a notification about the message they are
+watching arrive, and the thing it teaches is to dismiss banners without reading them —
+which is the opposite of what a notification is for.
+
+`watchingNow` states the question once and both callers read it. The rule is the read
+cursor's four conditions verbatim rather than a tidier subset: a member who is scrolled
+back from the newest message is not watching this message arrive, and their cursor must
+not move for it either. Answering it twice is how the two drifted.
+
+The conversation matters as much as the view state. A mention arriving in a channel the
+member is *not* reading is still an interruption even when they are at the live tail, so
+the suppression requires both: watching, **and** reading the conversation the mention
+names. A toast still appears in both cases — the banner is the interruption, and the
+toast is the information.
+
+`watchingNow` returns a strict boolean. A `&&` chain returns its first falsy operand, so
+a missing field would answer `undefined`, and a caller writing `!watchingNow(...)` and a
+caller writing `=== false` would disagree about a state the types say cannot happen.

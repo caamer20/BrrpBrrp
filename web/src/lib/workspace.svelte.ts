@@ -1,3 +1,4 @@
+import { watchingNow } from './active-view';
 import { storage } from './storage';
 import { consumeUpdateDrafts, clearUpdateDrafts } from './reload-drafts';
 import { api, APIError, errorMessage } from './api';
@@ -1085,7 +1086,15 @@ class Workspace {
   }
 
   async markRead() {
-    if (document.hidden || !document.hasFocus() || !this.atLatest || this.viewingHistory) return;
+    if (
+      !watchingNow({
+        visible: !document.hidden,
+        focused: document.hasFocus(),
+        atLatest: this.atLatest,
+        viewingHistory: this.viewingHistory
+      })
+    )
+      return;
     const last = this.messages.filter((message) => !message.pending).at(-1);
     if (!last || last.id === this.readMarker) return;
     // The cursor is advanced, never moved: an answer that arrives after a newer one, or a
@@ -1580,7 +1589,27 @@ class Workspace {
       if (!this.channelNotificationsReady || this.channelNotificationMutes[event.d.channel_id])
         return;
       this.showToast(event.d.body);
-      if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      // A notification is for a conversation the member is *not* looking at. Checking
+      // only `document.hidden` covered the tab being in the background and nothing
+      // else, so a member reading another channel — or reading back through this one —
+      // got an operating system banner for a message they could see arrive. The same
+      // question that decides whether the read cursor moves decides this: a member
+      // watching the live tail already sees the toast above and needs no banner, and a
+      // member scrolled away or reading history still gets one.
+      //
+      // `conversationId` matters as much as the view state: the mention may name a
+      // conversation other than the open one, and a member reading *this* channel is
+      // watching that conversation even when the mention is in another.
+      const watching = watchingNow({
+        visible: !document.hidden,
+        focused: document.hasFocus(),
+        atLatest: this.atLatest,
+        viewingHistory: this.viewingHistory
+      });
+      const viewingThisOne = this.activeId === this.conversationId(event.d);
+      if (watching && viewingThisOne) {
+        // The toast already said it, in the conversation the member is in.
+      } else if ('Notification' in window && Notification.permission === 'granted') {
         const request = this.identity();
         navigator.serviceWorker?.ready
           .then((registration) => {

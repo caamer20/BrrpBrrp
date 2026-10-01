@@ -10,7 +10,14 @@ const source = await readFile(new URL('../src/lib/workspace.svelte.ts', import.m
 // rather than a stand-in for it.
 const outboxSource = await readFile(new URL('../src/lib/outbox.ts', import.meta.url), 'utf8');
 const draftsSource = await readFile(new URL('../src/lib/drafts.ts', import.meta.url), 'utf8');
-const shellModules = [outboxSource, draftsSource]
+// The active-view rule is a dependency of both markRead and the mention notification,
+// and the shell below strips imports, so it is inlined too — otherwise the methods would
+// reference a name that does not exist in the module under test.
+const activeViewSource = await readFile(
+  new URL('../src/lib/active-view.ts', import.meta.url),
+  'utf8'
+);
+const shellModules = [outboxSource, draftsSource, activeViewSource]
   .map((file) =>
     ts
       .transpileModule(file, {
@@ -1343,6 +1350,71 @@ test('muting while service-worker readiness is pending prevents the delayed noti
   value.receive(mention);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(notifications, 1, 'a confirmed unmute permits later notifications');
+});
+
+// A desktop notification is for a conversation the member is not looking at.
+//
+// The check used to be `document.hidden` alone, which is true only when the whole tab
+// is in the background. A member with the tab open on another conversation — or reading
+// back through history in this one — is visible to the browser and was still interrupted
+// by an operating system banner for a message they could watch arrive. On a laptop that
+// is a banner over the conversation being read, and it teaches people to dismiss banners
+// without reading them.
+//
+// The rule is the same one that decides whether the read cursor moves, so both now
+// answer one question. The conversation matters as much as the view state: a mention
+// arriving in another channel is still an interruption for a member reading this one,
+// and the `channel_id` is what tells the two apart.
+test('a member watching the conversation a mention names is not interrupted', async (t) => {
+  const value = workspace();
+  t.after(() => {
+    setDocumentFocus(true, false);
+    value.stop();
+  });
+  // `setDocumentFocus(hidden, focused)`: a visible, focused window is (false, true). This
+  // is the state the old `document.hidden` check treated as *not* backgrounded, and the
+  // one it then interrupted anyway when the mention named another conversation.
+  setDocumentFocus(false, true);
+  value.channelNotificationsReady = true;
+  let notifications = 0;
+  const ready = { promise: Promise.resolve({ showNotification: () => notifications++ }) };
+  setNotificationWorker(ready.promise);
+  const mention = {
+    t: 'notification.mention',
+    d: { channel_id: 'a', body: 'hi', title: 'server' }
+  };
+
+  // The member is in conversation 'a' (the harness sets activeId) at the live tail.
+  assert.equal(value.activeId, 'a');
+
+  value.receive(mention);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(notifications, 0, 'a member watching the conversation was interrupted');
+
+  // Scrolled back through history in the same conversation: not watching, so notified.
+  value.atLatest = false;
+  value.receive(mention);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(notifications, 1, 'a member reading history was not notified');
+
+  // Deliberately in history mode, still in the same conversation: still notified.
+  value.atLatest = true;
+  value.viewingHistory = true;
+  value.receive(mention);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(notifications, 2, 'a member in history mode was not notified');
+
+  // Back at the live tail: quiet again.
+  value.viewingHistory = false;
+  value.receive(mention);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(notifications, 2, 'a member back at the live tail was interrupted again');
+
+  // A visible, focused tab that has lost focus is not being read either.
+  setDocumentFocus(false, false);
+  value.receive(mention);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(notifications, 3, 'a visible but unfocused window was not notified');
 });
 
 // R8-02: mention policy is account state the workspace verifies from a confirmed
