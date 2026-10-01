@@ -86,15 +86,19 @@
       <ul>
         {#each activity.entries as entry (entry.id)}
           <li data-acknowledged={entry.acknowledged}>
-            <button
-              class="channel-link"
-              onclick={() => (
-                (workspace.messagesTab = 'conversations'),
-                (workspace.messagesOpen = true)
-              )}
-            >
-              {describe(entry.kind, entry.actor)}
-            </button>
+            {#if activity.destination(entry)}
+              <button
+                class="channel-link"
+                onclick={() => void workspace.followActivityDestination(entry)}
+              >
+                {describe(entry.kind, entry.actor)}
+              </button>
+            {:else}
+              <!-- No destination: the conversation is gone. The row stays, because the
+                   fact that something happened is still true, but it is not a link to a
+                   place that no longer exists. -->
+              <span class="channel-link inactive">{describe(entry.kind, entry.actor)}</span>
+            {/if}
             <small>
               {new Date(entry.created_at).toLocaleString()}
               {entry.acknowledged ? '· seen' : ''}

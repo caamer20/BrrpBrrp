@@ -181,3 +181,43 @@ test('marking an empty page is empty, not an error', () => {
   assert.deepEqual(markAcknowledged([], 5, 'T'), []);
   assert.deepEqual(markAcknowledged([], 0, 'T'), []);
 });
+
+// An activity entry must be followable.
+//
+// `destination` used to return `#messages` for every entry, which is the inbox the
+// entry is listed in. Pressing one sent the person back where they came from and left
+// them to look — the same experience as a link that does nothing. A group message, an
+// incoming request and a thread reply each have somewhere specific to be.
+
+import { activityDestination } from '../src/lib/activity-destination.ts';
+
+const entry = (over) => ({ id: 'a', kind: 'message', conversation_id: 'c1', ...over });
+
+test('a direct or group message opens its conversation', () => {
+  assert.equal(activityDestination(entry({})), '#conversation=c1');
+});
+
+test('a request opens the requests tab', () => {
+  assert.equal(activityDestination(entry({ kind: 'request', conversation_id: 'r1' })), '#requests');
+});
+
+test('a conversation id is escaped, so a crafted id cannot produce a second destination', () => {
+  const crafted = activityDestination(entry({ conversation_id: 'c1#requests' }));
+  assert.ok(!crafted.startsWith('#conversation=c1#'), `the id was not escaped: ${crafted}`);
+  assert.equal(crafted, '#conversation=' + encodeURIComponent('c1#requests'));
+});
+
+test('an entry with no conversation has nothing to open', () => {
+  // The fact still happened, so the row stays — but it is not a link to a place that
+  // no longer exists, and it must not fall back to the inbox it was listed in.
+  assert.equal(activityDestination(entry({ conversation_id: '' })), '');
+  assert.equal(activityDestination(entry({ conversation_id: undefined })), '');
+});
+
+test('every kind resolves to something rather than the inbox', () => {
+  for (const kind of ['message', 'group_message', 'request']) {
+    const target = activityDestination(entry({ kind, conversation_id: 'c1' }));
+    assert.notEqual(target, '#messages', `${kind} still opens the inbox`);
+    assert.ok(target.length > 0, `${kind} has no destination`);
+  }
+});

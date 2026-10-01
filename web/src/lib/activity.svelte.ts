@@ -25,6 +25,12 @@ export interface ActivityEntry {
   created_at: string;
   acknowledged_at: string;
   acknowledged: boolean;
+  /**
+   * The conversation this entry is about. Sent only because the reader is entitled to
+   * it: every row in the page passed the server's eligibility test, so the account is a
+   * current member of that conversation or the recipient of that request.
+   */
+  conversation_id?: string;
 }
 
 export interface ActivityPage {
@@ -46,6 +52,7 @@ export interface NotificationPreference {
  * dropped rather than applied.
  */
 import { admitted as isAdmitted, acknowledgedRows, markAcknowledged } from './admission';
+import { activityDestination } from './activity-destination';
 
 /**
  * The activity controller.
@@ -194,12 +201,14 @@ class ActivityStore {
    * followed rather than carried from when it was written. A row that survives after
    * the person lost access leads somewhere that refuses, which is the honest answer.
    */
+  /**
+   * Where an entry takes the person who follows it, or nothing when it has nowhere to go.
+   *
+   * A thin delegation: the rule lives in `./activity-destination` so it can be tested
+   * directly, because this controller is a Svelte module node cannot import.
+   */
   destination(entry: ActivityEntry): string {
-    // A hash the application acts on, not a path it ignores. The previous value was a
-    // bare `/messages`, which no route matched, so following an entry did nothing a
-    // reader could see. Authority is still checked when the destination is opened, not
-    // carried from when the entry was written.
-    return '#messages';
+    return activityDestination(entry);
   }
 
   /**

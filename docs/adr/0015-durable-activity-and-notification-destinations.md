@@ -260,3 +260,45 @@ count is exact.
 Both rules are pure functions in `admission.ts` rather than inline, for the same reason
 as the admission gate: the controller is a Svelte module node cannot import, so an inline
 rule could only be checked by reading its source.
+
+
+## An activity entry has to be followable
+
+`destination` returned `#messages` for every entry, which is the inbox the entry is
+listed in. Pressing one sent the person back where they came from and left them to look
+— the same experience as a link that does nothing. The previous value had been a bare
+`/messages`, which no route matched at all, so this was already an improvement; it was
+still not a destination.
+
+Each kind now has somewhere specific: a request opens the requests tab, and a message
+opens the conversation it happened in. A group message and a thread reply both name their
+conversation, so one destination covers them. An entry whose conversation is gone returns
+nothing rather than falling back to the inbox, because a dead link that goes somewhere
+real is worse than one that is plainly not a link.
+
+**The conversation id is the server's to withhold or not.** `TestActivityIsDurableForAMessage
+TheRecipientHasNotSeen` listed `conversation_id` alongside `content`, `body` and `text` as
+a field the row must not carry. The intent stated in that test's comment is right — "the
+content is not in the row, so the list cannot become a second store of private text" — and
+a conversation id is not content. The row already carries `source_id`, the message's own
+id, so withholding the conversation withheld nothing while making every entry impossible
+to open. The field list is now the three content fields, and a separate assertion states
+what the reader may resolve.
+
+Sending it discloses nothing new: every row reaching a reader passed the eligibility
+test, so the account is a current member of that conversation or the recipient of that
+request. Both are asserted — the conversation is named, and no message text, no other
+party's identifier and no sender id travel with it.
+
+**Following an entry is a call, not a hash.** Writing `location.hash` would change the
+address bar and nothing else, because the hash is read once when the workspace enters. A
+link that moves the URL and not the page is worse than a button that plainly does nothing,
+so the workspace is asked directly. Authority is re-read when the conversation opens, so a
+stale or forged destination opens whatever that account may now read and nothing more —
+removing that check fails a test.
+
+The rule lives in `activity-destination.ts` because the controller is a Svelte module
+node cannot import. That is not tidiness: the test that used to cover this read the
+controller's source and asserted it returned `'#messages'`, which is how a controller
+returning a constant for every entry passed a suite. That test now asserts the constant
+is gone.

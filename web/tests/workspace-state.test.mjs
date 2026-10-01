@@ -1819,3 +1819,72 @@ test('an uncertain send overtaken by an allowed authority refresh is retryable r
   assert.equal(value.messages.length, 0, 'old authority cannot refill the cleared view');
   assert.notEqual(value.toast, 'old server answer');
 });
+
+// Following an activity entry opens the conversation it happened in.
+//
+// The workspace is asked directly rather than by writing `location.hash`: the hash is
+// read once, when the workspace enters, so writing it while the app is running changes
+// the address bar and nothing else — a link that moves the URL and not the page is worse
+// than a button that plainly does nothing.
+//
+// Authority is re-read when the conversation opens, so a stale entry cannot become a
+// grant: it opens whatever that account may now read, and nothing more.
+
+test('following an activity entry opens its conversation', async (t) => {
+  const value = workspace();
+  t.after(() => {
+    setDocumentFocus(true, false);
+    value.stop();
+  });
+  setDocumentFocus(true, true);
+  const opened = [];
+  value.selectChannel = async (id) => {
+    opened.push(id);
+  };
+
+  await value.followActivityDestination({ kind: 'message', conversation_id: 'a' });
+  assert.deepEqual(opened, ['a'], 'the conversation was not opened');
+});
+
+test('following a request entry opens the requests tab', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const opened = [];
+  value.selectChannel = async (id) => {
+    opened.push(id);
+  };
+
+  await value.followActivityDestination({ kind: 'request', conversation_id: 'r1' });
+  assert.equal(value.messagesTab, 'requests');
+  assert.equal(value.messagesOpen, true);
+  assert.deepEqual(opened, [], 'a request entry opened a conversation instead');
+});
+
+test('following an entry closes the dialog it was listed in', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.messagesOpen = true;
+  value.selectChannel = async () => {};
+  await value.followActivityDestination({ kind: 'message', conversation_id: 'a' });
+  assert.equal(value.messagesOpen, false, 'the messages dialog stayed open over the conversation');
+});
+
+test('an entry whose conversation is gone opens nothing rather than the wrong thing', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  const opened = [];
+  value.selectChannel = async (id) => {
+    opened.push(id);
+  };
+  value.messagesOpen = true;
+
+  // No conversation at all.
+  await value.followActivityDestination({ kind: 'message' });
+  assert.deepEqual(opened, []);
+  assert.equal(value.messagesOpen, true, 'the dialog closed for an entry with nowhere to go');
+
+  // A conversation this account cannot open, which is what a stale entry names.
+  await value.followActivityDestination({ kind: 'message', conversation_id: 'somebody-elses' });
+  assert.deepEqual(opened, [], 'an unopenable conversation was opened anyway');
+  assert.equal(value.messagesOpen, true);
+});

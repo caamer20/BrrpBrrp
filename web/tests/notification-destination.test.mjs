@@ -29,9 +29,19 @@ test('the client handles that destination and clears it', () => {
   assert.match(client, /history\.replaceState/);
 });
 
-test('an activity entry leads to the same place', () => {
+// The old version of this test read the controller's source and asserted it returned
+// '#messages'. That is the behaviour this change removes: an activity entry sent the
+// person to the inbox it was listed in rather than to the conversation it happened in,
+// which is not a destination at all. The rule now lives in `activity-destination.ts` and
+// is asserted by calling it — see `activity-lifetime.test.mjs`.
+test('an activity entry is resolved by the shared rule, not by a constant', () => {
   const activity = read('src/lib/activity.svelte.ts');
-  assert.match(activity, /return '#messages'/);
+  assert.match(
+    activity,
+    /activityDestination\(entry\)/,
+    'the controller does not use the shared rule'
+  );
+  assert.doesNotMatch(activity, /return '#messages'/, 'an entry still opens the inbox');
 });
 
 test('the worker deduplicates on the tag the server actually sends', () => {

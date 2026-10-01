@@ -89,10 +89,19 @@ func TestActivityIsDurableForAMessageTheRecipientHasNotSeen(t *testing.T) {
 	// The list is a pointer, not a copy: the content is not in the row, so the list
 	// cannot become a second store of private text that outlives the conversation's
 	// own authorization.
-	for _, field := range []string{"content", "body", "text", "conversation_id"} {
+	//
+	// `conversation_id` used to be on this list. It is an identifier, not content, and
+	// the row already carries `source_id` — the message's own id — so withholding it
+	// withheld nothing while making every entry impossible to open. The test that
+	// follows now asserts what the reader may resolve and what may not travel with it.
+	for _, field := range []string{"content", "body", "text"} {
 		if _, present := row[field]; present {
 			t.Fatalf("the activity row carries %q: %v", field, row[field])
 		}
+	}
+	// The conversation the entry is about, which its own reader is entitled to open.
+	if row["conversation_id"] == "" {
+		t.Fatalf("the activity row names no conversation: %v", row)
 	}
 	// The sender is not notified about their own message.
 	senderRows := listActivity(t, h, ben, "?kind=message")["activity"].([]any)
@@ -779,5 +788,70 @@ func TestTheActivityBoundHoldsUnderConcurrentSends(t *testing.T) {
 	}
 	if n > activityUnacknowledgedLimit {
 		t.Fatalf("two sends past the bound produced %d rows, limit %d", n, activityUnacknowledgedLimit)
+	}
+}
+
+// An activity entry has to be followable, and the page it lives in is not a
+// destination.
+//
+// The row already carried `conversation_id` in storage and the reader is already
+// entitled to it — the eligibility test admits a row only when the account is a current
+// member of that conversation or the recipient of that request — so withholding it made
+// the entry impossible to open. Every entry returned the same `#messages`, which is the
+// inbox the entry was listed in: pressing it sent the person to the place they came from
+// rather than to the conversation.
+//
+// The disclosure does not change with the field present: no other party's identifiers,
+// no message text, and the eligibility test is unchanged. What changes is that a row can
+// now name somewhere its own reader may go.
+func TestAnActivityRowNamesTheConversationItsReaderMayOpen(t *testing.T) {
+	s, h, ann, ben, _, conversation := activityFixture(t)
+	benID := memberIDOf(t, s, "act_ben")
+	sendDirect(t, h, ben, conversation, "a message that became activity", "act-dest-1")
+
+	page := listActivity(t, h, ann, "")
+	rows := page["activity"].([]any)
+	if len(rows) == 0 {
+		t.Fatal("the fixture produced no activity")
+	}
+	row := rows[0].(map[string]any)
+	if row["conversation_id"] != conversation {
+		t.Fatalf("the entry names conversation %v, want %q", row["conversation_id"], conversation)
+	}
+	// Still no text and no other party's identifier: the entry is a notice, not a copy.
+	// The message's own words are the thing that must not travel with it, so the check
+	// is for those words rather than for a field name — the row legitimately carries
+	// `conversation_id` now, and a substring test for "content" would read `conversation_id`
+	// as a leak.
+	encoded := fmt.Sprint(row)
+	// `act_ben` is the display name the row is *supposed* to carry, so the secret to
+	// look for is the message's words and the sender's id — not their name.
+	for _, secret := range []string{"a message that became activity", benID} {
+		if strings.Contains(encoded, secret) {
+			t.Fatalf("the entry carries %q: %s", secret, encoded)
+		}
+	}
+	for _, field := range []string{"content", "body", "snapshot_text", "author_id"} {
+		if _, present := row[field]; present {
+			t.Fatalf("the entry carries a %q field: %s", field, encoded)
+		}
+	}
+	if row["actor"] == benID {
+		t.Fatalf("the entry names the sender's id rather than their display name: %v", row["actor"])
+	}
+	if row["actor"] == "" {
+		t.Fatalf("the entry names no actor at all: %v", row)
+	}
+
+	// And it is the conversation the reader may actually open — a second, unrelated
+	// member's conversation is named by nobody's activity.
+	other := sendDirect(t, h, ben, conversation, "still the same pair", "act-dest-2")
+	_ = other
+	next := listActivity(t, h, ann, "")
+	for _, raw := range next["activity"].([]any) {
+		entry := raw.(map[string]any)
+		if entry["conversation_id"] == "" {
+			t.Fatalf("an eligible entry names no conversation: %v", entry)
+		}
 	}
 }

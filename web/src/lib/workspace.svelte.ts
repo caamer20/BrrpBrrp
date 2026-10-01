@@ -209,6 +209,35 @@ class Workspace {
   get channel() {
     return this.state?.channels.find((channel) => channel.id === this.activeId);
   }
+  /**
+   * Follows an activity entry to where it happened.
+   *
+   * Called directly rather than by setting `location.hash`: the hash is read once, when
+   * the workspace enters, so writing it while the app is already running would change
+   * the address bar and nothing else. A link that changes the address bar and not the
+   * page is worse than a button that says nothing happened.
+   *
+   * The destination is a route, not a grant. Authority is re-read when the conversation
+   * is opened, so a stale or forged destination opens whatever that account may now read
+   * and nothing more.
+   */
+  async followActivityDestination(entry: { kind: string; conversation_id?: string }) {
+    if (entry.kind === 'request') {
+      this.openMessagesTab('requests');
+      return;
+    }
+    const wanted = entry.conversation_id;
+    if (!wanted) return;
+    if (
+      this.isPrivate(wanted) ||
+      this.state?.channels.some((c) => c.id === wanted && c.type === 'text')
+    ) {
+      // The dialog closes because the conversation it was covering is now behind it.
+      this.messagesOpen = false;
+      await this.selectChannel(wanted);
+    }
+  }
+
   get privateConversationsEnabled() {
     return this.state?.features?.private_conversations === true;
   }
@@ -527,6 +556,27 @@ class Workspace {
     const notifyActivity = location.hash === '#messages' || location.hash === '#activity';
     if (notifyActivity) {
       this.openMessagesTab('activity');
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+    // An activity entry's own destination. `#requests` opens the tab a request belongs
+    // to; `#conversation=<id>` opens that conversation, which is how a message entry
+    // takes the person to the message rather than to the inbox they came from.
+    //
+    // Both are acted on before the history is cleared, and both fall through to the
+    // ordinary conversation selection below when they name nothing openable — a stale
+    // link lands on the workspace rather than on an error.
+    const entryTarget = /^(#requests|#conversation=)/.exec(location.hash);
+    if (entryTarget) {
+      if (location.hash === '#requests') this.openMessagesTab('requests');
+      else {
+        const wanted = decodeURIComponent(location.hash.slice('#conversation='.length));
+        if (
+          this.isPrivate(wanted) ||
+          this.state?.channels.some((c) => c.id === wanted && c.type === 'text')
+        ) {
+          await this.selectChannel(wanted);
+        }
+      }
       history.replaceState(null, '', location.pathname + location.search);
     }
     const params = new URLSearchParams(location.search);

@@ -331,7 +331,13 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 	// this account; every other kind while the account is an accepted, usable member
 	// of the conversation. A block in either direction ends it, because a notice about
 	// somebody the recipient has barred is not something to surface.
-	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,a.source_kind,a.source_id,u.username,a.created_at,a.acknowledged_at
+	// `a.conversation_id` is selected because the person who receives an activity row is
+	// the one who has to be able to open it, and an entry that cannot be opened is a
+	// notification with no destination. It discloses nothing the reader could not
+	// already resolve: every row reaching here passed the eligibility test below, so the
+	// account is a current member of that conversation or the recipient of that request.
+	// The row still carries no *other* party's identifiers and no message text.
+	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,a.source_kind,a.source_id,u.username,a.created_at,a.acknowledged_at,a.conversation_id
         FROM account_activity a LEFT JOIN users u ON u.id=a.actor_id
         WHERE a.user_id=? AND a.id<? AND a.conversation_id<>''
           AND (`+kindIs(kind)+`) AND (`+unacknowledgedIs(unacknowledgedOnly)+`)
@@ -355,7 +361,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 	defer rows.Close()
 
 	type entry struct {
-		id, kind, sourceID, actor, createdAt, acknowledgedAt string
+		id, kind, sourceID, actor, createdAt, acknowledgedAt, conversationID string
 	}
 	items := make([]map[string]any, 0, activityPageLimit)
 	cursor := ""
@@ -368,7 +374,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 		var e entry
 		// Every row here is already eligible: the query decided it, so a row the
 		// account cannot use is not here to be skipped.
-		if err := rows.Scan(&e.id, &e.kind, &e.sourceID, &e.actor, &e.createdAt, &e.acknowledgedAt); err != nil {
+		if err := rows.Scan(&e.id, &e.kind, &e.sourceID, &e.actor, &e.createdAt, &e.acknowledgedAt, &e.conversationID); err != nil {
 			s.failed(w, err)
 			return
 		}
@@ -389,6 +395,10 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 			"created_at":      e.createdAt,
 			"acknowledged_at": e.acknowledgedAt,
 			"acknowledged":    e.acknowledgedAt != "",
+			// Where the entry goes. Empty only for a conversation that has since become
+			// unreadable, which the eligibility test above already excludes, so a client
+			// may treat an empty value as "nothing to open" rather than "unknown".
+			"conversation_id": e.conversationID,
 		})
 	}
 	if err := rows.Err(); err != nil {
