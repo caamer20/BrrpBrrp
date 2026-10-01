@@ -614,17 +614,19 @@ func (s *Server) endStreams(userIDs []string) int {
 	return ended
 }
 
-// endUnreadableStreams ends the responses of the listed accounts whose channel they
+// endUnreadableStreams ends the responses of the listed accounts whose content they
 // can no longer read under the authority that is committed now, and leaves the rest
 // running.
 //
-// A change to a role's capabilities does not know in advance which channels it
-// affects: the same role can be granted on any number of channels, and an account that
-// keeps channel.read through another role keeps what it was already streaming. So the
-// decision is made per registered response with the same policy engine a request uses
-// rather than by ending everything the accounts had open. The list is the effective
-// holders of the changed role — including the accounts that hold the default role
-// without an assignment row — which is what makes an implicit holder's stream stop.
+// A change to a role's capabilities does not know in advance which conversations it
+// affects: the same role can be granted on any number of channels, an export carries a
+// whole set of conversations, and an account that keeps channel.read through another
+// role keeps what it was already streaming. So the decision is made per registered
+// response, scope by scope, with the same policy a conversation list or a download
+// admission asks — rather than by ending everything the accounts had open. The list is
+// the effective holders of the changed role — including the accounts that hold the
+// default role without an assignment row — which is what makes an implicit holder's
+// stream stop.
 //
 // The response metadata is read from the registry without its lock, because deciding
 // here needs database reads; each decision is then applied by identifier, so a response
@@ -659,8 +661,6 @@ func (s *Server) endUnreadableStreams(ctx context.Context, userIDs []string) int
 			principals[authority.User.ID] = principalFor(authority, owners, established, revision)
 		}
 	}
-	channels := make(map[string]db.Channel)
-	access := make(map[string]db.ChannelAccess)
 	decided := make(map[string]bool)
 	ending := make([]int, 0, len(records))
 	for _, record := range records {
@@ -673,40 +673,34 @@ func (s *Server) endUnreadableStreams(ctx context.Context, userIDs []string) int
 			ending = append(ending, record.id)
 			continue
 		}
-		// A stream with no channel is an unclaimed upload, which belongs to its uploader
-		// alone; an account-level change ends it here as it always did.
-		if record.channelID == "" {
+		// A response with no conversation scope is an unclaimed upload, which belongs to
+		// its uploader alone; an account-level change ends it here as it always did.
+		if len(record.scopes) == 0 {
 			continue
 		}
-		key := record.userID + "\x00" + record.channelID
-		if readable, seen := decided[key]; seen {
+		// One unreadable scope ends the whole response. A file is one document: half of
+		// an export is content the member can no longer read by any other route.
+		blocked := false
+		for _, scope := range record.scopes {
+			key := record.userID + "\x00" + scope
+			readable, seen := decided[key]
+			if !seen {
+				var err error
+				readable, err = s.exportScopeStillReadable(ctx, s.store, principal, scope)
+				if err != nil {
+					// A scope that cannot be resolved is one this response may not keep
+					// streaming: the alternative is serving under an unknown decision.
+					s.log.Warn("stream revocation lookup failed", "error", err)
+					readable = false
+				}
+				decided[key] = readable
+			}
 			if !readable {
-				ending = append(ending, record.id)
+				blocked = true
+				break
 			}
-			continue
 		}
-		channel, seen := channels[record.channelID]
-		if !seen {
-			loaded, err := s.store.Channel(ctx, s.store, record.channelID)
-			if err != nil {
-				// A channel that can no longer be read is a channel this response may not
-				// keep streaming.
-				decided[key] = false
-				ending = append(ending, record.id)
-				continue
-			}
-			lists, err := s.store.ChannelAccessLists(ctx, s.store, record.channelID)
-			if err != nil {
-				s.log.Warn("stream revocation lookup failed", "error", err)
-				return s.deliveries.endIDs(ending)
-			}
-			channel = loaded
-			channels[record.channelID] = loaded
-			access[record.channelID] = lists[record.channelID]
-		}
-		readable := principal.MayReadChannel(channel, access[record.channelID])
-		decided[key] = readable
-		if !readable {
+		if blocked {
 			ending = append(ending, record.id)
 		}
 	}

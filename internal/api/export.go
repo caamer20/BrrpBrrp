@@ -619,27 +619,6 @@ func (s *Server) downloadExport(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 410, "This export's server copy has expired. Request a new one.")
 		return
 	}
-	// The file is re-authorized against its own recorded scope, under a transaction
-	// that also re-resolves the account's authority. Checking only "does this account
-	// own this export" is not enough: ownership of the *file* is not ownership of the
-	// conversations inside it, and a member removed from a group kept receiving that
-	// group's text from a file built before the removal — history 404, export 200, with
-	// the message in the body (completion review 14, V14-02).
-	tx, err := s.store.BeginTx(r.Context(), nil)
-	if err != nil {
-		s.failed(w, err)
-		return
-	}
-	defer tx.Rollback()
-	principal, err := s.authorizeInTx(r.Context(), tx, user)
-	if err != nil {
-		s.authorityFailed(w, err)
-		return
-	}
-	if principal.Inactive {
-		problem(w, 403, "This account is not currently permitted to download an export.")
-		return
-	}
 	// A row written before the scope column exists cannot be checked, so it is refused
 	// rather than served. "We cannot tell what this contains" is not a reason to hand
 	// it over; the member can request a new export, which will have a scope.
@@ -648,8 +627,39 @@ func (s *Server) downloadExport(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 410, "This export was made before the server could record what it contained. Request a new one.")
 		return
 	}
+	// The response is registered before its access is resolved, with the export's
+	// complete set of conversation scopes — not an empty scope pretending to be an
+	// unclaimed upload. Registration before the decision puts the interval between the
+	// check and the first byte inside the registry: a withdrawal that commits in that
+	// interval either is seen by the checks below or ends this already-registered
+	// response, whichever side of the commit the decision lands on (review 17, V17-02).
+	ctx, done := s.deliveries.begin(scope, user.ID, currentSessionHash(r))
+	defer done()
+	if hook := s.streamAdmission.Load(); hook != nil {
+		(*hook)()
+	}
+	// Admission re-establishes the account's authority and the session that made the
+	// request, through the same protocol a file download uses. The middleware resolved
+	// the caller before this response existed and a revocation can have committed in
+	// between; the registry cancels what it already holds, and this decision is what
+	// refuses what it does not.
+	principal, err := s.admitStream(r.Context(), r, user)
+	if err != nil {
+		s.authorityFailed(w, err)
+		return
+	}
+	if principal.Inactive {
+		problem(w, 403, "This account is not currently permitted to download an export.")
+		return
+	}
+	// The file is re-authorized against its own recorded scope, with the same rules a
+	// conversation list or a history read uses. Checking only "does this account own
+	// this export" is not enough: ownership of the *file* is not ownership of the
+	// conversations inside it, and a member removed from a group kept receiving that
+	// group's text from a file built before the removal — history 404, export 200, with
+	// the message in the body (completion review 14, V14-02).
 	for _, conversationID := range scope {
-		readable, err := s.exportScopeStillReadable(r.Context(), tx, principal, conversationID)
+		readable, err := s.exportScopeStillReadable(r.Context(), s.store, principal, conversationID)
 		if err != nil {
 			s.failed(w, err)
 			return
@@ -659,19 +669,12 @@ func (s *Server) downloadExport(w http.ResponseWriter, r *http.Request, user db.
 			return
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		s.failed(w, err)
+	// A revocation that committed while this transfer was being admitted has already
+	// ended the registered response. Serving now would write a status the body cannot
+	// follow, so the refusal is stated instead.
+	if ctx.Err() != nil {
+		problem(w, 403, "Your access changed while this download was starting. Request a new export and it will contain only what you can read now.")
 		return
-	}
-	// The response is registered before the bytes are served, through the same registry
-	// every attachment download uses. The scope check above decides *whether* this may
-	// start; the registry is what ends it if the access changes while it is running.
-	// Without it a membership revoked midway through a large export left the transfer
-	// running to completion, because the check had already returned.
-	ctx, done := s.deliveries.begin("", user.ID, currentSessionHash(r))
-	defer done()
-	if hook := s.streamAdmission.Load(); hook != nil {
-		(*hook)()
 	}
 	file, err := os.Open(s.exportPath(record.ID))
 	if os.IsNotExist(err) {

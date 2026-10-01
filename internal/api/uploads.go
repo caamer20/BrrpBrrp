@@ -160,7 +160,14 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, user db.User) 
 			channelID = ""
 		}
 	}
-	ctx, done := s.deliveries.begin(channelID, user.ID, currentSessionHash(r))
+	// A claimed attachment is tagged with its conversation, so a channel-wide
+	// revocation and a re-evaluation of the account's access both reach it. An
+	// unclaimed upload carries no scope: it belongs to its uploader alone.
+	var scopes []string
+	if channelID != "" {
+		scopes = []string{channelID}
+	}
+	ctx, done := s.deliveries.begin(scopes, user.ID, currentSessionHash(r))
 	defer done()
 	if hook := s.streamAdmission.Load(); hook != nil {
 		(*hook)()

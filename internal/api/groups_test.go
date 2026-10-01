@@ -627,7 +627,7 @@ func TestGroupMembershipChangeEndsTheRemovedAccountsResponses(t *testing.T) {
 	// A response the removed member already has open. `begin` is what every real
 	// stream registers through, so this exercises the production path rather than a
 	// stand-in for it.
-	streamCtx, release := s.deliveries.begin(groupID, evidenceUserID(t, h, guest), "session-hash")
+	streamCtx, release := s.deliveries.begin([]string{groupID}, evidenceUserID(t, h, guest), "session-hash")
 	defer release()
 	registered := len(s.deliveries.snapshot())
 	if registered == 0 {

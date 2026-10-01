@@ -21,8 +21,16 @@ import (
 // streams it should and leaves unrelated sessions working. Bytes already written
 // cannot be recalled: the boundary is the stream, and it stops at the next read.
 type delivery struct {
-	id          int
-	channelID   string
+	id int
+	// scopes are the conversations whose content this response carries: a channel
+	// attachment carries its channel, an export carries every conversation in the
+	// snapshot, and an unclaimed upload carries none — it belongs to its uploader
+	// alone. A response with scopes is re-evaluated against current policy when an
+	// authority change names its reader, and a channel-wide revocation ends it when
+	// one of its scopes is that channel. Recorded per response rather than as one
+	// channel id, because an export is not one ordinary channel response and treating
+	// it as one is how a withdrawn snapshot kept streaming (review 17, V17-02).
+	scopes      []string
 	userID      string
 	sessionHash string
 	cancel      context.CancelFunc
@@ -41,14 +49,20 @@ type deliveries struct {
 // authorization decision and the first byte is inside the registry: whatever is
 // revoked after this point is cancelled here rather than admitted, and a check that
 // runs after registration sees a revocation that already committed.
-func (d *deliveries) begin(channelID, userID, sessionHash string) (context.Context, func()) {
+func (d *deliveries) begin(scopes []string, userID, sessionHash string) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
 	if d.active == nil {
 		d.active = make(map[int]delivery)
 	}
 	d.next++
-	record := delivery{id: d.next, channelID: channelID, userID: userID, sessionHash: sessionHash, cancel: cancel}
+	record := delivery{
+		id:          d.next,
+		scopes:      append([]string(nil), scopes...),
+		userID:      userID,
+		sessionHash: sessionHash,
+		cancel:      cancel,
+	}
 	d.active[record.id] = record
 	d.mu.Unlock()
 	return ctx, func() {
@@ -93,9 +107,18 @@ func (d *deliveries) endIDs(ids []int) int {
 
 // revoke ends every response still streaming one channel's data and reports how many
 // it ended. It is called on the same request that changes a channel's access, so the
-// boundary is the commit rather than the client's next request.
+// boundary is the commit rather than the client's next request. A response that
+// carries the channel among several scopes — an export — ends too: the file is one
+// document, and no part of it may keep arriving under access that moved.
 func (d *deliveries) revoke(channelID string) int {
-	return d.end(func(record delivery) bool { return record.channelID == channelID })
+	return d.end(func(record delivery) bool {
+		for _, scope := range record.scopes {
+			if scope == channelID {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // revokeAccount ends every response admitted for one account. A role, a ban or a
