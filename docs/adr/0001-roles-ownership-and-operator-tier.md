@@ -72,3 +72,43 @@ administrator cannot read a private conversation would have been false.
   and audit-failure policy remain WP-15.
 - The plan's full review of DM membership rules (D-07) applies to conversations
   that do not exist yet (WP-09–12).
+
+
+## The default role is a floor, not a grant
+
+`authz.Resolve` and `db.AccountAuthorities` both appended the default role to *every*
+account, assigned or not. Migration 3 already assigns `role-member` to every account the
+installation creates, so "every account has it" was already true — and re-deriving it
+made it a grant **on top of** assignments.
+
+The consequence was that **no role change could reduce anybody's authority**. An account
+assigned exactly one listen-only role still resolved with the member role's full
+capability set: `voice.speak`, `voice.share_screen`, `message.delete_any`, `member.manage`,
+`audit.read`. `RoleIDs()` reported the member role the account had just been taken off.
+Every restricted role the product offers was decorative — a listen-only member was a
+full member, a moderator without audit access could still read the audit log, and a
+reviewer who may not post could post.
+
+It was invisible because everything that *adds* authority kept working. Grants still
+applied, ownership still applied, the admin bridge still applied. Only revocation was
+broken, and revocation has no symptom in the interface: the member's client shows what it
+already had.
+
+**The fix.** The default applies only to an account with **no assignment row at all** —
+which is what an account created outside the administrator's route gets, and what
+`TestRemovingReadFromTheImplicitDefaultRoleEndsTheStreamsItAdmitted` documents. Once an
+account has been through the role route it has an assignment row, and the floor stops
+reaching it.
+
+**Both paths were changed together**, because they are two ways to answer one question
+and the bug was that they answered it differently. `AccountAuthorities` carried a comment
+saying it applied the default "exactly as it does for request-time evaluation"; that
+comment was true when written and became false the moment the other one was corrected.
+Two paths to one answer are the failure this ADR exists to prevent, and here it had
+already happened once.
+
+**How it was found.** A listen-only voice member was written as a test because the §5.13
+list named it as uncovered. It failed for a reason unrelated to voice — the account still
+held `voice.speak` — and the reason turned out to be three layers down from the thing
+under test. The first fix broke three unrelated tests, which is how the second path
+surfaced.

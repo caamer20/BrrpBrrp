@@ -74,8 +74,31 @@ func (s *Service) Resolve(ctx context.Context, q db.Queryer, account db.User) (P
 		Suspended: suspended,
 		Roles:     make([]Role, 0, len(catalog)),
 	}
+	// A default role is the floor an account has *until it is assigned something else*.
+	// An account with no assignment row at all holds it — that is what an account created
+	// outside the administrator's route gets, and removing that would leave such accounts
+	// with no authority whatsoever.
+	//
+	// It is a floor and not a grant on top of assignments. `|| role.IsDefault` made it
+	// the latter, and the consequence was that no role change could reduce anybody's
+	// authority: an account whose roles were set to exactly one listen-only role still
+	// held `voice.speak`, and `RoleIDs()` reported the member role it had been given back.
+	// Every restricted role in the product — a listen-only member, a moderator without
+	// audit access, a reviewer who may not post — was silently a full member.
+	//
+	// So the default applies only when the account has been assigned nothing. Migration 3
+	// assigns `role-member` to every account the installation creates, so an account that
+	// has been through the role route always has an assignment row and the floor never
+	// reaches it.
+	if len(assigned) == 0 {
+		for _, role := range catalog {
+			if role.IsDefault {
+				principal.Roles = append(principal.Roles, RoleFrom(role))
+			}
+		}
+	}
 	for _, role := range catalog {
-		if granted[role.ID] || role.IsDefault {
+		if granted[role.ID] {
 			principal.Roles = append(principal.Roles, RoleFrom(role))
 		}
 	}

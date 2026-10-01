@@ -273,15 +273,45 @@ func (s *Store) AccountAuthorities(ctx context.Context, q Queryer) ([]AccountAut
 	if len(accounts) == 0 {
 		return accounts, nil
 	}
-	// The default role applies to every account, assigned or not, exactly as it
-	// does for request-time evaluation.
+	// The default role is the floor an account has until it is assigned something else,
+	// and it applies only then. Appending it unconditionally made it a grant on top of
+	// assignments, which meant an account whose roles had been set to exactly one
+	// listen-only role still resolved with the member role's full capability set — the
+	// restricted roles the product offers could not restrict anything.
+	//
+	// The floor is the same rule `authz.Resolve` applies, and it has to be: these are two
+	// paths to the same answer, and they disagreed the moment one of them was corrected.
+	// An account with no assignment row at all — created outside the administrator's
+	// route — still gets the default here.
 	defaultRole, err := s.DefaultRole(ctx, q)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	if err == nil {
+		hasAssignment := make([]bool, len(accounts))
+		rows, err := q.QueryContext(ctx, `SELECT DISTINCT user_id FROM role_assignments`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var userID string
+			if err := rows.Scan(&userID); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if at, ok := index[userID]; ok {
+				hasAssignment[at] = true
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
 		for i := range accounts {
-			accounts[i].Roles = append(accounts[i].Roles, defaultRole)
+			if !hasAssignment[i] {
+				accounts[i].Roles = append(accounts[i].Roles, defaultRole)
+			}
 		}
 	}
 	assignments, err := q.QueryContext(ctx, `SELECT ra.user_id, `+qualifiedRoleColumns+` FROM role_assignments ra JOIN roles ON roles.id=ra.role_id ORDER BY roles.position DESC`)

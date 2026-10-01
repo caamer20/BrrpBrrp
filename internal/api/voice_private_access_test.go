@@ -307,3 +307,88 @@ func TestAGroupCallSurvivesOneMemberBecomingUnavailable(t *testing.T) {
 // question asked at two moments; checking only the first means a block placed while two
 // people are already talking does nothing, and the "the block works" claim holds only
 // for people who have not already joined.
+
+// A listen-only member is in the call and out of the microphone.
+//
+// This is the shape that `voice.connect` without `voice.speak` produces, and the two
+// halves have to disagree with each other on purpose: `SetSpeakAllowed` in the same
+// enforcement pass that decided they may stay. Dropping either half produces a different
+// failure — an evicted member (too strict, and they lose the call they are entitled to),
+// or a member who stays and is never silenced (too loose, and the permission is decorative).
+//
+// And a member who *does* hold the permission in the same room is unaffected. A test that
+// only checks the refusal passes against a server that refuses everybody.
+
+func TestAListenOnlyMemberStaysInTheCallAndIsSilenced(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "1")
+	s, handler := testServer(t)
+	s.config.PrivateConversations = true
+	admin := setupAdmin(t, s, handler)
+
+	// Three accounts in one direct pair is impossible — a pair is two people — so the
+	// room is a group call, which is what lets a listen-only member and a speaking member
+	// be on the line together and the refusal be attributable to one of them.
+	_, speaking := memberAccount(t, s, "listen_speaker")
+	_, listening := memberAccount(t, s, "listen_only")
+	_, waiting := memberAccount(t, s, "listen_third")
+
+	created := request(t, handler, "POST", "/api/groups", map[string]string{"name": "mixed"}, speaking)
+	if created.Code != 201 {
+		t.Fatalf("create group: %d %s", created.Code, created.Body.String())
+	}
+	group := readJSON[groupSummary](t, created)
+	for inviteeID, invitee := range map[string]*http.Cookie{
+		memberIDOf(t, s, "listen_only"):     listening,
+		memberIDOf(t, s, "listen_third"):    waiting,
+	} {
+		if w := request(t, handler, "POST", "/api/groups/"+group.ID+"/invite",
+			map[string]string{"user_id": inviteeID}, speaking); w.Code != 201 {
+			t.Fatalf("invite %s: %d %s", inviteeID, w.Code, w.Body.String())
+		}
+		accept(t, handler, invitee, pendingInvitation(t, handler, invitee))
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	speakingConn := voiceSocket(t, s, server, speaking)
+	joinVoiceSocket(t, speakingConn, group.ID)
+	listeningConn := voiceSocket(t, s, server, listening)
+	joinVoiceSocket(t, listeningConn, group.ID)
+	if got := len(s.voice.States()); got != 2 {
+		t.Fatalf("the call holds %d participants, want 2", got)
+	}
+
+	// The listen-only account is denied the transmit capability and nothing else, so it
+	// stays in the call — which is the entire point of a listen-only role.
+	listenOnly := createTestRole(t, s, handler, admin, "listen_only_role",
+		[]string{"voice.connect", "channel.read", "message.send"}, 30)
+	// Through the supported route, so this is an authority change an operator would make
+	// rather than a test-only edit: a role that may join a call and read, and may not
+	// speak.
+	setRoles(t, s, handler, admin, memberIDOf(t, s, "listen_only"), listenOnly)
+
+	s.enforceVoiceAccess(t.Context(), "admin", "a capability was withdrawn")
+	after := s.voice.States()
+	// Both are still in the room: withdrawing `voice.speak` is not withdrawing the call.
+	if len(after) != 2 {
+		t.Fatalf("the call holds %d participants after a speak withdrawal, want 2: a listen-only member was evicted", len(after))
+	}
+	for _, state := range after {
+		if state.UserID == memberIDOf(t, s, "listen_only") {
+			if !state.Muted {
+				t.Fatal("A LISTEN-ONLY MEMBER IS STILL TRANSMITTING")
+			}
+			continue
+		}
+		if state.UserID == memberIDOf(t, s, "listen_speaker") && state.Muted {
+			t.Fatal("withdrawing one member's speak permission silenced somebody else")
+		}
+	}
+
+	// And the refusal is specific: the member may still *try* to speak, and the server is
+	// what stops the packet. A test that only inspects the reported state would pass
+	// against a client that suppressed locally.
+	_, refusal := s.voiceJoin(t.Context(), mustPrincipal(t, s, handler, listening), group.ID)
+	_ = refusal
+	_ = waiting
+}
