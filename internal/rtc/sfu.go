@@ -305,7 +305,7 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 				s.log.Info("voice path established",
 					"user_id", userID, "room", peer.state.ChannelID,
 					"local", local, "remote", remote,
-					"relayed", strings.Contains(local, "typ relay") || strings.Contains(remote, "typ relay"))
+					"relayed", local == "relay" || remote == "relay")
 			}()
 		} else if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
 			s.leavePeer(userID, peer)
@@ -1028,10 +1028,19 @@ func (s *SFU) connectionStateOf(userID string) webrtc.PeerConnectionState {
 // into the peer's unexported fields.
 func (s *SFU) setEmitter(userID string, send func(string, any)) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if peer, ok := s.peers[userID]; ok {
-		peer.send = send
+	peer, ok := s.peers[userID]
+	s.mu.Unlock()
+	if !ok {
+		return
 	}
+	// Under the peer's own lock, which is the one `emit` reads it under. Writing it
+	// under the SFU lock was a race: `Join`'s connection-state goroutine can emit the
+	// moment a peer becomes connected, and a test that installs the emitter at that
+	// moment wrote the field while that goroutine read it. Two locks guarding one field
+	// is not two locks — it is no lock at all.
+	peer.sendMu.Lock()
+	peer.send = send
+	peer.sendMu.Unlock()
 }
 
 // forwardPublication routes a packet from a peer's publication to the peers watching
@@ -1506,51 +1515,41 @@ func (s *SFU) stopPublication(userID string, signal Signal) error {
 	return nil
 }
 
-// selectedCandidatePair reports the type of the candidate pair ICE actually chose,
-// as the SDP fragment both ends agreed on. It is the only place the question "which
-// path carried this call" has an answer, and the answer is the difference between a
-// direct path and a relayed one.
+// selectedCandidatePair reports the type of the candidate pair ICE actually chose.
+// It is the only place the question "which path carried this call" has an answer, and
+// the answer is the difference between a direct path and a relayed one.
+//
+// It asks the ICE transport, not the connection's statistics report. Both answer the
+// same question, but `GetStats` reads state that Pion's own teardown clears without a
+// lock, so collecting a diagnostic while a client disconnects is a data race — one
+// the race detector found the moment a test client closed its side while this read
+// was in flight. The ICE transport answers from its agent's atomically stored
+// selected pair, which a concurrent close cannot corrupt.
 func (s *SFU) selectedCandidatePair(peer *Peer) (string, string, error) {
-	// A peer can be present in the map before its connection is built. Reading stats
-	// from no connection is not a measurement; it is a nil dereference, and the caller
-	// is a logging goroutine whose panic would take the server down over a diagnostic.
+	// A peer can be present in the map before its connection is built. Reading from
+	// no connection is not a measurement; it is a nil dereference, and the caller is
+	// a logging goroutine whose panic would take the server down over a diagnostic.
 	if peer == nil || peer.pc == nil {
 		return "", "", errors.New("the peer has no connection")
 	}
-	stats := peer.pc.GetStats()
-	for _, report := range stats {
-		pair, ok := report.(webrtc.ICECandidatePairStats)
-		if !ok || pair.State != webrtc.StatsICECandidatePairStateSucceeded {
-			continue
-		}
-		// A pair can succeed and then be superseded. Only a nominated pair is the one
-		// ICE is actually using, so a non-nominated success is not an answer.
-		if !pair.Nominated {
-			continue
-		}
-		return reportICECandidateType(stats, pair.LocalCandidateID), reportICECandidateType(stats, pair.RemoteCandidateID), nil
+	iceTransport := peer.pc.SCTP().Transport().ICETransport()
+	if iceTransport == nil {
+		return "", "", errors.New("the peer has no ICE transport")
 	}
-	return "", "", errors.New("no candidate pair has succeeded")
-}
-
-// reportICECandidateType resolves a candidate id to its `typ` token, so a log line
-// says "relay" rather than an id nobody can look up afterwards.
-func reportICECandidateType(stats webrtc.StatsReport, id string) string {
-	if id == "" {
-		return ""
+	pair, err := iceTransport.GetSelectedCandidatePair()
+	if err != nil {
+		return "", "", err
 	}
-	report, ok := stats[id]
-	if !ok {
-		return id
+	if pair == nil || pair.Local == nil || pair.Remote == nil {
+		return "", "", errors.New("no candidate pair has succeeded")
 	}
-	candidate, ok := report.(webrtc.ICECandidateStats)
-	if !ok {
-		return id
+	if pair.Local.Typ == webrtc.ICECandidateTypeUnknown || pair.Remote.Typ == webrtc.ICECandidateTypeUnknown {
+		return "", "", errors.New("the selected pair's candidate type is unknown")
 	}
 	// String is the type's own name — "host", "srflx", "prflx", "relay" — which is the
 	// token that appears in an SDP candidate line and the one an operator will search
 	// a log for.
-	return candidate.CandidateType.String()
+	return pair.Local.Typ.String(), pair.Remote.Typ.String(), nil
 }
 
 // ICEServers reports the servers the media engine will use for its own connections,
