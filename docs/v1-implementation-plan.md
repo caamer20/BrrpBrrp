@@ -5,7 +5,7 @@
 **Status:** Proposed implementation and release contract; owner decisions remain open  
 **Scope of this task:** Documentation only. No application, schema, configuration, dependency, infrastructure or release changes are authorized by this document.
 
-> **Current implementation: 0.4.0-alpha.7, schema 24, backup format 2.**
+> **Current implementation: 0.4.0-alpha.7, schema 25, backup format 2.**
 > Roles, migration/recovery, send recovery, account removal, community reporting,
 > slow mode, channel notification muting and opt-in consented DMs/blocking have
 > local implementations. Alpha.5 remains the packaged checkpoint. See the
