@@ -56,6 +56,10 @@ class Voice {
   private publishedScreenAudio = false;
   /** Whether the operator asked for system audio with the screen. */
   wantSystemAudio = $state(false);
+  // Bound by the workspace. Reading it is a deliberate function rather than a plain
+  // `bind:this`, because binding an element is also the moment the element becomes
+  // available to render into — and a share that arrived first has nothing to attach to
+  // until then.
   screenElement = $state<HTMLVideoElement | null>(null);
   // The selected candidate pair's kind: 'host' | 'srflx' | 'prflx' | 'relay'. It is
   // read by qualification and by support, and it is the only way to tell a direct
@@ -496,15 +500,49 @@ class Voice {
     if (!stream) return;
     this.screenStream?.getTracks().forEach((track) => track.stop());
     this.screenStream = stream;
-    const element = this.screenElement;
-    if (element) {
-      element.srcObject = stream;
-      element.play().catch(() => {
-        // A browser that will not autoplay leaves the element paused with a picture on
-        // it, which is better than nothing, and the person can press play.
-      });
-    }
+    // The flag comes first, so the element is in the DOM before it is asked to render.
+    // It used to come last, and the element only exists while the flag is true — so the
+    // very first share never had an element to attach to. The stream was stored, the
+    // screen was announced as shared, and nothing arrived: a blank rectangle with no
+    // error anywhere, which a viewer cannot tell from a share that failed to send.
     this.screenShared = true;
+    this.renderScreen();
+  }
+
+  /**
+   * Puts the stored screen on the video element, whenever that element exists.
+   *
+   * Called both when a stream arrives and when the element binds, because the two can
+   * happen in either order and neither order is wrong on its own. A share that arrives
+   * before the workspace has rendered the element is the common case on a slow join.
+   */
+  /**
+   * Receives the workspace's screen element and renders whatever is waiting for it.
+   *
+   * Used as the `bind:this` target rather than assigning the field directly. A stream and
+   * an element arrive independently and in either order, and the old code only ever
+   * looked once: when the stream arrived. A share that landed first was stored, the
+   * screen was announced, and nothing was ever rendered — a blank rectangle with no
+   * error, indistinguishable from a share that failed to send.
+   */
+  bindScreenElement(element: HTMLVideoElement | null) {
+    this.screenElement = element;
+    this.renderScreen();
+    return element;
+  }
+
+  private renderScreen() {
+    const element = this.screenElement;
+    const stream = this.screenStream;
+    if (!element || !stream) return;
+    // Re-assigning the same object would restart playback, so this only writes when the
+    // element is not already showing this stream.
+    if (element.srcObject === stream) return;
+    element.srcObject = stream;
+    element.play().catch(() => {
+      // A browser that will not autoplay leaves the element paused with a picture on
+      // it, which is better than nothing, and the person can press play.
+    });
   }
 
   private async createPeer(accepted: {

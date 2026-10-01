@@ -17,6 +17,30 @@
   import ThreadListPanel from './ThreadListPanel.svelte';
   import ChannelSwitcher from './ChannelSwitcher.svelte';
 
+  /**
+   * Hands the screen element to the voice model when it mounts.
+   *
+   * An action rather than `bind:this`, because binding records the element and nothing
+   * else: it does not tell the model that a stream is now waiting for it. A share can
+   * arrive before this element exists — on a slow join it usually does — and the old
+   * binding attached the stream only when the stream arrived, so the first share of a
+   * call rendered a blank rectangle with no error anywhere.
+   */
+  function screenTarget(
+    node: HTMLVideoElement,
+    voice: { bindScreenElement: (element: HTMLVideoElement | null) => void }
+  ) {
+    voice.bindScreenElement(node);
+    return {
+      update(next: typeof voice) {
+        next.bindScreenElement(node);
+      },
+      destroy() {
+        voice.bindScreenElement(null);
+      }
+    };
+  }
+
   import LazyPanel from './LazyPanel.svelte';
   import { drawerFocus } from '../drawer-focus';
   import { voice } from '../voice.svelte';
@@ -277,7 +301,7 @@
            and inline: a video element that tried to unmute would play the sharer's system
            audio at everybody watching, and inline keeps a phone from going fullscreen. -->
       <video
-        bind:this={voice.screenElement}
+        use:screenTarget={voice}
         class="shared-screen"
         autoplay
         playsinline

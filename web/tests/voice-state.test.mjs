@@ -203,3 +203,103 @@ test('cancelling microphone capture ignores its late answer and a fresh retry ca
   assert.equal(voice.status, 'connecting');
   assert.equal(workspace.events.filter((event) => event.type === 'voice.join').length, 1);
 });
+
+// A screen and the element that shows it arrive independently, and either can be first.
+//
+// The model attached the stream only when the stream arrived, looking for an element that
+// the workspace creates when `screenShared` becomes true — so the very first share had no
+// element yet. The stream was stored, the screen was announced as shared, and a blank
+// rectangle appeared: no error, no retry, and nothing a viewer could distinguish from a
+// share that failed to send.
+//
+// Both orders have to render. Asserting the first is the one that matters, because that
+// is the case that was broken and it is the ordinary one on a slow join.
+
+/** A video element stand-in that records what was attached and whether it was told to play. */
+function videoElement() {
+  const element = {
+    srcObject: null,
+    played: 0,
+    play() {
+      element.played++;
+      return Promise.resolve();
+    }
+  };
+  return element;
+}
+
+test('a screen that arrives before the element is rendered once the element exists', () => {
+  const voice = new Voice();
+  const stream = { getTracks: () => [] };
+  voice.attachScreen(stream);
+  // The element has not mounted yet: the share is announced and the stream held, but
+  // nothing has been rendered, because there was nothing to render into.
+  assert.equal(voice.screenShared, true, 'the share was not announced');
+  assert.equal(voice.screenStream, stream, 'the stream was not kept');
+  assert.equal(voice.screenElement, null);
+
+  // Now the workspace mounts the element, which is what `bindScreenElement` is for.
+  const element = videoElement();
+  voice.bindScreenElement(element);
+  assert.equal(voice.screenElement, element);
+  assert.equal(element.srcObject, stream, 'the waiting stream was never attached');
+  assert.equal(element.played, 1, 'the element was attached but never told to play');
+});
+
+test('a screen that arrives after the element is rendered immediately', () => {
+  const voice = new Voice();
+  const element = videoElement();
+  voice.bindScreenElement(element);
+  const stream = { getTracks: () => [] };
+  voice.attachScreen(stream);
+  assert.equal(element.srcObject, stream);
+  assert.equal(element.played, 1);
+});
+
+test('binding the same element twice does not restart playback', () => {
+  // Svelte re-runs an action's update when its argument changes, and a re-render of the
+  // workspace can bind again. Re-assigning the same `srcObject` restarts the stream, so a
+  // share would visibly jump whenever something else on the page re-rendered.
+  const voice = new Voice();
+  const element = videoElement();
+  voice.bindScreenElement(element);
+  const stream = { getTracks: () => [] };
+  voice.attachScreen(stream);
+  voice.bindScreenElement(element);
+  voice.bindScreenElement(element);
+  assert.equal(element.played, 1, 'playback was restarted by a redundant bind');
+  assert.equal(element.srcObject, stream);
+});
+
+test('a second share replaces the first on the same element', () => {
+  const voice = new Voice();
+  const element = videoElement();
+  voice.bindScreenElement(element);
+  const first = { getTracks: () => [] };
+  voice.attachScreen(first);
+  const second = { getTracks: () => [] };
+  voice.attachScreen(second);
+  assert.equal(element.srcObject, second, 'the element still shows the previous share');
+  assert.equal(element.played, 2, 'a new share was not started');
+});
+
+test('the element going away does not leave the model pointing at a detached node', () => {
+  const voice = new Voice();
+  const element = videoElement();
+  voice.bindScreenElement(element);
+  voice.attachScreen({ getTracks: () => [] });
+  voice.bindScreenElement(null);
+  assert.equal(voice.screenElement, null);
+  // A stream arriving after that is held rather than written into nothing, so a share
+  // that arrives while the workspace is between renders is not lost. The detached element
+  // keeps whatever it had — it is no longer on screen, and touching it would be the only
+  // way to leak the model into a node nobody owns.
+  const stream = { getTracks: () => [] };
+  voice.attachScreen(stream);
+  assert.equal(voice.screenStream, stream);
+  assert.notEqual(element.srcObject, stream, 'a stream was written into a detached element');
+  // And it renders as soon as an element is available again.
+  const replacement = videoElement();
+  voice.bindScreenElement(replacement);
+  assert.equal(replacement.srcObject, stream);
+});

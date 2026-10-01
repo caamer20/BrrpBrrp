@@ -724,3 +724,28 @@ because it is the one a person can act on, and because signing in as somebody el
 replaces the session and usually moves the generation too: reporting "the conversation
 changed" for that would send them looking at the wrong thing. The conversation did not
 change — they did.
+
+
+## A screen and the element that shows it arrive independently
+
+The model attached a received screen by looking for the workspace's video element at the
+moment the stream arrived. The element is created by `{#if voice.screenShared}`, and
+`screenShared` was set *after* the attach was attempted — so the very first share of a
+call had no element to attach to, every time. The stream was stored, the screen was
+announced as shared, and a blank rectangle appeared: no error, no retry, and nothing a
+viewer could tell from a share that failed to send at all. On a slow join it is the
+ordinary case rather than a rare one.
+
+The fix is that either event triggers the render. A share arriving before the element is
+held and rendered the moment one binds; a share arriving after one is rendered
+immediately. Neither order is an error and neither is privileged.
+
+The workspace hands the element over through an **action** rather than `bind:this`.
+`bind:this` records the element and nothing else — it does not tell the model that
+something is now waiting for it, which is the entire missing half. The action also
+clears the field on destroy, so the model never points at a detached node, and it
+re-renders into whatever element exists next rather than writing into one nobody owns.
+
+Redundant binds are idempotent. Svelte re-runs an action when its argument changes and a
+workspace re-render can bind again; re-assigning the same `srcObject` restarts the stream,
+so a share would visibly jump whenever something else on the page changed.
