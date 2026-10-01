@@ -1562,3 +1562,71 @@ func TestScreenAudioReachesAViewerAsAudio(t *testing.T) {
 		t.Fatalf("the viewer's video output received %d writes, want %d", got, videoBefore+1)
 	}
 }
+
+// A publication that could not be negotiated must not be left registered.
+//
+// The room's screen allowance is one, so a registration that outlives its negotiation
+// is not a small leak: it spends the room's only screen on a track nobody will ever
+// send, and the next member to share is refused with "only one screen can be shared in
+// this conversation at a time" **while nobody is sharing**. The bound is spent on a
+// screen that does not exist.
+//
+// The ordering is what prevents it, and the ordering is the thing to assert: every step
+// that can fail — applying the offer, creating the answer, applying the answer,
+// re-asking the allowance — happens **before** the publication is registered. That is why
+// the registration is last rather than first, which is the opposite of how the room's
+// capacity is normally taken in this codebase.
+//
+// The check is the state afterwards, not the error. A test asserting only that the call
+// returns an error passes against a server that leaks the reservation, which is exactly
+// what a status-code-only suite cannot see.
+
+func TestAPublicationThatCannotBeNegotiatedIsNotLeftRegistered(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeerWithCapacity(t, sfu, "ana", "room", 3)
+	connectPeerWithCapacity(t, sfu, "bo", "room", 3)
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	before := len(sfu.Publications("room"))
+	viewer := sfu.peers["bo"]
+	// An offer with no SDP cannot be answered. The room must hold no more publications
+	// than it did, and the one-screen allowance must still be available to somebody else.
+	// A structurally invalid offer: Pion applies it and refuses. This is the failure
+	// that lands *after* the output track is created and *before* the answer exists — the
+	// window a reservation taken too early would leak through.
+	if err := sfu.renegotiate(viewer, Signal{
+		ConnectionID: viewer.connectionID,
+		SDP: &webrtc.SessionDescription{
+			Type: webrtc.SDPTypeOffer,
+			SDP:  "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=not-a-session\r\nt=sham 1\r\n",
+		},
+		Publication: PublicationScreenVideo,
+	}); err == nil {
+		t.Fatal("an offer that cannot be applied was accepted")
+	}
+	if after := len(sfu.Publications("room")); after > before {
+		t.Fatalf("the room holds %d publications after a failed negotiation, want at most %d: a screen that was never negotiated is consuming the room's only screen",
+			after, before)
+	}
+
+	// The permitted control: the allowance is still available, so a refusal above did
+	// not merely avoid registering — it left the room in a state where somebody else can
+	// actually share. A fix that refused everything would pass the assertion above.
+	owner := sfu.peers["ana"]
+	if err := owner.addScreenOutputOfKind(PublicationScreenVideo); err != nil {
+		t.Fatal(err)
+	}
+	sfu.mu.Lock()
+	sfu.announcePublication(owner, Publication{
+		ID: "after-failure", Owner: owner.state.UserID,
+		Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	if got := len(sfu.Publications("room")); got != before+1 {
+		t.Fatalf("after a failed negotiation the room holds %d publications, want %d: the allowance was spent by the failure",
+			got, before+1)
+	}
+}

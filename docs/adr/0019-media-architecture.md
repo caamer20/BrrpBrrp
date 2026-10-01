@@ -815,3 +815,27 @@ entry-point guard, because a measurement client that cannot be imported cannot b
 The seven tests drive it against real sockets: a TLS server it completes, a TLS server it
 *cannot* complete from plaintext, a ping answered with a pong carrying the same payload,
 and a text frame that still arrives — the permitted control for the ping change.
+
+
+## The reservation is taken last, and that is the point
+
+The room's screen allowance is one, so a registration that outlives its negotiation is
+not a small leak: it spends the room's only screen on a track nobody will ever send, and
+the next member to share is refused with "only one screen can be shared in this
+conversation at a time" **while nobody is sharing**.
+
+The ordering prevents it. `announcePublication` runs *after* applying the offer, after
+creating the answer, after applying the answer, and after re-asking the allowance under
+the lock — which is the opposite of how the room's capacity is taken everywhere else in
+this codebase, where a check precedes a write and the two are separated.
+
+That inversion is forced. The output track has to exist before the description is
+created, or the answer does not satisfy the offer; and the allowance has to be asked at
+the same lock that registers, or two peers negotiating at once pass on the same count.
+So the reservation is last, and everything that can fail happens before it.
+
+`TestAPublicationThatCannotBeNegotiatedIsNotLeftRegistered` pins it, and the negative
+control is the ordering itself: moving the announce to before the SDP exchange fails with
+"the room holds 1 publications after a failed negotiation, want at most 0". The test uses
+a structurally invalid offer rather than an empty one, because an empty SDP is refused by
+a guard that runs before either ordering — a test using it would pass against both.
