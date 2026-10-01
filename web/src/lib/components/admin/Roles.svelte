@@ -199,7 +199,7 @@
           {role.permissions.length === 1 ? 'capability' : 'capabilities'}</small
         >
         <span class="chip-row">
-          {#if role.is_default}<span class="chip">Default for new accounts</span>{/if}
+          {#if role.is_default}<span class="chip">Held by accounts with no roles</span>{/if}
           {#if role.is_system}<span class="chip">Built in</span>{/if}
           {#if role.permissions.includes('channel.manage')}<span class="chip"
               >Community manager</span

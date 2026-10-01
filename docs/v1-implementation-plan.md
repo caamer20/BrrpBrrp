@@ -206,7 +206,7 @@ Use the following bounded model for v1:
 2. Classify the resource as a community channel/thread or a direct/group conversation. Never infer that an administrator may read every resource.
 3. For community content, an owner/admin may manage and view community channels. Ordinary members need public visibility or an explicit private-channel grant through membership or an assigned role. A thread inherits its parent channel's access.
 4. For DMs/groups, require current accepted conversation membership; owner/admin status does not bypass this check. Selected report evidence is a separate, audited moderation resource.
-5. Derive ordinary capabilities from the default role plus assigned role grants. The default role is not deletable. Custom role hierarchy controls delegation and moderation, not hidden access precedence.
+5. Derive ordinary capabilities from the assigned role grants, with the default role as the floor an account holds only when it has no assignment at all (ADR 0001, “The default role is a floor, not a grant”). The default role is not deletable. Custom role hierarchy controls delegation and moderation, not hidden access precedence.
 6. Apply action-specific restrictions: account timeout, closed request, block relationship, archived/locked thread, announcement posting gate, file quota or call capacity. A general role grant does not bypass these restrictions unless that bypass is a documented capability.
 7. Validate actor authority and membership again inside security-sensitive write transactions. Apply authorization before query pagination/counting and before outbound delivery.
 

@@ -108,6 +108,18 @@
                   : chosen.filter((id) => id !== role.id))}
             />{role.name}</label
           >{/each}
+        {#if chosen.length === 0}
+          <!-- Clearing every role is not "no authority": the default role is the floor
+               an account falls back to when it holds no assignment at all, so an empty
+               selection restores exactly that floor. Saying so is what makes clearing
+               assignments understandable rather than a control whose effect the operator
+               has to guess (review 17, V17-04). -->
+          <p class="muted" role="status">
+            With nothing selected, this account falls back to the default role — the same ordinary
+            authority an account created outside this screen holds. Selecting roles replaces that
+            fallback.
+          </p>
+        {/if}
         <button class="primary" onclick={save} disabled={busy}
           >{busy ? 'Saving…' : 'Save roles'}</button
         >

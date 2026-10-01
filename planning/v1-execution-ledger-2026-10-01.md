@@ -151,3 +151,121 @@ lock and ICE-transport changes against the existing RTC suites. Media behavior i
 - External inputs still owed by the owner: hosted Linux schema-13 baseline for CI,
   publication destinations/credentials, physical devices/hosts for later gates. None
   blocks the local implementation above.
+
+---
+
+## Tranche 2 — Threads, Activity, timeouts, member export, authority wording
+
+**Source.** Based on the tranche-1 commits; both review-17 diagnostics
+(`TestReview15ExportStopsAtRoleCapabilityWithdrawal`, `TestReview15ThreadUnreadAndArchivedSend`)
+now pass against this source.
+
+### 2a. Thread read state, archive and bounded history (review 17, V17-03)
+
+**Failing behavior.** Reading the sole unread thread reply left the channel badge at 1
+(counted via the channel cursor), an archived thread accepted replies with 201, the
+Reopen action did not exist, and the client re-read every accumulated page on each "load
+earlier" with no window bound (also no thread deep link: the channel listing filters
+thread replies out).
+
+**Changed.** `internal/db/unread.go` (channel counts and mentions exclude thread replies;
+the thread projection measures `thread_reads`); `internal/api/threads.go` (archived write
+refusal in `threadAccess`; `unread`/`unread_mentions` on the thread summary, computed in
+`listThreads` and `threadWithCounts`); `internal/api/messages.go` (commit-time re-check
+refuses archived too); client: `threads.svelte.ts` (bounded 200-row window, one page per
+`older()`, `loadAround` for deep links, read-marker method), `NamedThreadPanel.svelte`
+(archived branch + Reopen control, mark-read while at latest, "new replies" affordance
+instead of yanking history readers, deep-link positioning), `ThreadListPanel.svelte`
+(unread badge), `workspace.svelte.ts` (`threadJumpId`, thread branch in `jumpToMessage`),
+`thread-state.ts` (`archived` in the send gate).
+
+**Evidence.** Four Go regressions (`thread_unread_projection_test.go`: independent
+projections incl. mentions and no phantom unread; archive refuses until reopened; a
+mid-send archive race refused at the commit-time check; the review-17 probe). Five
+browser journeys (release + threads projects): the two token-fixed, the retry-identity
+journey, and the unread/archive deep-link journey; plus five compiled-controller window
+tests (`thread-window.test.mjs`).
+
+### 2b. Activity acknowledgment (review 17, V17-04)
+
+**Failing behavior.** The client sent the oldest loaded row as the boundary; the server
+acknowledged rows *older* than it (unseen), and the client painted the resulting count
+over the newest visible rows (unacknowledged on the server). Visible 05,04,03 could
+acknowledge 02,01 while displaying 04,03 as seen.
+
+**Changed.** `internal/api/activity.go` acknowledges everything unacknowledged at or
+below the **newest row shown**, reads the exact rows, updates by those ids and returns
+them with counts; `activity.svelte.ts` sends that boundary and reflects exactly the
+returned ids; `admission.ts` marks by identity rather than count.
+
+**Evidence.** `TestAcknowledgmentIsDurableAndMonotonic` rewritten for the explicit set
+(three rows named, zero after, a later arrival counted and not swallowed, a stale
+boundary names none and un-acknowledges nothing); nine identity-based client tests;
+a rendered journey (`directs.spec.mjs`) covering count, marking exactly, reopen
+persistence and a new arrival.
+
+### 2c. Timeout audit and live enforcement
+
+**Failing behavior.** Apply and lift wrote no audit; the uncalled expiry sweep replayed
+role snapshots (removed earlier) and audited nothing; `AccountAuthorities`/`principalFor`
+built bulk principals without `Suspended`, so a timed-out account kept its community
+voice seat and kept streaming community content; state change from a timeout was not
+audited.
+
+**Changed.** `moderation.go`: audits inside the committing transaction for apply and
+lift; the expiry sweep is wired into maintenance, audited once per lapsed row (`NULL`
+actor — "the clock"), bumps the revision and invalidates the accounts' connections;
+`timeoutState`'s point-of-use lapse audits too (whichever path runs first records once);
+apply now runs `enforceVoiceAccess` and `endUnreadableStreams` for the target after the
+commit. `db/roles.go`: `AccountAuthority.Suspended` read with the same expiry rule as
+`authz.Resolve`. `authz.go`: `principalForAuthority` (suspension-aware) used by voice
+enforcement and stream revocation; `MayReadChannel` refuses a suspended principal for
+community content (one policy for requests, voice admission/revalidation and streams;
+private conversations never reach it, and the descriptive middleware refusal is
+unchanged). `db/roles.go` viewer comment updated; `admin.go` audit view names the clock.
+
+**Evidence.** Four Go regressions (`timeout_enforcement_test.go`): audit once and only on
+commit (refused apply/lift record nothing), lapse audited once by either path, a timed-out
+member evicted from a community voice room while remaining in a consented private call
+and still reading/sending privately, and a held community download stopped while a held
+private download completed. Full `./internal/api` suite green afterwards (197 s).
+
+### 2d. Member export journey and request identity
+
+**Failing behavior.** The browser journey returned early on 401/403 (the owner is refused
+by privileged-MFA policy, so it always did) and its `Download` locator was a button while
+the control is a link; a lost response followed by a second press created a second job.
+
+**Changed.** `ExportPanel.svelte` keeps the operation key until the server answers (a
+retry reuses it), and no longer clears its success notice on reload; the journey is
+rewritten to exercise the member path end to end: request (lost response, retry under the
+same key, one job), poll to ready, download through the real link, inspect the JSON
+(format, account fields, own content, no credential strings), delete, and confirm the
+download disappears.
+
+**Evidence.** Release project green in both feature modes (see the run recorded with the
+tranche commit); the server-side identity/dedupe is pinned by
+`TestMemberExportKeyIsTheOperationIdentity` (review-15 fixture, permanent).
+
+### 2e. Authority wording reconciliation
+
+ADR 0001's decision items now state the implemented rule — assigned roles are the
+authority, the default role is the floor an account holds only with no assignment row —
+and carry an amendment note pointing at the section that records the original defect; the
+master plan's policy paragraph and the role screens match ("Held by accounts with no
+roles"; the assignment form states the fallback when nothing is selected). No invariant
+was weakened and the closed delegated-escalation defect is described as closed.
+
+### Known limits of this tranche
+
+- Cross-device Activity acknowledgment is proven by the server test (stale boundary), not
+  by two real browser profiles.
+- The 1,000-reply window is proven by the compiled controller against a scripted
+  1,000-row cursor; the rendered journey covers the deep link and the archive path on a
+  small thread.
+- Deployed push delivery, media journeys and recovery remain tranche 3–5 work.
+
+### Remaining dependency / next executable action
+
+- Tranche 3: browser member/media/notification integration (two-browser media, DM/group
+  journeys through joined clients, notification boundary), then tranche 4 recovery/packaging.

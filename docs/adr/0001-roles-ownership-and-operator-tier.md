@@ -19,11 +19,21 @@ administrator cannot read a private conversation would have been false.
 
 1. **Additive roles plus explicit channel grants.** `roles` holds capability
    sets with a `position` used for delegation ordering. An account's authority is
-   the union of the roles assigned to it and the default role. There is no
-   inherited allow/deny override algebra in v1.
-2. **The default role applies to everyone and is not deletable.** An account with
-   no assignment still resolves with ordinary member authority, so no code path
-   can leave an account with undefined authority by forgetting an assignment.
+   the union of the roles assigned to it; there is no inherited allow/deny
+   override algebra in v1. (Amendment: an earlier revision of this sentence said
+   "the union of the roles assigned to it and the default role". That made the
+   default an addition on top of an assignment, so no assignment change could
+   reduce anybody's authority and every restricted role was decorative. The
+   section "The default role is a floor, not a grant" below records the defect
+   and the rule the code implements.)
+2. **The default role is a floor, not a grant, and is not deletable.** An account
+   with *no assignment row at all* still resolves with ordinary member authority,
+   so no code path can leave an account with undefined authority by forgetting an
+   assignment. An account with any assignment resolves from those assignments
+   alone — which is what makes a listen-only or reviewer role actually restrict —
+   and clearing every role in the interface restores this floor rather than
+   leaving the account with no authority. The role screen states that fallback
+   in place, so clearing assignments is a visible decision rather than a guess.
 3. **One transferable owner.** `users.is_owner` is unique by partial index.
    Ownership is never inferred: migration 3 designates nobody, and the first
    owner is chosen by an explicit ceremony (`POST /api/owner`, an administrator
