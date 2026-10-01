@@ -849,8 +849,14 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 	// The output track is added before the description is created, so the answer
 	// actually satisfies the offer. Creating it afterwards would produce an answer the
 	// client's offer did not ask for, which a peer connection rejects.
-	if !signal.Publication.Audio() {
-		if err := peer.addScreenOutput(); err != nil {
+	//
+	// The microphone is excluded: it has been forwarded by slot since the beginning and
+	// is not a registered publication, so an output for it here would be a second, empty
+	// one. Screen *audio* is not excluded — it is a registered publication with its own
+	// track, and skipping its output is why a shared screen's system audio was never
+	// delivered to anybody.
+	if !signal.Publication.Audio() || signal.Publication == PublicationScreenAudio {
+		if err := peer.addScreenOutputOfKind(signal.Publication); err != nil {
 			return err
 		}
 	}
@@ -1118,6 +1124,15 @@ type screenForwarder struct {
 	// to receive says nothing about what the server did with the packet.
 	written uint64
 	bytes   uint64
+	// kind is what this output is for, and it is the reason a packet is accepted or
+	// refused rather than rewritten.
+	//
+	// A video track runs on a 90 kHz clock and carries H264. Screen *audio* is an Opus
+	// stream on a 48 kHz clock. Writing audio into the video output does not produce
+	// audio — it produces a track that decodes as noise, which is the failure ADR 0019
+	// §5 warns about in the other direction. So the two are separate outputs and a
+	// packet whose kind does not match is dropped rather than translated.
+	kind PublicationKind
 }
 
 // videoClockRate is the RTP clock for the video this build carries. It is stated once,
@@ -1184,6 +1199,13 @@ func (s *SFU) forwardScreen(source *Peer, kind PublicationKind, packet *rtp.Pack
 	// holding the lock across a network write is exactly the pattern the authority
 	// fence exists to avoid.
 	for _, output := range recipients {
+		// Bound to the publication, not just to the room. The two screen publications
+		// are separate outputs with different clocks and codecs, so a packet written to
+		// the wrong one is not delivered late — it is never delivered at all, and the
+		// failure looks like a broken speaker rather than a routing mistake.
+		if output.kind != kind {
+			continue
+		}
 		output.write(source.state.UserID, packet)
 	}
 }
@@ -1197,12 +1219,33 @@ const screenTrackPrefix = "screen-"
 // the room's publication bound already decides how many screens a room carries, and a
 // second output per peer would be a way around it.
 func (p *Peer) addScreenOutput() error {
-	if len(p.screens) > 0 {
-		return nil
+	return p.addScreenOutputOfKind(PublicationScreenVideo)
+}
+
+// addScreenOutputOfKind creates one output for one screen publication kind.
+//
+// The two are separate outputs rather than one track carrying both, and that is the
+// whole point of the `kind` on the forwarder. A video track is an H264 stream on a 90 kHz
+// clock; screen audio is Opus on 48 kHz. Writing the second into the first does not
+// produce audio — it produces a track that decodes as noise, and a viewer who asks why
+// the shared screen's sound is broken is being told about a routing mistake in terms of
+// a speaker.
+//
+// So each kind gets its own track with its own clock, and `forwardScreen` writes only to
+// the outputs of the kind it is carrying.
+func (p *Peer) addScreenOutputOfKind(kind PublicationKind) error {
+	for _, existing := range p.screens {
+		if existing.kind == kind {
+			return nil
+		}
 	}
-	track, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate},
-		"screen", "screen-"+p.state.UserID)
+	codec := webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}
+	label := "screen"
+	if kind == PublicationScreenAudio {
+		codec = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}
+		label = "screen-audio"
+	}
+	track, err := webrtc.NewTrackLocalStaticRTP(codec, label, label+"-"+p.state.UserID)
 	if err != nil {
 		return err
 	}
@@ -1211,7 +1254,7 @@ func (p *Peer) addScreenOutput() error {
 	if err != nil {
 		return err
 	}
-	p.screens = append(p.screens, &screenForwarder{track: track})
+	p.screens = append(p.screens, &screenForwarder{track: track, kind: kind})
 	// RTCP is drained rather than interpreted, as the audio outputs already do. The
 	// reason is the same: this build enforces publication at the forwarding boundary,
 	// not by answering feedback, and an unread RTCP channel blocks the sender.

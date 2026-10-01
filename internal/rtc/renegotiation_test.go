@@ -1241,6 +1241,46 @@ func TestOnlyTheOwnerCanFeedAPublishedScreen(t *testing.T) {
 }
 
 // screenWrites sums the packets a member's video outputs have accepted.
+// audioReceiveOffer builds a real offer carrying a fresh audio input, which is what a
+// client sends when it renegotiates to receive a shared screen's system audio.
+func audioReceiveOffer(t *testing.T, peer *Peer) *webrtc.SessionDescription {
+	t.Helper()
+	track, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2},
+		"audio", "brrpbrrp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.pc.AddTransceiverFromTrack(track,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := peer.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	return &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: peer.pc.LocalDescription().SDP}
+}
+
+// audioWritesFor counts what one kind of screen output accepted, so a test can say
+// "the audio went to the audio output" rather than "something moved".
+func audioWritesFor(t *testing.T, sfu *SFU, userID string, kind PublicationKind) uint64 {
+	t.Helper()
+	var total uint64
+	for _, output := range viewerScreens(sfu, userID) {
+		if output.kind != kind {
+			continue
+		}
+		output.mu.Lock()
+		total += output.written
+		output.mu.Unlock()
+	}
+	return total
+}
+
 func screenWrites(t *testing.T, sfu *SFU, userID string) uint64 {
 	t.Helper()
 	var total uint64
@@ -1371,4 +1411,154 @@ func (s *SFU) publishedScreenFrames() uint64 {
 func firstConnectionID(t *testing.T, sfu *SFU, userID string) string {
 	t.Helper()
 	return sfu.connectionIDFor(userID)
+}
+
+// A viewer's screen output is subscribed to the room, not to every publication that
+// happens to exist in it.
+//
+// The room's screen bound is one, so today only one publication can exist at a time and
+// this cannot be observed — the forwarded set is the room's set whichever question is
+// asked. That is an accident of the bound, not a property of the forwarding, and the
+// moment the bound moves this becomes a disclosure: a viewer's output would carry another
+// peer's publication because it was in the room, not because they asked for it.
+//
+// So this asserts the property directly rather than through the bound. Two publications
+// of different kinds are placed in the room — a screen and its audio, which travel
+// separately — and each is checked against the outputs that are actually meant to receive
+// it. A forwarder bound to the room rather than to the publication cannot pass this.
+
+func TestAViewerReceivesOnlyThePublicationTheirOutputIsFor(t *testing.T) {
+	sfu := newTestSFU(t)
+	// Three participants, so the room's capacity is not what stops the third from
+	// connecting — which would make the rest of this test vacuous.
+	connectPeerWithCapacity(t, sfu, "ana", "room", 4)
+	connectPeerWithCapacity(t, sfu, "bo", "room", 4)
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	sfu.mu.Lock()
+	owner := sfu.peers["ana"]
+	sfu.announcePublication(owner, Publication{
+		ID: "v1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+		t.Fatalf("the viewer could not create a screen output: %v", err)
+	}
+
+	// A peer in the room that never asked to receive anything.
+	connectPeerWithCapacity(t, sfu, "cy", "room", 4)
+	waitFor(t, "cy to connect", func() bool {
+		return sfu.connectionStateOf("cy") == webrtc.PeerConnectionStateConnected
+	})
+	cyOutputs := len(viewerScreens(sfu, "cy"))
+	if cyOutputs != 0 {
+		t.Fatalf("a peer that asked for nothing has %d screen outputs", cyOutputs)
+	}
+
+	// The owner's own packets advance the viewer's output.
+	before := screenWrites(t, sfu, "bo")
+	sfu.forwardPublication(owner, PublicationScreenVideo, screenFrame(1))
+	if got := screenWrites(t, sfu, "bo"); got != before+1 {
+		t.Fatalf("the viewer received %d frames, want %d", got, before+1)
+	}
+	// And nobody who did not subscribe receives anything.
+	if got := screenWrites(t, sfu, "cy"); got != 0 {
+		t.Fatalf("A PEER THAT ASKED FOR NOTHING RECEIVED %d SCREEN FRAMES", got)
+	}
+
+	// Screen audio is a separate publication and travels by the same path. It must not
+	// ride the video output, because a viewer subscribed to the video is not thereby
+	// subscribed to the audio.
+	sfu.mu.Lock()
+	sfu.announcePublication(owner, Publication{
+		ID: "a1", Owner: "ana", Kind: PublicationScreenAudio, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+	videoBefore := screenWrites(t, sfu, "bo")
+	sfu.forwardPublication(owner, PublicationScreenAudio, audioFrame(1))
+	if got := screenWrites(t, sfu, "bo"); got != videoBefore {
+		t.Fatalf("screen audio advanced the screen video output by %d writes", got-videoBefore)
+	}
+}
+
+// Screen audio reaches a viewer as audio.
+//
+// It used to reach nobody. The video output was created for the video publication and
+// the audio publication skipped output creation entirely, and what did travel was written
+// into the *video* forwarder — an Opus stream on a 90 kHz H264 track, which is noise and
+// not sound. A registered screen-audio publication with no delivered audio is exactly the
+// shape of a feature that looks present and is not: the sharer's toggle works, the
+// publication exists, the audit records it, and nobody hears anything.
+//
+// So this asserts the delivery, on the output that is actually for audio and not the one
+// that is not.
+
+func TestScreenAudioReachesAViewerAsAudio(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeerWithCapacity(t, sfu, "ana", "room", 3)
+	connectPeerWithCapacity(t, sfu, "bo", "room", 3)
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	sfu.mu.Lock()
+	owner := sfu.peers["ana"]
+	viewer := sfu.peers["bo"]
+	sfu.announcePublication(owner, Publication{
+		ID: "v1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
+	})
+	sfu.announcePublication(owner, Publication{
+		ID: "a1", Owner: "ana", Kind: PublicationScreenAudio, Started: time.Now().UTC(),
+	})
+	sfu.mu.Unlock()
+
+	// The viewer receives both publications. This is what `renegotiate` does for each
+	// kind before the description is created, asserted directly because the forwarding —
+	// not the signalling — is what this test is about.
+	for _, kind := range []PublicationKind{PublicationScreenVideo, PublicationScreenAudio} {
+		if err := viewer.addScreenOutputOfKind(kind); err != nil {
+			t.Fatalf("the viewer could not create a %s output: %v", kind, err)
+		}
+	}
+
+	// Two distinct outputs: one per publication. One track doing both jobs is the
+	// original defect — an Opus stream on a 90 kHz H264 track is noise, not sound.
+	var audioOutput, videoOutput *screenForwarder
+	for _, output := range viewerScreens(sfu, "bo") {
+		switch output.kind {
+		case PublicationScreenAudio:
+			audioOutput = output
+		case PublicationScreenVideo:
+			videoOutput = output
+		}
+	}
+	if audioOutput == nil || videoOutput == nil {
+		t.Fatalf("the viewer's outputs are video=%v audio=%v, want one of each", videoOutput != nil, audioOutput != nil)
+	}
+	if audioOutput == videoOutput {
+		t.Fatal("one output is doing both jobs, so audio is either lost or noise")
+	}
+
+	// The audio reaches the audio output.
+	audioBefore := audioWritesFor(t, sfu, "bo", PublicationScreenAudio)
+	sfu.forwardPublication(owner, PublicationScreenAudio, audioFrame(1))
+	if got := audioWritesFor(t, sfu, "bo", PublicationScreenAudio); got != audioBefore+1 {
+		t.Fatalf("the viewer's audio output received %d writes, want %d", got, audioBefore+1)
+	}
+	// The video output is untouched, so the two tracks cannot interleave. `screenWrites`
+	// sums every output, so the comparison is per kind rather than against the total.
+	if got := audioWritesFor(t, sfu, "bo", PublicationScreenVideo); got != 0 {
+		t.Fatalf("screen audio advanced the video output by %d writes", got)
+	}
+
+	// And the video still reaches its own output, so the audio output did not displace it.
+	videoBefore := audioWritesFor(t, sfu, "bo", PublicationScreenVideo)
+	sfu.forwardPublication(owner, PublicationScreenVideo, screenFrame(1))
+	if got := audioWritesFor(t, sfu, "bo", PublicationScreenVideo); got != videoBefore+1 {
+		t.Fatalf("the viewer's video output received %d writes, want %d", got, videoBefore+1)
+	}
 }

@@ -749,3 +749,38 @@ re-renders into whatever element exists next rather than writing into one nobody
 Redundant binds are idempotent. Svelte re-runs an action when its argument changes and a
 workspace re-render can bind again; re-assigning the same `srcObject` restarts the stream,
 so a share would visibly jump whenever something else on the page changed.
+
+
+## Screen audio is a separate output, and it was delivered to nobody
+
+A screen's video and its audio are separate publications with separate bounds, but the
+forwarding had one output per viewer and ignored which publication it was carrying.
+`forwardScreen` took a `kind` and never used it.
+
+That produced two failures at once, and only one of them was visible:
+
+- **A viewer's audio output was never created.** The output was made for the video
+  publication and the audio publication skipped output creation entirely, so a client
+  that asked to receive the system audio negotiated a track the server had nothing to
+  write to.
+- **What did travel was written into the video output.** An Opus stream on a 90 kHz H264
+  track is not audio; it is a track that decodes as noise. So the failure presented as "the
+  shared screen's sound is broken" and pointed at the speaker rather than at routing.
+
+A registered screen-audio publication with no delivered audio is the shape of a feature
+that looks present and is not: the sharer's toggle works, the publication exists, the
+audit records it, the queue shows it, and nobody hears anything.
+
+Each kind now gets its own output with its own clock and codec, and `forwardScreen`
+writes only to the outputs of the kind it is carrying. The forwarder carries the kind
+because that is what makes a mismatched packet refusable rather than merely improbable —
+and refused is the right outcome, because a translated packet is not a delayed one.
+
+**The viewer's subscription is the output.** Two tests state it: a peer in the room that
+asked for nothing receives nothing, and each publication reaches the output that is for
+it and leaves the other alone. Both fail if the kind check is removed from `forwardScreen`.
+
+The room's bound of one screen hid this. With only one screen video published at a time
+the forwarded set is the room's set whichever question is asked, so the property could not
+be observed from outside — it is an accident of the bound, not a property of the
+forwarding, and it would have become a disclosure the moment the bound moved.
