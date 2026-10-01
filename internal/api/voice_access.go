@@ -187,7 +187,7 @@ func (s *Server) enforceVoiceAccess(ctx context.Context, actor, reason string, o
 	}
 	principals := make(map[string]authz.Principal, len(authorities))
 	for _, authority := range authorities {
-		principals[authority.User.ID] = principalFor(authority, owners, established, revision)
+		principals[authority.User.ID] = principalForAuthority(authority, owners, established, revision)
 	}
 	for _, state := range states {
 		if len(restricted) > 0 && !restricted[state.UserID] {

@@ -11,6 +11,7 @@ import (
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/ws"
 )
 
 // Delegated moderation, expiring timeouts and bounded invitations (ADR 0018).
@@ -197,6 +198,13 @@ func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.Us
 		s.failed(w, err)
 		return
 	}
+	// The audit row is written inside the same transaction as the change, so a timeout
+	// that rolls back leaves no audit claiming it happened, and a committed one is
+	// recorded exactly once.
+	if err := s.auditTx(r.Context(), tx, principal.UserID, "account.timed_out", target); err != nil {
+		s.failed(w, err)
+		return
+	}
 	// The revision has to advance here, before the commit that publishes it. The
 	// commit protocol *reads* the revision the change produces; it does not create one.
 	// A timeout that reached the protocol without this call reported success, committed
@@ -220,6 +228,13 @@ func (s *Server) applyTimeout(w http.ResponseWriter, r *http.Request, user db.Us
 		s.failed(w, err)
 		return
 	}
+	// The suspension is live where it matters, not only on the next request. Community
+	// voice ends for the account — private calls do not, because a timeout is not an
+	// account-wide ban — and the community streams it was still receiving stop, while
+	// the private ones keep running. Both passes now see the suspension itself, so
+	// "may this continue" is the same question a request would answer.
+	s.enforceVoiceAccess(r.Context(), user.ID, "A moderation timeout was applied.", target)
+	s.endUnreadableStreams(r.Context(), []string{target})
 	respond(w, http.StatusOK, map[string]any{
 		"user_id": target, "expires_at": db.Timestamp(expiresAt), "reason": input.Reason,
 	})
@@ -260,6 +275,12 @@ func (s *Server) liftTimeout(w http.ResponseWriter, r *http.Request, user db.Use
 	// reason applying did. A lift that leaves the revision where it was tells a writer
 	// that nothing changed when something did.
 	if _, err := db.BumpAuthorizationRevision(r.Context(), tx); err != nil {
+		s.failed(w, err)
+		return
+	}
+	// Audited in the same transaction as the delete, so a lift that rolls back leaves no
+	// audit claiming it happened, and a committed one is recorded exactly once.
+	if err := s.auditTx(r.Context(), tx, principal.UserID, "account.timeout_lifted", r.PathValue("id")); err != nil {
 		s.failed(w, err)
 		return
 	}
@@ -315,46 +336,66 @@ func (s *Server) recordedCapabilities(ctx context.Context, q db.Queryer, userID 
 	return strings.Join(roles, ","), nil
 }
 
-// expireTimeouts is the bounded sweep. It restores the recorded assignments and
-// clears the row in the same transaction, so there is no window in which an account is
-// both suspended and unsuspended and a login in that window cannot observe one
-// without the other.
-func (s *Server) expireTimeouts(ctx context.Context, tx *sql.Tx) (int, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT user_id,restores FROM account_timeouts WHERE expires_at<=? LIMIT 200`, db.Now())
+// expireTimeouts is the bounded sweep for timeouts whose moment has passed. It is a
+// state change like lifting one, so it goes through the same protocol: each row is
+// removed and audited inside one transaction, the authority revision advances under
+// the fence, and the accounts' own connections are invalidated so a client learns its
+// community access came back without waiting for its next request.
+//
+// Nothing is restored, because a timeout never took anything away. This used to
+// replay a snapshot of the account's role assignments, on the reasoning that a role
+// removed *during* the timeout must stay removed. It did the opposite: the snapshot
+// predated the removal, so restoring it put the role back. Reproduced — a role revoked
+// while a timeout ran came back when the timeout expired, with the operator's
+// revocation silently undone by a maintenance sweep nobody was watching. The snapshot
+// column is kept for rows written by older builds and is simply not acted on.
+//
+// The point-of-use lift in timeoutState stays as the backstop for an account that is
+// active before this pass runs; both paths delete the row inside a transaction, so
+// whichever runs first performs the change and the other finds nothing.
+func (s *Server) expireTimeouts(ctx context.Context) (int, error) {
+	tx, err := s.store.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	expired := []struct{ id, restores string }{}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT user_id FROM account_timeouts WHERE expires_at<=? ORDER BY user_id LIMIT 200`, db.Now())
+	if err != nil {
+		return 0, err
+	}
+	lapsed := []string{}
 	for rows.Next() {
-		var row struct{ id, restores string }
-		if err := rows.Scan(&row.id, &row.restores); err != nil {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		expired = append(expired, row)
+		lapsed = append(lapsed, userID)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	for _, row := range expired {
-		// Nothing is restored, because a timeout never took anything away.
-		//
-		// This used to replay a snapshot of the account's role assignments, on the
-		// reasoning that a role removed *during* the timeout must stay removed. It did
-		// the opposite: the snapshot predated the removal, so restoring it put the role
-		// back. Reproduced — a role revoked through `/api/admin/users/{id}/roles` while
-		// a timeout ran came back when the timeout expired, with the operator's
-		// revocation silently undone by a maintenance sweep nobody was watching.
-		//
-		// A timeout suspends an account. It does not change what the account holds, so
-		// expiry has nothing to undo. The snapshot is kept in the column for rows written
-		// by older builds and is simply not acted on.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM account_timeouts WHERE user_id=?`, row.id); err != nil {
+	if len(lapsed) == 0 {
+		return 0, nil
+	}
+	for _, userID := range lapsed {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM account_timeouts WHERE user_id=?`, userID); err != nil {
+			return 0, err
+		}
+		// The clock did this, not an account: the audit row names no actor, and the
+		// audit view says so rather than presenting a lapsed timeout as somebody's act.
+		if err := s.auditTx(ctx, tx, "", "account.timeout_expired", userID); err != nil {
 			return 0, err
 		}
 	}
-	return len(expired), nil
+	if _, err := db.BumpAuthorizationRevision(ctx, tx); err != nil {
+		return 0, err
+	}
+	if err := s.commitAuthorityChangeFor(ctx, tx, "A moderation timeout expired.", ws.Audience{UserIDs: lapsed}); err != nil {
+		return 0, err
+	}
+	return len(lapsed), nil
 }
 
 // timeoutState reports whether an account is inside a timeout, and lifts an expired
@@ -380,8 +421,13 @@ func (s *Server) timeoutState(ctx context.Context, userID string) (suspended boo
 	if expires <= db.Now() {
 		// Lifting the row is the whole action. See `expireTimeouts` for why nothing is
 		// restored, and why replaying the recorded snapshot put back roles that had
-		// been revoked while the timeout ran.
+		// been revoked while the timeout ran. The lapse is audited here too — the sweep
+		// and this path both delete the row inside one transaction, so the change is
+		// recorded exactly once by whichever ran first.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM account_timeouts WHERE user_id=?`, userID); err != nil {
+			return false, ""
+		}
+		if err := s.auditTx(ctx, tx, "", "account.timeout_expired", userID); err != nil {
 			return false, ""
 		}
 		if err := tx.Commit(); err != nil {

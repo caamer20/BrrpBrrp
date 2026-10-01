@@ -37,12 +37,16 @@ type Viewer struct {
 // arguments it needs, in order. Every query that returns channel content, counts
 // or metadata must include it before pagination, counting or limits.
 //
-// It mirrors Principal.MayReadChannel exactly: the account must hold channel.read,
-// a public channel is readable by any such account, a community manager may read
-// community channels, and otherwise an explicit member grant or a grant through
-// one of the account's roles is required. The role set is passed in rather than
-// re-derived from role_assignments because the default role is held without an
-// assignment.
+// It mirrors Principal.MayReadChannel for every state a scoped read can be reached
+// with: the account must hold channel.read, a public channel is readable by any such
+// account, a community manager may read community channels, and otherwise an explicit
+// member grant or a grant through one of the account's roles is required. The role set
+// is passed in rather than re-derived from role_assignments because the default role is
+// held without an assignment. A live moderation suspension is not repeated here because
+// it cannot arrive: the middleware refuses community routes for a suspended account and
+// the snapshot withholds the community-derived reads, so no scoped query is ever
+// reached with it — while Principal.MayReadChannel still enforces it for every direct
+// decision (review 17, V17-04).
 func (v Viewer) accessibleChannelCondition() (string, []any) {
 	truth := func(value bool) int {
 		if value {
@@ -246,6 +250,13 @@ func (s *Store) AssignedRoleIDs(ctx context.Context, q Queryer, userID string) (
 type AccountAuthority struct {
 	User  User
 	Roles []Role
+	// Suspended is set while a moderation timeout is live for the account. It lives
+	// here because the revalidation passes — voice enforcement, stream revocation —
+	// build principals in bulk, and a bulk principal that omits suspension answers a
+	// different question than a request would: a timed-out account kept speaking in a
+	// community call and kept streaming community content because nobody had asked
+	// "is this account suspended" on those paths (review 17, V17-04).
+	Suspended bool
 }
 
 // AccountAuthorities returns every active account with its roles.
@@ -272,6 +283,28 @@ func (s *Store) AccountAuthorities(ctx context.Context, q Queryer) ([]AccountAut
 	}
 	if len(accounts) == 0 {
 		return accounts, nil
+	}
+	// Live suspensions, read in the same pass. The row's own expiry decides — the same
+	// rule `authz.Resolve` applies — so a lapsed timeout is not a suspension here either,
+	// and the two paths cannot disagree about who is suspended.
+	suspended, err := q.QueryContext(ctx, `SELECT user_id FROM account_timeouts WHERE expires_at>?`, Now())
+	if err != nil {
+		return nil, err
+	}
+	for suspended.Next() {
+		var userID string
+		if err := suspended.Scan(&userID); err != nil {
+			suspended.Close()
+			return nil, err
+		}
+		if at, ok := index[userID]; ok {
+			accounts[at].Suspended = true
+		}
+	}
+	err = suspended.Err()
+	suspended.Close()
+	if err != nil {
+		return nil, err
 	}
 	// The default role is the floor an account has until it is assigned something else,
 	// and it applies only then. Appending it unconditionally made it a grant on top of

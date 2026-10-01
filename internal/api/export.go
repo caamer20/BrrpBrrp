@@ -799,6 +799,11 @@ func (s *Server) exportScopeStillReadable(ctx context.Context, q db.Queryer, pri
 		return false, nil
 	}
 	if kind == "channel" {
+		// The policy function itself refuses a suspended principal's community scopes
+		// (MayReadChannel), so this path, the request path and the voice revalidation
+		// all answer a live timeout the same way — and a private conversation in the
+		// same file is untouched, which is what keeps a timeout a community
+		// restriction rather than an account-wide ban.
 		channel, err := s.store.Channel(ctx, q, conversationID)
 		if err != nil {
 			return false, nil

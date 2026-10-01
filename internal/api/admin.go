@@ -771,7 +771,10 @@ func (s *Server) audit(actor, action, target string) {
 // mutation that changes authority, credentials or access is never acknowledged
 // without its record: the two commit together or the request fails.
 func (s *Server) auditTx(ctx context.Context, tx *sql.Tx, actor, action, target string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(id,actor_id,action,target_id,created_at) VALUES(?,?,?,?,?)`, db.ID(), actor, action, target, db.Now())
+	// An empty actor is the system acting, not an account: the NULL is what lets the
+	// audit view say "the clock" instead of printing a former member's name over a
+	// sweep nobody performed.
+	_, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(id,actor_id,action,target_id,created_at) VALUES(?,?,?,?,?)`, db.ID(), nullIfEmpty(actor), action, target, db.Now())
 	return err
 }
 
@@ -783,10 +786,12 @@ func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request, user db.User)
 	// The filter is applied before the limit, so a private review cannot occupy a
 	// page slot in the community feed or shift what the cursor points at. An
 	// event whose actor_id is NULL was performed on the host command line while
-	// the server was stopped, not by an account; every other missing actor is an
-	// account that has since been erased. The two must not look alike.
+	// the server was stopped, or by the server's own clock when a moderation timeout
+	// lapsed; every other missing actor is an account that has since been erased. The
+	// three must not look alike.
 	rows, err := s.store.Query(`SELECT a.id,
         CASE WHEN a.actor_id IS NULL AND a.action='owner.recovered_offline' THEN 'host operator (offline)'
+             WHEN a.actor_id IS NULL AND a.action='account.timeout_expired' THEN 'the clock'
              ELSE COALESCE(u.username,'former member') END,
         a.action,a.target_id,a.created_at
         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id

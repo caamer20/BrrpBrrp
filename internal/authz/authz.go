@@ -244,12 +244,22 @@ func (p Principal) RoleIDs() []string {
 // may be returned to the principal.
 //
 // Rules, in order:
-//  1. The account must hold channel.read at all.
-//  2. A public channel is readable by any such account.
-//  3. A community administrator may manage and view community channels.
-//  4. Otherwise an explicit member grant or a grant through an assigned role is
+//  1. A live moderation suspension refuses community content. It is asked here, in
+//     the one function every community read, voice admission, voice revalidation and
+//     stream check resolves through, so no path can answer "may this account read
+//     this" while ignoring it. A bulk principal built without it let a timed-out
+//     account keep speaking in a community call and keep streaming community content
+//     (review 17, V17-04). Private conversations never reach this function, which is
+//     what keeps a timeout a community restriction rather than an account-wide ban.
+//  2. The account must hold channel.read at all.
+//  3. A public channel is readable by any such account.
+//  4. A community administrator may manage and view community channels.
+//  5. Otherwise an explicit member grant or a grant through an assigned role is
 //     required.
 func (p Principal) MayReadChannel(channel db.Channel, access db.ChannelAccess) bool {
+	if p.Suspended {
+		return false
+	}
 	if !p.Allowed(ChannelRead) {
 		return false
 	}

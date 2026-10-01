@@ -511,6 +511,19 @@ func principalFor(authority db.AccountAuthority, owners int, established bool, r
 	return authz.PrincipalFor(authority.User, authority.Roles, owners, established, revision)
 }
 
+// principalForAuthority is the same resolution for the revalidation passes, with the
+// account's live suspension included. A bulk principal that omits it answers a
+// different question than a request would, which is how a timed-out account kept a
+// community call and kept streaming community content: nobody had asked (review 17,
+// V17-04). The audience paths deliberately use the plain builder: they decide whether
+// an account may receive an event at all, and a suspension is enforced where it
+// matters — every read, join and stream of community content.
+func principalForAuthority(authority db.AccountAuthority, owners int, established bool, revision int64) authz.Principal {
+	principal := principalFor(authority, owners, established, revision)
+	principal.Suspended = authority.Suspended
+	return principal
+}
+
 // channelEligible lists the accounts that may currently read a channel. Mention
 // targets are drawn from it, so a mention cannot notify someone who cannot open
 // the conversation.
@@ -658,7 +671,7 @@ func (s *Server) endUnreadableStreams(ctx context.Context, userIDs []string) int
 	principals := make(map[string]authz.Principal, len(userIDs))
 	for _, authority := range authorities {
 		if affected[authority.User.ID] {
-			principals[authority.User.ID] = principalFor(authority, owners, established, revision)
+			principals[authority.User.ID] = principalForAuthority(authority, owners, established, revision)
 		}
 	}
 	decided := make(map[string]bool)

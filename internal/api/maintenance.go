@@ -114,6 +114,13 @@ func (s *Server) maintain(now time.Time) error {
 	if _, err := s.expireExports(s.ctx, s.store); err != nil {
 		return err
 	}
+	// A lapsed moderation timeout is a state change: the row goes, the change is
+	// audited, the authority revision advances and the account's connections are told
+	// to refetch — so community access returning is visible without waiting for the
+	// account's next request. The point-of-use lift stays as the backstop.
+	if _, err := s.expireTimeouts(s.ctx); err != nil {
+		return err
+	}
 	// A build interrupted by a restart leaves a `building` row, and that row is the
 	// only thing standing between the account and asking again — so an interrupted job
 	// becomes a permanent "an export is already being prepared" answered by a job that
