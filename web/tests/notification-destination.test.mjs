@@ -24,7 +24,9 @@ test('the server announces a destination the client acts on', () => {
 
 test('the client handles that destination and clears it', () => {
   const client = read('src/lib/workspace.svelte.ts');
-  assert.match(client, /location\.hash === '#messages'/);
+  // The entry hash is captured before the initial channel selection rewrites the URL,
+  // and the inbox destination is checked against it.
+  assert.match(client, /entryHash === '#messages'/);
   // The hash is cleared so a reload does not reopen the inbox out of nowhere.
   assert.match(client, /history\.replaceState/);
 });
