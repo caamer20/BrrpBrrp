@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { admitted } from '../src/lib/admission.ts';
+import { admitted, acknowledgedRows, markAcknowledged } from '../src/lib/admission.ts';
 
 // One admission question, asked by every fetch and every response check in the
 // activity controller: is what I am about to do — or what just answered — still wanted?
@@ -94,4 +94,90 @@ test('every false must come from a stated mismatch, never from a missing field',
   assert.equal(admitted(request, now({ generation: undefined })), false);
   assert.equal(admitted(request, now({ version: undefined })), false);
   assert.equal(admitted(request, now({ alive: undefined })), false);
+});
+
+// Acknowledgment is a claim about what the person has seen, and the panel states it.
+//
+// The server acknowledges every row strictly older than the cursor, and reports how many
+// it actually marked. The client used to mark its whole loaded page regardless — so a row
+// the server did *not* acknowledge was shown with a "· seen" marker, and reverts to
+// unseen on reload. That is the visible tell: a badge that comes back.
+//
+// The count is spent from the bottom of the page, because that is the direction the
+// server acknowledged in.
+
+const row = (id, acknowledged = false) => ({ id, acknowledged, acknowledged_at: '' });
+const page = () => [row('n3'), row('n2'), row('n1')]; // newest first
+
+test('only as many rows as the server marked become seen', () => {
+  const marked = markAcknowledged(page(), 2, 'T');
+  assert.deepEqual(
+    marked.map((entry) => entry.acknowledged),
+    // The bottom two, because the cursor is the oldest row loaded.
+    [false, true, true]
+  );
+});
+
+test('a row the server did not acknowledge is never shown as seen', () => {
+  // The defect this prevents, stated directly.
+  const marked = markAcknowledged(page(), 1, 'T');
+  assert.equal(marked[0].acknowledged, false, 'the newest row was painted as seen');
+  assert.equal(marked[1].acknowledged, false, 'the middle row was painted as seen');
+  assert.equal(marked[2].acknowledged, true);
+});
+
+test('marking nothing marks nothing', () => {
+  const marked = markAcknowledged(page(), 0, 'T');
+  assert.deepEqual(
+    marked.map((entry) => entry.acknowledged),
+    [false, false, false]
+  );
+});
+
+test('marking more than are on screen marks the page and no further', () => {
+  const marked = markAcknowledged(page(), 99, 'T');
+  assert.deepEqual(
+    marked.map((entry) => entry.acknowledged),
+    [true, true, true]
+  );
+  // Nothing beyond the page is invented, so a reload cannot reveal a row that was
+  // counted but never existed in this list.
+  assert.equal(marked.length, 3);
+});
+
+test('an already-acknowledged row does not consume the budget', () => {
+  // The server reports rows it *changed*, so re-running the acknowledgment must not
+  // spend the count twice on a row that was already marked.
+  const entries = [row('n3', true), row('n2'), row('n1')];
+  const marked = markAcknowledged(entries, 1, 'T');
+  assert.deepEqual(
+    marked.map((entry) => entry.acknowledged),
+    [true, false, true],
+    'an already-seen row consumed the count'
+  );
+  // And the timestamp of an already-seen row is not rewritten: it records when the
+  // person saw it, not when they pressed the button again.
+  assert.equal(marked[0].acknowledged_at, '');
+});
+
+test('marking stamps the time once, not per row', () => {
+  const marked = markAcknowledged(page(), 3, '2026-01-01T00:00:00Z');
+  for (const entry of marked) assert.equal(entry.acknowledged_at, '2026-01-01T00:00:00Z');
+});
+
+test('a server that reports no count marks the page rather than under-claiming', () => {
+  // Guessing low would leave rows the server did mark looking unseen and put the badge
+  // back, which is the mistake this guess avoids.
+  assert.equal(acknowledgedRows(undefined), Number.POSITIVE_INFINITY);
+  assert.equal(acknowledgedRows(null), Number.POSITIVE_INFINITY);
+  assert.equal(acknowledgedRows(-1), Number.POSITIVE_INFINITY);
+  assert.equal(acknowledgedRows(1.5), Number.POSITIVE_INFINITY);
+  assert.equal(acknowledgedRows('3'), Number.POSITIVE_INFINITY);
+  assert.equal(acknowledgedRows(0), 0);
+  assert.equal(acknowledgedRows(7), 7);
+});
+
+test('marking an empty page is empty, not an error', () => {
+  assert.deepEqual(markAcknowledged([], 5, 'T'), []);
+  assert.deepEqual(markAcknowledged([], 0, 'T'), []);
 });

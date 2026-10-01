@@ -45,7 +45,7 @@ export interface NotificationPreference {
  * captures the version it started with, and a result for a superseded one is
  * dropped rather than applied.
  */
-import { admitted as isAdmitted } from './admission';
+import { admitted as isAdmitted, acknowledgedRows, markAcknowledged } from './admission';
 
 /**
  * The activity controller.
@@ -69,6 +69,9 @@ class ActivityStore {
 
   private version = 0;
   private alive = true;
+
+  /** The clock acknowledgment stamps rows with. Injected so a test can state the value. */
+  now = (): string => new Date().toISOString();
   /** Advances on every mount, so a reopened panel fetches again. Reactive by design. */
   revision = $state(0);
 
@@ -121,21 +124,31 @@ class ActivityStore {
     const request = this.identity();
     if (!this.admitted(request)) return false;
     if (this.entries.length === 0) return true;
+    // The cursor is the *oldest loaded* row, because the list is newest-first and the
+    // server acknowledges everything strictly older than this. That is right for the
+    // rows the person has actually seen.
     const before = this.entries[this.entries.length - 1].id;
     try {
-      const result = await api<{ unacknowledged_count: number }>(
+      const result = await api<{ acknowledged: number; unacknowledged_count: number }>(
         '/me/activity/acknowledge',
         'POST',
         { before }
       );
       if (!this.admitted(request)) return false;
       this.unacknowledged = result.unacknowledged_count;
-      // The rows are still shown: acknowledgment says "seen", not "gone", and the
-      // person may want to look back.
-      this.entries = this.entries.map((entry) =>
-        entry.acknowledged
-          ? entry
-          : { ...entry, acknowledged: true, acknowledged_at: new Date().toISOString() }
+      // Only the rows the server actually acknowledged are marked. The count is
+      // carried for this reason: an acknowledgment that reports fewer rows than are on
+      // screen means the server applied a bound the client cannot see, and painting the
+      // whole page "seen" would claim the person looked at rows that stayed unacknowledged
+      // on the server — and would stay unacknowledged after a reload, which is a visible
+      // flicker of the badge coming back.
+      //
+      // The rows are still shown either way: acknowledgment says "seen", not "gone", and
+      // the person may want to look back.
+      this.entries = markAcknowledged(
+        this.entries,
+        acknowledgedRows(result.acknowledged),
+        this.now()
       );
       return true;
     } catch (failure) {

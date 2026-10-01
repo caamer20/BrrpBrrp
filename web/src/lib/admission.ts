@@ -58,3 +58,50 @@ export function admitted(request: AdmissionRequest, now: AdmissionNow): boolean 
   if (now.authorizationUnverified === true) return false;
   return true;
 }
+
+/**
+ * How many rows the server said it acknowledged.
+ *
+ * A server that reports a count is believed. One that does not is answered for
+ * generously: marking the whole page is the behaviour that predates the count, and it is
+ * the right guess when the server acknowledged anything inside this page. Guessing low
+ * would leave rows the server did mark looking unseen, which is the mistake that shows a
+ * person a "N unseen" badge for rows they just acknowledged.
+ */
+export function acknowledgedRows(acknowledged: unknown): number {
+  return typeof acknowledged === 'number' && Number.isInteger(acknowledged) && acknowledged >= 0
+    ? acknowledged
+    : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Marks at most `limit` unacknowledged rows as seen, oldest first.
+ *
+ * Oldest first because that is the direction the server acknowledged in: the cursor is
+ * the oldest row the person has loaded, and everything strictly older than it was marked
+ * in one statement. The count is therefore spent on the bottom of the page, not the top.
+ *
+ * Marking more than the server did is the defect this exists to prevent. The panel shows
+ * each row's own "· seen" marker from this local state, so a row the server left
+ * unacknowledged that the client painted would claim the person looked at something they
+ * did not — and would revert on reload, which reads as a bug in the badge rather than a
+ * bug in the marker.
+ */
+export function markAcknowledged<T extends { acknowledged: boolean; acknowledged_at: string }>(
+  entries: readonly T[],
+  limit: number,
+  at: string
+): T[] {
+  let left = limit;
+  // Walked from the bottom of the page, which is the oldest end of a newest-first list
+  // and therefore the end the server's `id < cursor` marks. Spending the count from the
+  // top would paint the rows the person is looking at while leaving the ones the server
+  // actually acknowledged showing as unseen.
+  const marked = [...entries];
+  for (let index = marked.length - 1; index >= 0 && left > 0; index--) {
+    if (marked[index].acknowledged) continue;
+    marked[index] = { ...marked[index], acknowledged: true, acknowledged_at: at };
+    left -= 1;
+  }
+  return marked;
+}

@@ -231,3 +231,32 @@ toast is the information.
 `watchingNow` returns a strict boolean. A `&&` chain returns its first falsy operand, so
 a missing field would answer `undefined`, and a caller writing `!watchingNow(...)` and a
 caller writing `=== false` would disagree about a state the types say cannot happen.
+
+
+## "Seen" is a claim, and it must match what the server did
+
+Acknowledging activity marks every row strictly older than the cursor and reports how many
+it actually changed. The client used to mark its whole loaded page regardless — so a row
+the server did not acknowledge was painted with a **· seen** marker that reverted on the
+next reload. The visible tell is a badge that comes back: the person pressed "mark seen",
+the rows said seen, and after a refresh some of them were unseen again with no explanation.
+
+The count is now believed, and it is spent **from the oldest end** of the page. That
+direction is not a style choice: the list is newest-first and the server's statement is
+`id < cursor`, so the rows it marked are the bottom ones. Spending the count from the top
+would paint the rows the person is actually looking at and leave the ones the server
+acknowledged showing as unseen — the same defect, pointed the other way. My first
+implementation walked the page forwards and the tests caught it immediately, which is the
+argument for writing them before trusting the shape.
+
+An already-acknowledged row does not consume the count, because the server reports rows
+it *changed*; its timestamp is not rewritten either, since it records when the person saw
+the row rather than when they pressed the button again.
+
+A server that reports no count is answered for generously — the whole page — because
+guessing low would put the badge back, which is the failure being fixed. A well-behaved
+count is exact.
+
+Both rules are pure functions in `admission.ts` rather than inline, for the same reason
+as the admission gate: the controller is a Svelte module node cannot import, so an inline
+rule could only be checked by reading its source.
