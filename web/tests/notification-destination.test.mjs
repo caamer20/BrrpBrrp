@@ -46,11 +46,19 @@ test('an activity entry is resolved by the shared rule, not by a constant', () =
 
 test('the worker deduplicates on the tag the server actually sends', () => {
   const worker = read('public/service-worker.js');
-  // The server supplies `tag`; the worker read `message_id`, a field the payload does
-  // not have, so every notice arrived with an undefined tag and none were deduplicated.
-  assert.match(worker, /notification\.tag/);
+  // The server supplies `tag` and the mention payload supplies `message_id`; either is
+  // the event's identity. The worker used to read only `message_id`, a field the
+  // server's push payload does not have, so every notice arrived with an undefined tag
+  // and none were deduplicated. `tag: notification.message_id` is the old bug: it let
+  // the payload's own tag be overwritten by a missing field. The claim itself is
+  // exercised in `service-worker.test.mjs`; this guard keeps the identity rule honest.
+  assert.match(worker, /notification\?\.tag \|\| notification\?\.message_id/);
   assert.doesNotMatch(worker, /tag: notification\.message_id/);
-  // And the retention is bounded, so a member returning after a week is not met with a
-  // week of stale notices they have already seen.
+  // Admission is a single read-and-write transaction, so two contexts racing one event
+  // cannot both decide to show it.
+  assert.match(worker, /claimNotice\(noticeKey\(tag\)\)/);
+  // And the retention is bounded — by age and by count — so a member returning after a
+  // week is not met with a week of stale notices they have already seen.
   assert.match(worker, /24 \* 60 \* 60 \* 1000/);
+  assert.match(worker, /NOTIFY_MAX = 500/);
 });

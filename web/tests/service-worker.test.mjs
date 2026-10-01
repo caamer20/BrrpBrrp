@@ -60,6 +60,54 @@ function worker({ fail = false } = {}) {
       '/*__BRRP_PRECACHE__*/ []',
       JSON.stringify(['/', '/assets/main.js', '/assets/main.css', '/manifest.webmanifest'])
     );
+  // The notice store the worker admits through. Keyed exactly as the worker writes it,
+  // so the test can prove that identification and retention use the same prefix.
+  const notices = new Map();
+  const shown = [];
+  const next = (callback) => {
+    Promise.resolve().then(callback);
+  };
+  const store = () => ({
+    get(key) {
+      const request = {};
+      next(() => {
+        request.result = notices.get(String(key));
+        request.onsuccess?.();
+      });
+      return request;
+    },
+    put(value, key) {
+      notices.set(String(key), value);
+      const request = {};
+      next(() => request.onsuccess?.());
+      return request;
+    },
+    delete(key) {
+      notices.delete(String(key));
+      const request = {};
+      next(() => request.onsuccess?.());
+      return request;
+    },
+    getAllKeys() {
+      const request = { result: [...notices.keys()] };
+      next(() => request.onsuccess?.());
+      return request;
+    }
+  });
+  const indexedDB = {
+    open() {
+      const request = {};
+      next(() => {
+        request.result = {
+          createObjectStore() {},
+          transaction: () => ({ objectStore: store, onerror: null, oncomplete: null })
+        };
+        request.onupgradeneeded?.();
+        request.onsuccess?.();
+      });
+      return request;
+    }
+  };
   const context = {
     URL,
     Response,
@@ -69,6 +117,7 @@ function worker({ fail = false } = {}) {
       }
     },
     caches,
+    indexedDB,
     fetch: async () => {
       throw new Error('offline');
     },
@@ -78,7 +127,12 @@ function worker({ fail = false } = {}) {
       skipWaiting: async () => {
         skipped++;
       },
-      clients: { claim: async () => {} }
+      clients: { claim: async () => {} },
+      registration: {
+        showNotification: async (title, options) => {
+          shown.push({ title, ...options });
+        }
+      }
     }
   };
   vm.runInNewContext(source, context);
@@ -97,6 +151,8 @@ function worker({ fail = false } = {}) {
     caches,
     dispatch,
     listeners,
+    notices,
+    shown,
     get skipped() {
       return skipped;
     }
@@ -129,6 +185,63 @@ test('a partial installation is discarded and activation requires an explicit me
   assert.equal(value.skipped, 0);
   await value.dispatch('message', { data: { type: 'ACTIVATE_UPDATE' } });
   assert.equal(value.skipped, 1);
+});
+
+test('one event is one notice across a push and an open page', async () => {
+  const value = worker();
+  await value.dispatch('push', {
+    data: { json: () => ({ title: 'server', body: 'mentioned you', message_id: 'm-1' }) }
+  });
+  assert.equal(value.shown.length, 1, 'the push was not shown');
+  // The open page sends its notice through the worker, because the worker owns
+  // admission for both paths. A second context, or a push racing the page, must not
+  // produce an operating-system banner beside the one already shown.
+  await value.dispatch('message', {
+    data: {
+      type: 'BRRP_NOTIFY',
+      notification: { title: 'server', body: 'mentioned you', tag: 'm-1', url: '/?x' }
+    }
+  });
+  assert.equal(value.shown.length, 1, 'the same event was shown twice');
+  // A different event still shows.
+  await value.dispatch('push', {
+    data: { json: () => ({ title: 'server', body: 'mentioned you', message_id: 'm-2' }) }
+  });
+  assert.equal(value.shown.length, 2, 'a new event was suppressed');
+});
+
+test('notice retention writes and sweeps the same prefix, and stays bounded', async () => {
+  const value = worker();
+  await value.dispatch('push', {
+    data: { json: () => ({ title: 'server', body: 'one', message_id: 'm-1' }) }
+  });
+  assert.ok(value.notices.has('brrp.notified.m-1'), 'the notice stamp used another prefix');
+
+  // An old stamp is swept when the next notice is admitted, so the store holds a day
+  // of events and not the life of the installation.
+  value.notices.set('brrp.notified.m-1', Date.now() - 25 * 60 * 60 * 1000);
+  await value.dispatch('push', {
+    data: { json: () => ({ title: 'server', body: 'two', message_id: 'm-2' }) }
+  });
+  assert.equal(value.notices.has('brrp.notified.m-1'), false, 'an expired notice was retained');
+  assert.ok(value.notices.has('brrp.notified.m-2'));
+  // A key outside the prefix is not the worker's to remove.
+  value.notices.set('unrelated', 1);
+
+  // The count bound: a very busy day cannot grow the store without limit. Entry stamps
+  // are seeded directly because a real sweep of that many notices is O(n^2).
+  for (let index = 0; index < 510; index++)
+    value.notices.set(`brrp.notified.seed-${index}`, Date.now() - index * 1000);
+  await value.dispatch('push', {
+    data: { json: () => ({ title: 'server', body: 'three', message_id: 'm-3' }) }
+  });
+  const noticeKeys = [...value.notices.keys()].filter((key) => key.startsWith('brrp.notified.'));
+  assert.ok(noticeKeys.length <= 500, `the notice store kept ${noticeKeys.length} entries`);
+  assert.equal(value.notices.has('unrelated'), true, 'the sweep removed a foreign key');
+  // The newest keys survive the sweep: the bound drops the oldest, not the latest.
+  assert.ok(value.notices.has('brrp.notified.m-3'));
+  assert.ok(value.notices.has('brrp.notified.seed-0'));
+  assert.equal(value.notices.has('brrp.notified.seed-509'), false);
 });
 
 test('private API/upload requests bypass the service worker cache', async () => {

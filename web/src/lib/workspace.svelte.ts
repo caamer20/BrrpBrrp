@@ -1770,10 +1770,29 @@ class Workspace {
               this.channelNotificationMutes[event.d.channel_id]
             )
               return;
-            return registration.showNotification(event.d.title, {
+            const notice = {
+              title: event.d.title,
               body: event.d.body,
               tag: event.d.message_id,
-              data: { url: event.d.url }
+              url: event.d.url
+            };
+            // The worker owns admission for both paths, so a page notice and a push
+            // for the same event claim one key and only one of them shows. Without a
+            // live worker there is no shared claim to make, so the notice is shown
+            // directly rather than dropped.
+            const worker = registration.active;
+            if (worker && typeof worker.postMessage === 'function') {
+              try {
+                worker.postMessage({ type: 'BRRP_NOTIFY', notification: notice });
+                return;
+              } catch {
+                // A worker that cannot be reached falls through to the local notice.
+              }
+            }
+            return registration.showNotification(notice.title, {
+              body: notice.body,
+              tag: notice.tag,
+              data: { url: notice.url }
             });
           })
           .catch(() => {});

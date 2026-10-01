@@ -22,8 +22,20 @@ self.addEventListener('install', (event) => {
 });
 
 // Existing pages choose when to refresh. A first install activates normally.
+//
+// The same channel carries a foreground notice from an open page. The worker owns
+// notification admission for both paths, so a page notice and a push arriving for the
+// same event claim the same key and only one of them shows — which is what stops the
+// operating system banner a member sees while the tab is already open, and what stops
+// two open tabs from each showing one.
 self.addEventListener('message', (event) => {
-  if (event.data?.type === 'ACTIVATE_UPDATE') event.waitUntil(self.skipWaiting());
+  if (event.data?.type === 'ACTIVATE_UPDATE') {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
+  if (event.data?.type === 'BRRP_NOTIFY') {
+    event.waitUntil(showNotificationOnce(event.data.notification));
+  }
 });
 
 self.addEventListener('activate', (event) => {
@@ -114,65 +126,92 @@ self.addEventListener('push', (event) => {
     return;
   }
   if (!notification) return;
-  event.waitUntil(
-    (async () => {
-      // The server supplies `tag`, and the previous code read `message_id` — a field
-      // the payload does not have. Every notification therefore arrived with
-      // `tag: undefined`, which is not deduplication at all: two devices, or one
-      // device told twice about the same event, produced two notices.
-      const tag = notification.tag || notification.message_id || '';
-      // Retained across tabs and the worker, per account, for a day. Server-side
-      // uniqueness is one row per source event; it is not one notice per device, and
-      // it cannot know about a second tab that already showed the notice.
-      const key = `brrp.notified.${notification.account_id || ''}.${tag}`;
-      if (tag) {
-        try {
-          const seen = await seenRecently(key);
-          if (seen) return;
-        } catch {
-          // A storage failure must not swallow a notification: the notice is worth
-          // showing twice, and a missing key only risks that.
-        }
-      }
-      await self.registration.showNotification(notification.title || 'BrrpBrrp', {
-        body: notification.body || 'You were mentioned.',
-        icon: '/icons/icon-192.png',
-        badge: '/icons/icon-192.png',
-        // A tag is what makes a second notice *replace* the first rather than stack
-        // beside it, and what lets the same event on two devices collapse to one.
-        ...(tag ? { tag } : {}),
-        data: { url: notification.url || '/' }
-      });
-      if (tag) {
-        try {
-          await remember(key);
-        } catch {
-          // Recorded-or-not does not change what was already shown.
-        }
-      }
-    })()
-  );
+  event.waitUntil(showNotificationOnce(notification));
 });
+
+// One admission point for every notice, from a push or from an open page.
+//
+// The event's own identity is `tag` (falling back to `message_id`, which is what the
+// mention payload carries); it is what the operating system also uses to replace a
+// notice rather than stack it. Admission is one IndexedDB transaction: it reads the
+// stored stamp and writes the new one together, so two contexts racing the same event
+// cannot both decide to show it. A read-then-show-then-remember sequence could, and
+// did — one notice per tab, plus another for the push.
+async function showNotificationOnce(notification) {
+  const tag = notification?.tag || notification?.message_id || '';
+  if (tag) {
+    try {
+      if (!(await claimNotice(noticeKey(tag)))) return;
+    } catch {
+      // A storage failure must not swallow a notification: the notice is worth
+      // showing twice, and a missing key only risks that.
+    }
+  }
+  await self.registration.showNotification(notification?.title || 'BrrpBrrp', {
+    body: notification?.body || 'You were mentioned.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    // A tag is what makes a second notice *replace* the first rather than stack
+    // beside it, and what lets the same event on two devices collapse to one.
+    ...(tag ? { tag } : {}),
+    data: { url: notification?.url || '/' }
+  });
+  if (tag) {
+    try {
+      await sweepNotices();
+    } catch {
+      // Recorded-or-not does not change what was already shown.
+    }
+  }
+}
 
 // The retention is a day because a catch-up notice for something that happened
 // yesterday is still worth seeing, and one from last week is not: a member who has
-// been away should find recent activity, not a week of stale ones.
+// been away should find recent activity, not a week of stale ones. The count bound is
+// the second half: a very busy day cannot grow the store without limit, and the
+// oldest keys go first.
 const NOTIFY_RETENTION_MS = 24 * 60 * 60 * 1000;
-const NOTIFY_PREFIX = 'brrp.notify.';
+const NOTIFY_MAX = 500;
+// One prefix for writing and for cleanup. They used to differ — keys were written as
+// `brrp.notified.…` and swept by a `brrp.notify.…` filter — so nothing was ever
+// reclaimed and the store grew for the life of the installation.
+const NOTIFY_PREFIX = 'brrp.notified.';
+const noticeKey = (tag) => `${NOTIFY_PREFIX}${tag}`;
 
-async function seenRecently(key) {
-  const at = await readStore(key);
-  return typeof at === 'number' ? Date.now() - at < NOTIFY_RETENTION_MS : false;
+// claimNotice atomically takes one event. It resolves true when this context may show
+// the notice and false when another context already did.
+async function claimNotice(key) {
+  const store = await openStore();
+  return new Promise((resolve, reject) => {
+    const tx = store.transaction('seen', 'readwrite');
+    const object = tx.objectStore('seen');
+    const read = object.get(key);
+    read.onerror = () => reject(read.error);
+    read.onsuccess = () => {
+      const at = read.result;
+      if (typeof at === 'number' && Date.now() - at < NOTIFY_RETENTION_MS) {
+        resolve(false);
+        return;
+      }
+      const write = object.put(Date.now(), key);
+      write.onerror = () => reject(write.error);
+      write.onsuccess = () => resolve(true);
+    };
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
-async function remember(key) {
-  await writeStore(key, Date.now());
-  // A bounded sweep rather than an expiry the browser may or may not honour.
+async function sweepNotices() {
   const keys = (await listStore()).filter((name) => name.startsWith(NOTIFY_PREFIX));
+  const stamped = [];
   for (const name of keys) {
     const at = await readStore(name);
     if (typeof at !== 'number' || Date.now() - at >= NOTIFY_RETENTION_MS) await deleteStore(name);
+    else stamped.push({ name, at });
   }
+  stamped.sort((left, right) => left.at - right.at);
+  for (const entry of stamped.slice(0, Math.max(0, stamped.length - NOTIFY_MAX)))
+    await deleteStore(entry.name);
 }
 
 // Storage is best-effort: a browser that refuses IndexedDB still gets notifications,
