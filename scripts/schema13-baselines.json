@@ -1,0 +1,12 @@
+{
+  "note": "Recorded identities of the preserved schema-13 executables the upgrade rehearsal may seed with. The rehearsal hashes the executable it is given and refuses anything that does not match this file: a binary of another platform, another revision or the current source is not the release the rehearsal is about. When a hosted Linux baseline is acquired, record its sha256 and embedded build revision under linux-amd64 first — the rehearsal fails loudly for a platform with no entry.",
+  "darwin-x64": {
+    "binary": "dist/brrpbrrp-p9-checkpoint",
+    "sha256": "fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f",
+    "revision": "2869db55394b2b2a004424672517b38d6908586b",
+    "schema": 13,
+    "recorded": "2026-10-01",
+    "source": "preserved local checkpoint from the p9 private-reporting line; hash re-verified in review 17"
+  },
+  "linux-amd64": null
+}

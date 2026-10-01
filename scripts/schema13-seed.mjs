@@ -6,12 +6,19 @@
 // pass while proving nothing about the upgrade it exists to qualify.
 //
 // So a preserved prior executable is run against an empty data directory, and the
-// rehearsal's subject — a consenting direct conversation and a pending request — is
-// created through that executable's own HTTP surface. Everything in the resulting
-// directory was written by the binary that is supposed to have written it.
+// rehearsal's subject — an accepted direct conversation with private history and
+// submitted evidence, plus a pending request and a block — is created through that
+// executable's own HTTP surface. Everything in the resulting directory was written by
+// the binary that is supposed to have written it.
+//
+// The seed writes `seed-manifest.json` beside the database, recording the exact
+// identities it created (accounts, conversation, message, evidence, block). The
+// verifier compares the preserved rows by value *and* checks that these identities
+// still resolve after the migration: value equality alone would accept a migration
+// that renumbered rows, because the same values could be found under new ids.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -88,12 +95,21 @@ export async function makeSchema13Seed({ seedDir, oldBinary, cwd }) {
       ownerCookie
     );
     if (!first.ok) throw new Error(`create alice: ${first.status} ${await first.text()}`);
+    const aliceID = (await first.json()).id;
     const second = await post(
       `${base}/api/admin/users`,
       { username: 'seed_bob', password: 'a rehearsal member passphrase', display_name: 'Bob' },
       ownerCookie
     );
     if (!second.ok) throw new Error(`create bob: ${second.status} ${await second.text()}`);
+    const bobID = (await second.json()).id;
+    const third = await post(
+      `${base}/api/admin/users`,
+      { username: 'seed_carol', password: 'a rehearsal member passphrase', display_name: 'Carol' },
+      ownerCookie
+    );
+    if (!third.ok) throw new Error(`create carol: ${third.status} ${await third.text()}`);
+    const carolID = (await third.json()).id;
 
     // A message in a community channel, so the upgrade has ordinary content to carry.
     const channels = await get(`${base}/api/channels`, ownerCookie);
@@ -106,16 +122,90 @@ export async function makeSchema13Seed({ seedDir, oldBinary, cwd }) {
     );
     if (!sent.ok) throw new Error(`post: ${sent.status} ${await sent.text()}`);
 
+    // The accepted conversation with private history, and evidence submitted against
+    // one of its messages — the two things the verifier requires and the previous
+    // seed did not create, which made every `--make-seed` run fail its own checks
+    // (review 17, V17-05).
+    const signIn = async (username) => {
+      const session = await post(`${base}/api/login`, {
+        username,
+        password: 'a rehearsal member passphrase'
+      });
+      if (!session.ok) throw new Error(`sign in ${username}: ${session.status}`);
+      return (session.headers.getSetCookie?.() ?? [])
+        .map((row) => row.split(';')[0])
+        .join('; ');
+    };
+    const aliceCookie = await signIn('seed_alice');
+    const bobCookie = await signIn('seed_bob');
+    const carolCookie = await signIn('seed_carol');
     const conversation = await post(
       `${base}/api/directs`,
-      { user_id: (await second.json()).id },
-      ownerCookie
+      { user_id: bobID, introduction: 'schema thirteen hello' },
+      aliceCookie
     );
     if (!conversation.ok)
       throw new Error(`direct request: ${conversation.status} ${await conversation.text()}`);
+    const conversationID = (await conversation.json()).id;
+    const accepted = await post(`${base}/api/directs/${conversationID}/accept`, {}, bobCookie);
+    if (!accepted.ok && accepted.status !== 409)
+      throw new Error(`accept: ${accepted.status} ${await accepted.text()}`);
+    const privateSend = await post(
+      `${base}/api/conversations/${conversationID}/messages`,
+      { content: 'a schema thirteen private message', idempotency_key: 'seed-s13-private-one' },
+      aliceCookie
+    );
+    if (!privateSend.ok)
+      throw new Error(`private message: ${privateSend.status} ${await privateSend.text()}`);
+    const privateMessageID = (await privateSend.json()).id;
+    const preview = await get(
+      `${base}/api/messages/${privateMessageID}/private-report-preview`,
+      aliceCookie
+    );
+    const reported = await post(
+      `${base}/api/messages/${privateMessageID}/private-report`,
+      { reason: 'schema thirteen rehearsal evidence', version: preview.version },
+      aliceCookie
+    );
+    if (!reported.ok && reported.status !== 200)
+      throw new Error(`private evidence: ${reported.status} ${await reported.text()}`);
+    const evidenceID = (await reported.json())?.id ?? '';
 
-    // The pending request is half the rehearsal's subject: the attempt identity
-    // migration 14 added, which a schema-13 database by definition does not have.
+    // A second, pending request from carol. The attempt identity migration 14 adds is
+    // the rehearsal's subject, and it must be distinct from the accepted pair's.
+    const pending = await post(
+      `${base}/api/directs`,
+      { user_id: aliceID, introduction: 'a pending schema thirteen introduction' },
+      carolCookie
+    );
+    if (!pending.ok)
+      throw new Error(`pending request: ${pending.status} ${await pending.text()}`);
+    const pendingID = (await pending.json()).id;
+
+    // A block, so the preserved-set comparison has a row to compare rather than an
+    // empty table that any change would leave empty too. The block route may not exist
+    // in every preserved build; its absence is recorded rather than guessed at.
+    const blocked = await post(`${base}/api/blocks`, { user_id: carolID }, aliceCookie);
+    const blockRecorded = blocked.ok;
+    if (!blockRecorded) console.log(`  note: the preserved build has no block route (${blocked.status})`);
+
+    writeFileSync(
+      join(seedDir, 'seed-manifest.json'),
+      JSON.stringify(
+        {
+          schema: 13,
+          accounts: { alice: aliceID, bob: bobID, carol: carolID },
+          channel_message: (await sent.json()).id,
+          conversation: conversationID,
+          private_message: privateMessageID,
+          evidence: evidenceID,
+          pending_request: pendingID,
+          block_recorded: blockRecorded
+        },
+        null,
+        2
+      )
+    );
     console.log(`schema-13 seed written to ${seedDir}`);
   } finally {
     child.kill('SIGTERM');

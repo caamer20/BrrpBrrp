@@ -34,7 +34,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createECDH, createHash, createHmac, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, cpSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -129,6 +129,12 @@ function startServer(binary, dataDir, port) {
       BRRP_BASE_URL: `http://127.0.0.1:${port}`,
       BRRP_ADDR: `127.0.0.1:${port}`,
       BRRP_ENABLE_PRIVATE_CONVERSATIONS: "true",
+      // The rehearsal signs in many accounts from one loopback address — every
+      // credential check it makes is a real sign-in — and the production throttle of
+      // twenty attempts per five minutes is for real clients, not for a disposable
+      // fixture whose whole purpose is repeated authentication. The line is here so a
+      // later check cannot fail as a 429 and be mistaken for a credential problem.
+      BRRP_LOGIN_ATTEMPTS: "2000",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -202,7 +208,8 @@ function multipart(filename, content) {
 }
 
 const OWNER_PASSWORD = "correct horse battery staple";
-const members = ["alpha", "beta", "carol", "delta", "echo", "frank", "grace"];
+const rotatedEchoPassword = "a rotated echo passphrase";
+const members = ["alpha", "beta", "carol", "delta", "echo", "frank", "grace", "ivy"];
 const memberPassword = (name) => `${name} practice passphrase`;
 
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -440,20 +447,74 @@ async function main() {
     body: {},
   });
   check("a member follows the thread", threadFollow.status === 200 || threadFollow.status === 201 || threadFollow.status === 204, `HTTP ${threadFollow.status}`);
+  // The reader's own position in the thread is durable state with its own table, and a
+  // restore that dropped it would re-offer replies a member already read. Alpha never
+  // opens the thread, so the pair of assertions below can tell "the cursor survived"
+  // from "everyone is at zero".
+  const threadRead = await api(source.base, "POST", `/api/threads/${threadID}/read`, {
+    cookie: cookies.beta,
+    body: { last_read_message_id: threadReply.body.id },
+  });
+  check("a member's thread read position recorded before the snapshot", threadRead.status === 200, `HTTP ${threadRead.status}`);
+  // A second invitation stays pending across the snapshot: an invitation is durable
+  // state that is neither membership nor history, and a restore that resolved or
+  // dropped it would change who is in the group.
+  const groupInviteCarol = await api(source.base, "POST", `/api/groups/${groupID}/invite`, {
+    cookie: cookies.alpha,
+    body: { user_id: ids.carol },
+  });
+  check("a second, still-pending invitation exists before the snapshot", groupInviteCarol.status === 201, `HTTP ${groupInviteCarol.status}`);
 
   // Activity: the group message and the thread reply are things that happened *to* beta,
   // so beta's own feed has rows and the acknowledgment cursor is durable state.
   const activityBefore = await api(source.base, "GET", "/api/me/activity", { cookie: cookies.beta });
   check("the recipient has an activity feed before the snapshot", activityBefore.status === 200 && (activityBefore.body?.activity ?? []).length > 0, `HTTP ${activityBefore.status}, ${(activityBefore.body?.activity ?? []).length} row(s)`);
+  // Acknowledgment and interruption preferences are account-owned durable state. A
+  // restore that carried the rows but not the acknowledgment would resurrect count
+  // badges, and one that dropped a mute would interrupt people who asked it not to.
+  const activityNewest = (activityBefore.body?.activity ?? [])[0]?.id;
+  const unacknowledgedBeforeAck = activityBefore.body?.unacknowledged_count ?? 0;
+  const activityAck = await api(source.base, "POST", "/api/me/activity/acknowledge", {
+    cookie: cookies.beta,
+    body: { before: activityNewest },
+  });
+  check(
+    "the recipient acknowledged activity before the snapshot",
+    activityAck.status === 200 && activityAck.body?.unacknowledged_count < unacknowledgedBeforeAck,
+    `HTTP ${activityAck.status}, ${unacknowledgedBeforeAck} -> ${activityAck.body?.unacknowledged_count}`
+  );
+  const interruptionPreference = await api(source.base, "PUT", "/api/me/notification-preferences", {
+    cookie: cookies.beta,
+    body: { kind: "group_message", muted: true },
+  });
+  check("a notification preference set before the snapshot", interruptionPreference.status === 200, `HTTP ${interruptionPreference.status}`);
 
   // A member data export. The file is on disk rather than in a row, so a rehearsal that
   // restores the row without the file proves nothing about the copy a member was told
-  // was waiting.
+  // was waiting. The build runs after the request commits, so the fixture waits for
+  // the row to reach `ready` and captures its identity and metadata — the assertions
+  // after the restore compare against this, not against a row that merely exists
+  // (review 17, V17-05).
   const exportRequest = await api(source.base, "POST", "/api/me/export", {
     cookie: cookies.beta,
     body: { operation_key: "kab-export-1" },
   });
   check("a member export requested before the snapshot", exportRequest.status === 200 || exportRequest.status === 201 || exportRequest.status === 202, `HTTP ${exportRequest.status}`);
+  const exportID = exportRequest.body?.id ?? "";
+  let exportRequested = null;
+  for (let attempt = 0; attempt < 100 && !exportRequested; attempt++) {
+    const listing = await api(source.base, "GET", "/api/me/export", { cookie: cookies.beta });
+    const record = (Array.isArray(listing.body) ? listing.body : []).find((row) => row.id === exportID);
+    if (record?.state === "ready") exportRequested = record;
+    else await new Promise((done) => setTimeout(done, 100));
+  }
+  check(
+    "the requested export is ready before the snapshot",
+    exportRequested !== null,
+    exportRequested
+      ? `${exportRequested.message_count} messages, ${exportRequested.conversation_count} conversations`
+      : `record ${exportID} never reached ready`
+  );
 
   const requestCD = await api(source.base, "POST", "/api/directs", {
     cookie: cookies.carol,
@@ -502,61 +563,12 @@ async function main() {
   const gracePair = (graceAfterReport.body ?? []).find((direct) => direct.id === pairGD);
   check("report-and-block never accepted contact", gracePair?.request_state !== "accepted" && gracePair?.blocked === true,
     `state=${gracePair?.request_state} blocked=${gracePair?.blocked}`);
-  // Declared before the grant below, which runs inside the same step.
+  // Declared here and assigned where the fixture has completed the ownership
+  // ceremony and enrolled the owner's factor — the grant is authored through the real
+  // role routes there, because writing the rows directly proved nothing about the
+  // product and recorded success unconditionally (review 17, V17-05).
   let seededReviewerRoleID = "";
   let seededReviewerAccountID = "";
-  // A reviewer grant is an ordinary role row, so a backup captures it. Granting it
-  // before the snapshot and revoking it after is the same shape as the block and the
-  // deactivation: the restored copy will read the grant as live, and an operator who
-  // does not reconcile it puts a former reviewer back on the private evidence queue.
-  // A role is created and granted before the snapshot, and the revocation is applied
-  // afterwards on both copies.
-  // This installation has never completed the ownership ceremony, so the
-  // pre-ceremony administrator bridge does not hand out role.manage and the owner
-  // cannot author a role through the API. The role is written directly, because what
-  // this rehearsal proves is that a *grant* survives a backup and has to be
-  // reconciled — not how the role came to exist.
-  const reviewerRoleID = "p10-rehearsal-reviewers";
-  const seededAt = new Date().toISOString();
-  {
-    const handle = new DatabaseSync(path.join(sourceDir, "brrp.db"));
-    handle
-      .prepare(
-        "INSERT INTO roles(id,role_key,name,position,is_default,is_system,permissions,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?,?)"
-      )
-      .run(
-        reviewerRoleID,
-        "p10-rehearsal-reviewers",
-        "p10 rehearsal reviewers",
-        20,
-        JSON.stringify(["report.review_private", "audit.read"]),
-        seededAt,
-        seededAt
-      );
-    handle.close();
-  }
-  const reviewerRole = { status: 201, body: { id: reviewerRoleID } };
-  check("the rehearsal seeded a reviewer role before the snapshot", true, reviewerRoleID);
-  const reviewerAccountID = ids.echo;
-  // The assignment is written directly for the same reason as the role: granting
-  // also requires role.manage, which this installation has never had. What matters
-  // is that a grant exists before the snapshot and is withdrawn after it.
-  {
-    const handle = new DatabaseSync(path.join(sourceDir, "brrp.db"));
-    // The owner made the grant, so the assignment records them; `ids` holds only the
-    // member accounts created through the admin route, and the owner was created by
-    // the setup ceremony, so its identity is read from the database.
-    const ownerIdentity = handle.prepare("SELECT id FROM users WHERE username='owner'").get();
-    handle
-      .prepare("INSERT INTO role_assignments(user_id,role_id,assigned_by,created_at) VALUES(?,?,?,?)")
-      .run(reviewerAccountID, reviewerRoleID, ownerIdentity?.id ?? reviewerAccountID, seededAt);
-    handle.close();
-  }
-  check("the rehearsal granted report.review_private before the snapshot", true, seededReviewerRoleID);
-  const echoReviewer = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.echo });
-  check("the granted account can read the private evidence queue before the snapshot", echoReviewer.status === 200, `HTTP ${echoReviewer.status}`);
-  seededReviewerRoleID = reviewerRoleID;
-  seededReviewerAccountID = reviewerAccountID;
 
   const sourceRequestEvidence = (() => {
     const db = new DatabaseSync(path.join(sourceDir, "brrp.db"), { readOnly: true });
@@ -617,6 +629,79 @@ async function main() {
     await waitForNextCodeWindow();
     const reauth = await api(source.base, "POST", "/api/me/reauth", { cookie: cookies.owner, body: { password: OWNER_PASSWORD, code: totpCode(ownerSecret) } });
     check("owner reauthenticated for the privileged removal", reauth.status === 200, `HTTP ${reauth.status}`);
+  }
+  // A reviewer grant is an ordinary role row, so a backup captures it. Granting it
+  // before the snapshot and revoking it after is the same shape as the block and the
+  // deactivation: the restored copy will read the grant as live, and an operator who
+  // does not reconcile it puts a former reviewer back on the private evidence queue.
+  //
+  // Everything below goes through the supported surfaces. The disposable fixture
+  // completes the ownership ceremony on the account whose factor was just enrolled,
+  // then creates the role and makes the assignment through the role routes — the
+  // earlier version wrote both rows with SQL and recorded success unconditionally,
+  // which proved nothing about the product and would have passed with an empty seed
+  // (review 17, V17-05).
+  {
+    // The pre-ceremony administrator bridge deliberately does not include the
+    // private-review capability: reading submitted private evidence is not community
+    // administration, and an administrator who has not been given the reviewer role
+    // must not be able to read it. This is checked before the ceremony below, because
+    // the ceremony changes the answer — the owner tier holds every capability, by
+    // design — and the two facts together are what the policy actually is.
+    const ownerQueueBeforeCeremony = await api(source.base, "GET", "/api/admin/private-reports", {
+      cookie: cookies.owner,
+    });
+    check(
+      "the pre-ceremony administrator cannot read the private evidence queue without the role",
+      ownerQueueBeforeCeremony.status === 403,
+      `HTTP ${ownerQueueBeforeCeremony.status}`
+    );
+    const ceremony = await api(source.base, "POST", "/api/owner", {
+      cookie: cookies.owner,
+      body: { username: "owner", confirm: "owner" },
+    });
+    check("the fixture completes the ownership ceremony", ceremony.status === 200, `HTTP ${ceremony.status} ${JSON.stringify(ceremony.body ?? {})}`);
+    const createdRole = await api(source.base, "POST", "/api/roles", {
+      cookie: cookies.owner,
+      body: { name: "p10 rehearsal reviewers", position: 20, permissions: ["report.review_private", "audit.read"] },
+    });
+    check("a reviewer role authored through the role route", createdRole.status === 201 && Boolean(createdRole.body.id), `HTTP ${createdRole.status} ${JSON.stringify(createdRole.body ?? {})}`);
+    seededReviewerRoleID = createdRole.body.id;
+    seededReviewerAccountID = ids.echo;
+    // The reviewer role is *added* to what echo already holds. Assignments replace
+    // the set, and an account whose only role is the reviewer role loses every member
+    // capability it had — including message.send, which this fixture's later checks
+    // exercise. The earlier SQL seed inserted an assignment row beside echo's existing
+    // one and so never exposed this; the real route did, immediately.
+    const summaryBefore = await api(source.base, "GET", "/api/admin/accounts/summary", { cookie: cookies.owner });
+    const echoRow = (summaryBefore.body ?? []).find((row) => row.username === "echo");
+    check(
+      "the fixture knows the reviewer's existing roles",
+      Array.isArray(echoRow?.role_ids) && echoRow.role_ids.length >= 1,
+      `${(echoRow?.role_ids ?? []).length} role(s)`
+    );
+    const granted = await api(source.base, "PUT", `/api/admin/users/${seededReviewerAccountID}/roles`, {
+      cookie: cookies.owner,
+      body: { role_ids: [...(echoRow?.role_ids ?? []), seededReviewerRoleID] },
+    });
+    check("the reviewer grant made through the assignment route", granted.status === 200, `HTTP ${granted.status} ${JSON.stringify(granted.body ?? {})}`);
+    // The grant is checked against what the granted account resolves, not against the
+    // write's status: the capability is the thing the restore has to carry, and the
+    // member capability must still be there beside it.
+    const echoState = await api(source.base, "GET", "/api/state", { cookie: cookies.echo });
+    const echoCapabilities = echoState.body?.authorization?.capabilities ?? [];
+    check(
+      "the granted account resolves report.review_private before the snapshot",
+      echoCapabilities.includes("report.review_private"),
+      `capabilities=${echoCapabilities.length}`
+    );
+    check(
+      "the grant did not take the account's member capabilities away",
+      echoCapabilities.includes("message.send"),
+      `capabilities=${echoCapabilities.join(",")}`
+    );
+    const echoReviewer = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.echo });
+    check("the granted account can read the private evidence queue before the snapshot", echoReviewer.status === 200, `HTTP ${echoReviewer.status}`);
   }
   // Account removal (not erasure) retains accepted history under a Deleted member
   // identity; the erasure path is a separate ceremony and is not what restores.
@@ -684,10 +769,23 @@ async function main() {
   check("the snapshot source holds the exact evidence the reporter confirmed",
     sourceEvidence.snapshot_text === preview.body.snapshot_text && sourceEvidence.reason === "rehearsal evidence, not a real concern",
     `${String(sourceEvidence.snapshot_text).length} characters`);
-  // The owner is not a reviewer by membership: without the explicit grant the
-  // queue must be closed even to the installation's own administrator role.
-  const ownerQueue = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.owner });
-  check("a non-participating account cannot read the private evidence queue", ownerQueue.status === 403, `HTTP ${ownerQueue.status}`);
+  // A plain member with no reviewer grant cannot read the queue. The owner is
+  // deliberately not used here any more: the fixture completed the ownership
+  // ceremony, and the owner tier holds every capability by design — the
+  // pre-ceremony denial is asserted where the ceremony happens.
+  const outsiderQueue = await api(source.base, "GET", "/api/admin/private-reports", { cookie: cookies.carol });
+  check("a non-participating account cannot read the private evidence queue", outsiderQueue.status === 403, `HTTP ${outsiderQueue.status}`);
+  // The acknowledgment state as the snapshot will carry it. Activity created after the
+  // acknowledgment (later requests in this fixture) is legitimately still unseen, so
+  // the restored copy must carry *this* number rather than zero — the ack's own effect
+  // is asserted where it happened, against the count it reduced.
+  const activityAtSnapshot = await api(source.base, "GET", "/api/me/activity", { cookie: cookies.beta });
+  const unacknowledgedAtSnapshot = activityAtSnapshot.body?.unacknowledged_count;
+  check(
+    "the snapshot's unacknowledged count is a real value",
+    Number.isInteger(unacknowledgedAtSnapshot),
+    `${unacknowledgedAtSnapshot}`
+  );
 
   await stopServer(source);
   check("source server stopped cleanly", source.child.exitCode === 0 || source.child.signalCode === "SIGTERM",
@@ -733,23 +831,61 @@ async function main() {
     // The third post-snapshot decision: the reviewer grant is withdrawn, so the
     // restored copy will read it as live and the rehearsal has to prove the
     // operator reconciles it before cutover.
-    // Revoked through the API where authority allows, and directly where it does
-    // not, so the rehearsal exercises the real route when it can and still proves
-    // the post-snapshot fact.
+    // Revoked through the revoke path only. There is no SQL fallback: a fallback
+    // that mutates the rows and then records success is a rehearsal that cannot fail,
+    // and this decision is exactly what the restored copy will disagree with
+    // (review 17, V17-05).
     const revoked = await api(after.base, "PUT", `/api/admin/users/${seededReviewerAccountID}/roles`, {
       cookie: ownerCookie,
       body: { role_ids: [] },
     });
-    if (revoked.status !== 200) {
-      const handle = new DatabaseSync(path.join(sourceDir, "brrp.db"));
-      handle.prepare("DELETE FROM role_assignments WHERE user_id=? AND role_id=?").run(seededReviewerAccountID, seededReviewerRoleID);
-      handle.close();
-    }
-    check("the owner revoked the reviewer grant only after the snapshot", true, `API ${revoked.status}`);
+    check(
+      "the owner revoked the reviewer grant only after the snapshot",
+      revoked.status === 200,
+      `HTTP ${revoked.status} ${JSON.stringify(revoked.body ?? {})}`
+    );
     const echoAfterRevoke = await signIn(after.base, "echo", memberPassword("echo"));
     const echoQueueAfter = await api(after.base, "GET", "/api/admin/private-reports", { cookie: echoAfterRevoke });
     check("the revoked account loses the private evidence queue on the source", echoQueueAfter.status === 403, `HTTP ${echoQueueAfter.status}`);
     postSnapshot.reviewerGrantRevoked = true;
+
+    // Three more decisions taken after the snapshot, each with its own reconciliation
+    // before cutover: a ban, a rotated credential and an erasure. A rehearsal that
+    // proved only blocks and deactivations would leave the operator to discover these
+    // on the restored host with real people in front of it.
+    const banned = await api(after.base, "PATCH", `/api/admin/users/${ids.carol}`, {
+      cookie: ownerCookie,
+      body: { is_banned: true, confirm: "carol" },
+    });
+    check("owner banned carol only after the snapshot", banned.status === 200, `HTTP ${banned.status}`);
+    const carolOnSource = await api(after.base, "POST", "/api/login", {
+      body: { username: "carol", password: memberPassword("carol") },
+    });
+    check("carol cannot sign in on the source while banned", carolOnSource.status !== 200, `HTTP ${carolOnSource.status}`);
+    postSnapshot.carolBanned = true;
+
+    const echoForRotation = echoAfterRevoke;
+    const rotated = await api(after.base, "POST", "/api/me/password", {
+      cookie: echoForRotation,
+      body: { current_password: memberPassword("echo"), new_password: rotatedEchoPassword },
+    });
+    check("echo rotated their password only after the snapshot", rotated.status === 200, `HTTP ${rotated.status}`);
+    const oldStillWorks = await api(after.base, "POST", "/api/login", {
+      body: { username: "echo", password: memberPassword("echo") },
+    });
+    check("the rotated account's old password no longer signs in on the source", oldStillWorks.status !== 200, `HTTP ${oldStillWorks.status}`);
+    postSnapshot.echoPasswordRotated = true;
+
+    const erased = await api(after.base, "DELETE", `/api/admin/users/${ids.ivy}`, {
+      cookie: ownerCookie,
+      body: { confirm: "ivy" },
+    });
+    check("owner erased ivy only after the snapshot", erased.status === 200, `HTTP ${erased.status} ${JSON.stringify(erased.body ?? {})}`);
+    const ivyOnSource = await api(after.base, "POST", "/api/login", {
+      body: { username: "ivy", password: memberPassword("ivy") },
+    });
+    check("the erased account cannot sign in on the source", ivyOnSource.status !== 200, `HTTP ${ivyOnSource.status}`);
+    postSnapshot.ivyErased = true;
   }
   await stopServer(after);
 
@@ -826,6 +962,65 @@ async function main() {
     check("the restored activity still names the conversation it is about",
       JSON.stringify(activityRestored.body ?? {}).includes(groupID),
       "no restored row names the group");
+    // Acknowledgment is account-owned state: the rows came back, and so must the fact
+    // that the member already saw them — otherwise the restore resurrects badges for
+    // an account that had cleared them.
+    check(
+      "the acknowledgment survived the restore",
+      activityRestored.body?.unacknowledged_count === unacknowledgedAtSnapshot,
+      `unacknowledged=${activityRestored.body?.unacknowledged_count}, snapshot had ${unacknowledgedAtSnapshot}`
+    );
+    const preferencesRestored = await api(restored.base, "GET", "/api/me/notification-preferences", { cookie: fresh.beta });
+    const groupPreference = (preferencesRestored.body?.preferences ?? []).find((row) => row.kind === "group_message");
+    check(
+      "the interruption preference survived the restore",
+      groupPreference?.muted === true,
+      `muted=${groupPreference?.muted}`
+    );
+
+    // The thread's own durable state: the follower and the read position survive, so
+    // the member who read the thread is not offered it as unread again, and the
+    // member who never opened it still is.
+    const betaThreadList = await api(restored.base, "GET", `/api/channels/${threadChannelID}/threads`, { cookie: fresh.beta });
+    const betaThread = (Array.isArray(betaThreadList.body) ? betaThreadList.body : []).find((row) => row.id === threadID);
+    check("the follower's subscription survived the restore", betaThread?.following === true, `following=${betaThread?.following}`);
+    check("the reader's thread position survived the restore", betaThread?.unread === 0, `unread=${betaThread?.unread}`);
+    // A member who neither started nor read the thread: still unread, still not
+    // following. Alpha is deliberately not used — the starter keeps their own follow by
+    // design, so alpha would report following=true for a reason unrelated to the read
+    // position.
+    const carolThreadList = await api(restored.base, "GET", `/api/channels/${threadChannelID}/threads`, { cookie: fresh.carol });
+    const carolThread = (Array.isArray(carolThreadList.body) ? carolThreadList.body : []).find((row) => row.id === threadID);
+    check(
+      "a member who never read the thread still sees it unread",
+      carolThread?.following === false && carolThread?.unread >= 1,
+      `following=${carolThread?.following} unread=${carolThread?.unread}`
+    );
+
+    // Group authority and membership, exactly: the creator is still the owner, the
+    // accepted member is still a member, and the invitation that was still pending is
+    // still pending rather than resolved by the restore.
+    const membersRestored = await api(restored.base, "GET", `/api/groups/${groupID}/members`, { cookie: fresh.alpha });
+    const memberRows = membersRestored.body?.members ?? [];
+    const ownerRow = memberRows.find((row) => row.id === ids.alpha);
+    const acceptedRow = memberRows.find((row) => row.id === ids.beta);
+    check(
+      "the restored group keeps its owner and its accepted membership",
+      membersRestored.status === 200 &&
+        ownerRow?.is_owner === true &&
+        acceptedRow?.state === "accepted" &&
+        memberRows.length === 2,
+      `HTTP ${membersRestored.status}, ${memberRows.length} member row(s)`
+    );
+    const carolInvitations = await api(restored.base, "GET", "/api/group-invitations", { cookie: fresh.carol });
+    const stillPending = (carolInvitations.body?.invitations ?? []).find(
+      (row) => row.group_id === groupID && row.state === "pending"
+    );
+    check(
+      "the pending invitation is still pending after the restore",
+      Boolean(stillPending),
+      `${(carolInvitations.body?.invitations ?? []).length} invitation(s) for carol`
+    );
 
     // The export is the one piece of member state the archive does not carry: the
     // backup holds the database and the uploaded files, not the produced export.
@@ -834,16 +1029,42 @@ async function main() {
     // everything — and the contract for the resulting row is a 410 saying the file is
     // gone rather than a 404 that looks like it never existed.
     //
-    // What has to survive is the *account's* export history and its omissions, so the
-    // member can see what was requested even when the file cannot be delivered.
+    // The list route answers with a raw array of records. An earlier version read
+    // `body.exports`, which is always undefined, so both assertions below were
+    // vacuous: an empty list satisfied "not another's" and an empty list satisfied
+    // "survives" too (review 17, V17-05).
     const exportList = await api(restored.base, "GET", "/api/me/export", { cookie: fresh.beta });
-    const exportRows = Array.isArray(exportList.body?.exports) ? exportList.body.exports : [];
-    check("the member's export history survives the restore", exportList.status === 200,
-      `HTTP ${exportList.status}, ${exportRows.length} record(s)`);
+    const exportRows = Array.isArray(exportList.body) ? exportList.body : [];
+    const restoredExport = exportRows.find((row) => row.id === exportID);
+    check(
+      "the member's export history survives the restore with its identity",
+      exportList.status === 200 && Boolean(restoredExport),
+      `HTTP ${exportList.status}, ${exportRows.length} record(s), wanted ${exportID}`
+    );
+    check(
+      "the restored export keeps its recorded metadata",
+      restoredExport?.created_at === exportRequested.created_at &&
+        restoredExport?.message_count === exportRequested.message_count &&
+        restoredExport?.conversation_count === exportRequested.conversation_count,
+      restoredExport
+        ? `created ${restoredExport.created_at === exportRequested.created_at ? "matches" : "differs"}, counts ${restoredExport.message_count}/${restoredExport.conversation_count}`
+        : "record missing"
+    );
     const exportOwner = await api(restored.base, "GET", "/api/me/export", { cookie: fresh.carol });
-    const otherExports = Array.isArray(exportOwner.body?.exports) ? exportOwner.body.exports : [];
-    check("one account's exports are not another's", otherExports.length === 0,
-      `${otherExports.length} record(s) visible to an account that requested none`);
+    const otherExports = Array.isArray(exportOwner.body) ? exportOwner.body : [];
+    check(
+      "one account's exports are not another's",
+      otherExports.length === 0 && exportRows.length > 0,
+      `${otherExports.length} record(s) visible to an account that requested none, ${exportRows.length} to the requester`
+    );
+    // The file itself is not in the archive, so the download must say exactly that:
+    // 410 rather than a 404 that would read as "you never asked".
+    const missingDownload = await api(restored.base, "GET", `/api/me/export/${exportID}`, { cookie: fresh.beta });
+    check(
+      "the restored export row reports its missing file as gone, not as absent",
+      missingDownload.status === 410,
+      `HTTP ${missingDownload.status} ${JSON.stringify(missingDownload.body ?? {})}`
+    );
 
     for (const [name, cookie] of [["the owner", cookies], ["an outsider", fresh]]) {
       const actor = name === "the owner" ? fresh.owner : fresh.carol;
@@ -875,8 +1096,14 @@ async function main() {
     // The submitted evidence, its expiry and its disclosure boundary all survive
     // the restore. The expiry is the reporter's 90-day promise and must be the
     // snapshot's value, not a fresh one computed after the restore.
-    const restoredQueue = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: fresh.owner });
-    check("the owner still cannot read the queue without the explicit grant", restoredQueue.status === 403, `HTTP ${restoredQueue.status}`);
+    //
+    // The caller here is a plain member with no reviewer grant: the queue is opened
+    // by the grant, not by being in the community. The owner is deliberately not used
+    // — the fixture completed the ownership ceremony, and the owner tier holds every
+    // capability by design (the pre-ceremony denial is asserted where the ceremony
+    // happens).
+    const restoredQueue = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: fresh.carol });
+    check("a member without the explicit grant cannot read the queue after the restore", restoredQueue.status === 403, `HTTP ${restoredQueue.status}`);
     {
       const db = new DatabaseSync(path.join(restoredDir, "brrp.db"), { readOnly: true });
       const row = db.prepare("SELECT id,status,expires_at,snapshot_text,reason FROM private_message_reports WHERE id=?").get(evidenceID);
@@ -1028,6 +1255,22 @@ async function main() {
     // during cutover (demonstrated next, before this rehearsal declares success).
     const deltaLogin = await api(restored.base, "POST", "/api/login", { body: { username: "delta", password: memberPassword("delta") } });
     check("delta's post-snapshot deactivation is absent from the snapshot", deltaLogin.status === 200, `HTTP ${deltaLogin.status}`);
+    const carolLoginRestored = await api(restored.base, "POST", "/api/login", {
+      body: { username: "carol", password: memberPassword("carol") },
+    });
+    check("carol's post-snapshot ban is absent from the snapshot", carolLoginRestored.status === 200, `HTTP ${carolLoginRestored.status}`);
+    const echoOldRestored = await api(restored.base, "POST", "/api/login", {
+      body: { username: "echo", password: memberPassword("echo") },
+    });
+    check("the snapshot still carries the pre-rotation credential", echoOldRestored.status === 200, `HTTP ${echoOldRestored.status}`);
+    const echoNewRestored = await api(restored.base, "POST", "/api/login", {
+      body: { username: "echo", password: rotatedEchoPassword },
+    });
+    check("the snapshot does not carry the post-snapshot credential", echoNewRestored.status !== 200, `HTTP ${echoNewRestored.status}`);
+    const ivyRestored = await api(restored.base, "POST", "/api/login", {
+      body: { username: "ivy", password: memberPassword("ivy") },
+    });
+    check("the account erased after the snapshot is still present in it", ivyRestored.status === 200, `HTTP ${ivyRestored.status}`);
     const alphaBefore = await api(restored.base, "POST", `/api/conversations/${pairAB}/messages`, {
       cookie: fresh.alpha,
       body: { content: "write before reconciliation", idempotency_key: "kab-3-before-reconcile" },
@@ -1071,17 +1314,18 @@ async function main() {
     // review 10, R10-08).
     check("the deactivated account's earlier session no longer authorizes", deltaAfterDeactivation.status === 401, `HTTP ${deltaAfterDeactivation.status}`);
     // Both decisions are the operator's and are recorded before traffic returns: a
-    // rehearsal that re-applied only one cannot say cutover is safe.
+    // rehearsal that re-applied only one cannot say cutover is safe. The revocation
+    // goes through the same route the operator would use — no SQL fallback, and no
+    // unconditional success (review 17, V17-05).
     const revokeGrant = await api(restored.base, "PUT", `/api/admin/users/${seededReviewerAccountID}/roles`, {
       cookie: fresh.owner,
       body: { role_ids: [] },
     });
-    if (revokeGrant.status !== 200) {
-      const handle = new DatabaseSync(path.join(restoredDir, "brrp.db"));
-      handle.prepare("DELETE FROM role_assignments WHERE user_id=? AND role_id=?").run(seededReviewerAccountID, seededReviewerRoleID);
-      handle.close();
-    }
-    check("reconciliation re-applies the post-snapshot reviewer revocation", true, `API ${revokeGrant.status}`);
+    check(
+      "reconciliation re-applies the post-snapshot reviewer revocation",
+      revokeGrant.status === 200,
+      `HTTP ${revokeGrant.status} ${JSON.stringify(revokeGrant.body ?? {})}`
+    );
     const echoReconciled = await signIn(restored.base, "echo", memberPassword("echo"));
     const echoQueueReconciled = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: echoReconciled });
     check("the reconciled revocation denies the evidence queue before cutover", echoQueueReconciled.status === 403,
@@ -1093,7 +1337,51 @@ async function main() {
     // a restored authority decision is not carried by the session that observed it.
     const echoStale = await api(restored.base, "GET", "/api/admin/private-reports", { cookie: echoRestored });
     check("the earlier reviewer's session no longer authorizes", echoStale.status === 403, `HTTP ${echoStale.status}`);
-    postSnapshot.reconciledBeforeCutover = ["block", "deactivation", "reviewer-grant revocation"];
+    // The ban, the rotated credential and the erasure, re-applied the same way.
+    const rebanned = await api(restored.base, "PATCH", `/api/admin/users/${ids.carol}`, {
+      cookie: fresh.owner,
+      body: { is_banned: true, confirm: "carol" },
+    });
+    check("reconciliation re-applies the post-snapshot ban", rebanned.status === 200, `HTTP ${rebanned.status}`);
+    const carolAfterBan = await api(restored.base, "POST", "/api/login", {
+      body: { username: "carol", password: memberPassword("carol") },
+    });
+    check("the reconciled ban denies sign-in before cutover", carolAfterBan.status !== 200, `HTTP ${carolAfterBan.status}`);
+    const echoForReconcile = await signIn(restored.base, "echo", memberPassword("echo"));
+    const rerotate = await api(restored.base, "POST", "/api/me/password", {
+      cookie: echoForReconcile,
+      body: { current_password: memberPassword("echo"), new_password: rotatedEchoPassword },
+    });
+    check("reconciliation re-applies the post-snapshot password rotation", rerotate.status === 200, `HTTP ${rerotate.status}`);
+    const newCredential = await api(restored.base, "POST", "/api/login", {
+      body: { username: "echo", password: rotatedEchoPassword },
+    });
+    check("the reconciled rotation admits the new credential", newCredential.status === 200, `HTTP ${newCredential.status}`);
+    const reErased = await api(restored.base, "DELETE", `/api/admin/users/${ids.ivy}`, {
+      cookie: fresh.owner,
+      body: { confirm: "ivy" },
+    });
+    check("reconciliation re-applies the post-snapshot erasure", reErased.status === 200, `HTTP ${reErased.status}`);
+    const ivyAfterErasure = await api(restored.base, "POST", "/api/login", {
+      body: { username: "ivy", password: memberPassword("ivy") },
+    });
+    check("the reconciled erasure denies the erased account before cutover", ivyAfterErasure.status !== 200, `HTTP ${ivyAfterErasure.status}`);
+    postSnapshot.reconciledBeforeCutover = [
+      "block",
+      "deactivation",
+      "reviewer-grant revocation",
+      "ban",
+      "password rotation",
+      "erasure"
+    ];
+    // What the artifact cannot carry is stated rather than implied: sessions are
+    // deliberately not in a backup, so every pre-restore session is replaced by fresh
+    // sign-ins (asserted above), and nothing else in this fixture is unreconstructable
+    // — every post-snapshot decision was re-applied through its own route before
+    // cutover.
+    postSnapshot.unreconstructable = [
+      "sessions: deliberately not carried in the archive, replaced by fresh sign-ins"
+    ];
     const alphaAfter = await api(restored.base, "POST", `/api/conversations/${pairAB}/messages`, {
       cookie: fresh.alpha,
       body: { content: "write after reconciliation", idempotency_key: "kab-4-after-reconcile" },
@@ -1103,6 +1391,74 @@ async function main() {
     check("readability under the reconciled block is retained", historyAfter.status === 200, `HTTP ${historyAfter.status}`);
   }
   await stopServer(restored);
+
+  say("");
+  say("6. The comparisons can fail (negative control)");
+  // The assertions above are evidence only if loss makes them fail. A copy of the
+  // restored database has the thread follow, the thread read position, the group
+  // membership and the group-message preference damaged, and the same comparisons the
+  // run made must report exactly those tables as mismatched — a rehearsal whose checks
+  // cannot fail would pass for a restore that dropped the state (review 17, V17-05).
+  {
+    const readRows = (dir, sql, ...args) => {
+      const db = new DatabaseSync(path.join(dir, "brrp.db"), { readOnly: true });
+      try {
+        return db.prepare(sql).all(...args);
+      } finally {
+        db.close();
+      }
+    };
+    const PRESERVED = {
+      thread_follows: "SELECT user_id,thread_id,created_at FROM thread_follows ORDER BY user_id,thread_id",
+      thread_reads: "SELECT user_id,thread_id,last_read_message_id FROM thread_reads ORDER BY user_id,thread_id",
+      group_members: "SELECT conversation_id,user_id,state FROM conversation_members WHERE conversation_id=? ORDER BY user_id",
+      group_preferences:
+        "SELECT user_id,kind,muted,show_sender FROM private_notification_preferences ORDER BY user_id,kind"
+    };
+    const beforeControl = Object.fromEntries(
+      Object.entries(PRESERVED).map(([name, sql]) => [
+        name,
+        name === "group_members" ? readRows(restoredDir, sql, groupID) : readRows(restoredDir, sql)
+      ])
+    );
+    check(
+      "the negative control has rows to damage",
+      beforeControl.thread_follows.length >= 1 &&
+        beforeControl.thread_reads.length >= 1 &&
+        beforeControl.group_members.length === 2 &&
+        beforeControl.group_preferences.some((row) => row.kind === "group_message"),
+      `follows=${beforeControl.thread_follows.length} reads=${beforeControl.thread_reads.length} ` +
+        `members=${beforeControl.group_members.length} prefs=${beforeControl.group_preferences.length}`
+    );
+    const damaged = `${restoredDir}-damaged`;
+    rmSync(damaged, { recursive: true, force: true });
+    cpSync(restoredDir, damaged, { recursive: true });
+    {
+      const db = new DatabaseSync(path.join(damaged, "brrp.db"));
+      try {
+        db.exec("DELETE FROM thread_follows WHERE rowid IN (SELECT rowid FROM thread_follows LIMIT 1)");
+        db.exec("DELETE FROM thread_reads WHERE rowid IN (SELECT rowid FROM thread_reads LIMIT 1)");
+        db.exec("UPDATE private_notification_preferences SET muted=0 WHERE kind='group_message'");
+      } finally {
+        db.close();
+      }
+    }
+    const mismatched = Object.entries(PRESERVED)
+      .filter(([name, sql]) => {
+        const now = name === "group_members" ? readRows(damaged, sql, groupID) : readRows(damaged, sql);
+        return JSON.stringify(now) !== JSON.stringify(beforeControl[name]);
+      })
+      .map(([name]) => name);
+    check(
+      "damaged thread and preference state is reported as a mismatch",
+      mismatched.length === 3 &&
+        mismatched.includes("thread_follows") &&
+        mismatched.includes("thread_reads") &&
+        mismatched.includes("group_preferences"),
+      mismatched.join(",") || "none"
+    );
+    rmSync(damaged, { recursive: true, force: true });
+  }
 
   say("");
   const failed = checks.filter((entry) => !entry.ok);
@@ -1118,7 +1474,8 @@ async function main() {
     work_dir: workDir,
     archive: { path: archive, sha256: archiveDigest, bytes: statSync(archive).size },
     post_snapshot_decisions: postSnapshot,
-    reconciliation: "both post-snapshot decisions (the block and the deactivation) were absent from the restored copy and re-applied explicitly on the isolated server before cutover, as the runbook requires",
+    reconciliation:
+      "every post-snapshot decision (block, deactivation, reviewer-grant revocation, ban, password rotation and erasure) was absent from the restored copy and re-applied explicitly on the isolated server before cutover, as the runbook requires",
     checks,
     transcript,
   };
