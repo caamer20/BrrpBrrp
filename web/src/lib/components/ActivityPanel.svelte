@@ -15,11 +15,24 @@
     !!workspace.user && workspace.privateConversationsEnabled && !workspace.authorizationUnverified
   );
 
+  // Mount is called during setup, before the effect below first runs, so the panel has a
+  // listener by the time it asks for anything. It is also what makes a *second* open in
+  // a session work: `destroy` on the singleton was terminal, so the reopen had a dead
+  // controller and asked for nothing.
+  activity.mount();
+
   $effect(() => {
-    // Refetch when the account, the authority or the private feature changes, and
-    // clear the list for an account that is no longer the one it belongs to.
+    // The panel's own mount is a dependency, not just the account and authority. Svelte
+    // runs an effect once when it is created and then again only when something it read
+    // changes — and a remount creates a new effect, so reading the revision here is what
+    // makes reopening the panel fetch again rather than reusing whatever the previous
+    // visit left behind.
+    //
+    // Refetch when the account, the authority or the private feature changes, and clear
+    // the list for an account that is no longer the one it belongs to.
     void workspace.user?.id;
     void workspace.authorizationGeneration;
+    void activity.revision;
     if (!admitted) {
       activity.reset();
       return;
@@ -27,10 +40,6 @@
     void activity.load();
     void activity.loadPreferences();
   });
-  // Mount and destroy are a pair on a singleton: closing the panel invalidates whatever
-  // was in flight, and opening it again says there is a listener. Without the mount,
-  // the second open in a session loaded nothing at all.
-  activity.mount();
   onDestroy(() => activity.destroy());
 
   // What a row says. It never says what was written: a private notification is the

@@ -1077,3 +1077,17 @@ controller passed a test suite. The one decision that matters is now directly te
 and it returns a strict boolean rather than whatever the first falsy operand happened to
 be, so a caller and a logger cannot disagree about a state the types say is impossible.
 
+The fix needed a second half, which the unit test could not have told me. `mount()`
+revives the controller, but the panel's `$effect` re-runs only when something it *read*
+changes — and closing and reopening the panel creates a new effect without changing the
+account or the authority. So the reopened panel had a live controller and still asked
+for nothing. `activity.revision` is a reactive counter advanced by `mount`, and the
+panel's effect reads it, so reopening fetches. It is reactive deliberately; `alive` is
+not, because making it reactive would re-run every panel effect that admits work on
+every teardown.
+
+The rendered journey proves it by counting `/me/activity` requests rather than rows: an
+empty feed and a feed that was never fetched produce the same panel, so rows cannot tell
+them apart, but a request that never left the browser can. Removing the `mount()` call
+leaves exactly one fetch across two opens.
+

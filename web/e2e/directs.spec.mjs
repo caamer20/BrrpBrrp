@@ -764,6 +764,77 @@ test('a request badge appears for a waiting request and a private report disclos
 // to close and lose the explanation. This proves the refreshed text is shown, that
 // the explanation survives, that nothing is sent until the reporter says they have
 // read it, and that a second edit is caught again rather than accepted.
+/** The activity list itself, not the dialog that contains it. */
+const activityFeed = (dialog) => dialog.locator('ul').first();
+
+// Opening Activity twice in one session must load twice.
+//
+// The controller is a module singleton whose teardown marked it dead for good, so the
+// first close permanently disabled it: the second open rendered an empty panel with no
+// error. Nothing in the suite caught it because the panel was mounted once per journey
+// and the unit-level contract tests read the controller's source rather than running it.
+//
+// So this closes the dialog and opens it again, and asserts real rows both times — a
+// silently-empty panel and a genuinely-empty feed look the same from the outside unless
+// the feed is known to have something in it.
+// Opening Activity twice in one session must load twice.
+//
+// The controller is a module singleton whose teardown marked it dead for good, so the
+// first close permanently disabled it: the second open rendered an empty panel with no
+// error. Nothing in the suite caught it because the panel was mounted once per journey
+// and the unit-level contract tests read the controller's source rather than running it.
+//
+// The proof is the request itself, not the rows. An empty feed and a feed that was never
+// fetched produce the same panel, so counting rows would not distinguish them — but a
+// request that never left the browser is unambiguous, and it is the thing that was
+// broken. The rows are checked too, so a server that answered nothing fails here rather
+// than passing as "successfully loaded, happens to be empty".
+test('activity fetches on every open, not only the first', async ({ page }) => {
+  test.setTimeout(240000);
+  const alice = { username: 'activity_alice', password: 'an activity alice passphrase' };
+  await signIn(page, OWNER);
+  await signIn(page, alice);
+
+  // Every `/me/activity` read the panel makes, so a second open that never asks is
+  // visible as a missing fetch rather than as an empty list.
+  const fetches = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/me/activity') fetches.push(url.pathname + url.search);
+  });
+
+  const inbox = page.getByRole('button', { name: /Messages and requests/i });
+  const dialog = page.getByRole('dialog', { name: 'Messages', exact: true });
+  const activityTab = dialog.getByRole('button', { name: 'Activity' });
+  const activityRegion = dialog.getByRole('region', { name: 'Activity' });
+
+  const openActivity = async () => {
+    await inbox.click();
+    await activityTab.click();
+    // The panel has settled: it either has rows or it has said there are none. Both are
+    // a completed load. Waiting for the *fetch* is the assertion; this only stops the
+    // next step racing the first.
+    await expect(activityRegion).toBeVisible();
+  };
+
+  await openActivity();
+  await expect.poll(() => fetches.length).toBeGreaterThan(0);
+  const afterFirst = fetches.length;
+
+  // Close and reopen — the second open of the session, which is the one that used to
+  // fetch nothing at all.
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toHaveCount(0);
+  await openActivity();
+  await expect.poll(() => fetches.length).toBeGreaterThan(afterFirst);
+
+  // And the panel settled rather than spinning forever. An unresolved load leaves a
+  // panel that never reaches either state, which is what a dropped fetch looks like.
+  await expect(
+    activityRegion.getByRole('list').or(activityRegion.getByRole('status').first())
+  ).toBeVisible();
+});
+
 test('a message edited while reporting is re-read and confirmed, not sent silently', async ({
   page,
   request

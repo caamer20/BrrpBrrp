@@ -69,6 +69,8 @@ class ActivityStore {
 
   private version = 0;
   private alive = true;
+  /** Advances on every mount, so a reopened panel fetches again. Reactive by design. */
+  revision = $state(0);
 
   identity() {
     return {
@@ -220,6 +222,10 @@ class ActivityStore {
    */
   mount() {
     this.alive = true;
+    // A render-level value, so a panel effect that reads it re-runs on reopen. `alive`
+    // is not reactive and must not be: it gates responses, and making it reactive would
+    // re-run every panel effect that admits work, on every teardown.
+    this.revision++;
   }
 
   destroy() {
