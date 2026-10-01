@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { workspace } from '../workspace.svelte';
   import { ThreadView } from '../threads.svelte';
-  import { threadSubmitState, canSendThreadReply } from '../thread-state';
+  import { threadSubmitState, canSendThreadReply, retryOperationKey } from '../thread-state';
   import type { Message } from '../types';
   import Modal from './Modal.svelte';
   import MessageItem from './MessageItem.svelte';
@@ -25,12 +25,17 @@
   // that runs after a sign-out or an account switch presents it, and the store refuses
   // to let this panel's text or its saved draft move into the account that replaced it.
   const owner = untrack(() => workspace.composerOwner());
-  // The operation still awaiting a definite answer in this thread, if there is one. Its
-  // words are its immutable intent: retrying them under its own key reconciles, while
-  // edited words are different work and are sent under a new key, leaving the original
-  // here for its own retry or discard. The key is never adopted blindly, and never into
-  // a composer that no longer belongs to the session that submitted it.
-  const unresolved = $derived(workspace.unresolvedThreadOperation(id));
+  // The operations this panel's own composer submitted into this thread and has not
+  // seen settled, oldest first. Each one's words are its immutable intent: submitting
+  // exactly those words again retries *that* operation under its own key and
+  // reconciles against its receipt — whether it is the newest submission or an older
+  // one still waiting. Selection is this composer's explicit association (account,
+  // destination, submitted snapshot, key), never the first outbox entry and never a
+  // text search over the queue: identical words can be two deliberate sends, and the
+  // association is what tells a retry of one from a new copy of another
+  // (review 17, V17-01). The key is never adopted blindly, and never into a composer
+  // that no longer belongs to the session that submitted it.
+  const unresolvedOperations = $derived(workspace.threadComposerOperations(id));
   let reason = $state('');
   let stateError = $state('');
   let focusTarget: HTMLTextAreaElement | null = $state(null);
@@ -75,6 +80,16 @@
           )
       )
   );
+  // Whether the current words are new work beside an unconfirmed reply. The words
+  // retry their own operation while they match its submitted snapshot; edited words
+  // are new work, and the notice says so rather than letting an older uncertain reply
+  // look replaced. Unconfirmed replies the store still shows as rows count too, so the
+  // warning does not depend on which session submitted them.
+  const newReplyNotice = $derived(
+    draft.trim().length > 0 &&
+      !unresolvedOperations.some((operation) => operation.content === draft.trim()) &&
+      (unresolvedOperations.length > 0 || pending.length > 0)
+  );
 
   async function focusComposer() {
     await tick();
@@ -86,13 +101,13 @@
     const text = draft;
     const submitted = text.trim();
     view.sendError = null;
-    // The key identifies one immutable intent. The same words as an unresolved operation
-    // are that same operation, and retrying them under its own key reconciles against its
-    // receipt instead of creating the reply twice. Edited words are new work and get a
-    // fresh key; the unresolved operation stays in this thread — visible as a pending row
-    // with its own Retry and Discard — and is not silently rewritten by the edit.
-    const key =
-      unresolved && unresolved.content === submitted ? unresolved.key : crypto.randomUUID();
+    // The words being submitted select their own operation: exactly the words this
+    // composer already submitted as an unresolved reply retry under that operation's
+    // key — every unresolved submission is a candidate, so retrying the newest reply
+    // no longer rotates its key because an older one happened to be first. Anything
+    // else — edited words, or words whose operation has settled — is new work under a
+    // fresh key.
+    const key = retryOperationKey(unresolvedOperations, submitted) ?? crypto.randomUUID();
     // The text is cleared *after* the outcome, not before. Clearing it first meant a
     // refusal and a lost response both left an empty composer, and the next attempt then
     // made the lost response a second message.
@@ -272,7 +287,7 @@
             placeholder="Reply to this thread…"
             rows="2"
             maxlength="4000"></textarea>
-          {#if unresolved && draft.trim() && draft.trim() !== unresolved.content}
+          {#if newReplyNotice}
             <p class="thread-notice" role="status">
               An earlier reply here was not confirmed. It stays in this thread for you to retry or
               discard, and this text will be sent as a new reply.

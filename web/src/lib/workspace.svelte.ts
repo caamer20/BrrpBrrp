@@ -5,6 +5,12 @@ import { api, APIError, errorMessage } from './api';
 import { disableNotifications } from './notifications';
 import { readDrafts, writeDrafts } from './drafts';
 import {
+  readOperations,
+  writeOperations,
+  clearOperations,
+  type ComposerOperation
+} from './operations';
+import {
   clearOutbox,
   isOperationKey,
   operationExpired,
@@ -176,6 +182,14 @@ class Workspace {
   // account, and a session that has moved must not write them under the new account's
   // key: that would move one account's unconfirmed sends into another's device scope.
   private outboxAccount = '';
+  // Which unresolved operation each composer's submitted words belong to, by slot. The
+  // outbox says what the account still owes an answer for; this says which of those
+  // operations a draft is a retry of. It is reactive ($state) because a component's key
+  // selection derives from it: a register written while the composer is open must
+  // invalidate that derivation, and an untracked write would leave the first (empty)
+  // answer cached forever (review 17, V17-01 — caught by the rendered journey).
+  private composerOperations = $state(new Map<string, ComposerOperation[]>());
+  private operationsAccount = '';
   get recoveredMessages() {
     return this.outbox.filter((entry) => entry.recovery);
   }
@@ -549,6 +563,7 @@ class Workspace {
     await this.refreshState();
     this.saveDrafts = !!this.user && storage.getItem(`brrp.save-drafts.${this.user.id}`) === 'true';
     if (this.saveDrafts && this.user) this.drafts = readDrafts(storage, this.user.id);
+    this.restoreComposerOperations();
     let restored: ReturnType<typeof consumeUpdateDrafts> = null;
     try {
       if (this.user) restored = consumeUpdateDrafts(sessionStorage, this.user.id);
@@ -1214,6 +1229,129 @@ class Workspace {
     writeOutbox(storage, this.user.id, this.outbox);
   }
 
+  // liveComposerOperations is the association record with the dead operations removed:
+  // an association is meaningful only while the durable entry it names is still
+  // unresolved, at the same destination and with the same words. A restored entry that
+  // expired, a released operation, or storage that dropped the newest entries all end
+  // the association the same way — by no longer being able to answer for it.
+  private liveComposerOperations() {
+    const live = new Map<string, ComposerOperation[]>();
+    for (const [slot, operations] of this.composerOperations) {
+      const destination = slot.slice('thread:'.length);
+      const kept = operations.filter((operation) =>
+        this.outbox.some(
+          (entry) =>
+            entry.key === operation.key &&
+            !entry.recovery &&
+            entry.thread_id === destination &&
+            entry.content === operation.content
+        )
+      );
+      if (kept.length) live.set(slot, kept);
+    }
+    return live;
+  }
+
+  // persistComposerOperations writes the associations beside the drafts and the queue,
+  // under the same opt-in, so a reload can resume a retry under its original key.
+  private persistComposerOperations() {
+    if (!this.saveDrafts || !this.user) return;
+    if (this.operationsAccount !== '' && this.operationsAccount !== this.user.id) return;
+    this.operationsAccount = this.user.id;
+    writeOperations(storage, this.user.id, this.liveComposerOperations());
+  }
+
+  // restoreComposerOperations reads them back, with the drafts they describe. A
+  // restored draft whose operation is still unresolved has to retry under that
+  // operation's own key; without the association the same words would be submitted as
+  // new work and could commit twice (review 17, V17-01). Without draft saving there is
+  // nothing restored — neither drafts nor associations — so the map is emptied.
+  private restoreComposerOperations() {
+    this.composerOperations = new Map();
+    this.operationsAccount = '';
+    if (!this.saveDrafts || !this.user) return;
+    this.composerOperations = new Map(Object.entries(readOperations(storage, this.user.id)));
+    this.operationsAccount = this.user.id;
+  }
+
+  // recordComposerOperation is the explicit association between one composer's submitted
+  // words and the operation key they were submitted under: author (this session's
+  // account), destination (the slot), snapshot (the words) and key. Retry selection uses
+  // this record, never a search of the outbox for matching text — identical words can be
+  // two deliberate sends, and only the submission a composer recorded is a retry of it.
+  private recordComposerOperation(threadID: string, key: string, content: string) {
+    if (!isOperationKey(key)) return;
+    const slot = `thread:${threadID}`;
+    const existing = this.composerOperations.get(slot) ?? [];
+    // A retry records the same association again; it keeps its place so the list stays
+    // in submission order and the operation a composer is working on cannot be
+    // reordered by pressing Reply. Only a genuinely new key is appended.
+    const operations = existing.some((operation) => operation.key === key)
+      ? existing.map((operation) => (operation.key === key ? { key, content } : operation))
+      : [...existing, { key, content }];
+    // The slot itself is re-inserted, so when the store is at its slot bound the
+    // threads whose composers are active are the ones that stay.
+    this.composerOperations.delete(slot);
+    this.composerOperations.set(slot, operations);
+    this.persistComposerOperations();
+  }
+
+  // forgetComposerOperations ends the retryability of one operation in the composer's
+  // own record. Every path that releases an entry — acknowledged, refused, expired,
+  // discarded, dropped — ends it here too, so released work cannot be replayed as a
+  // retry of something that is over.
+  private forgetComposerOperations(key: string) {
+    let changed = false;
+    for (const [slot, operations] of [...this.composerOperations]) {
+      const kept = operations.filter((operation) => operation.key !== key);
+      if (kept.length === operations.length) continue;
+      if (kept.length) this.composerOperations.set(slot, kept);
+      else this.composerOperations.delete(slot);
+      changed = true;
+    }
+    if (changed) this.persistComposerOperations();
+  }
+
+  // acknowledgeComposerOperation is what every path that receives a stored message runs:
+  // the operation is over, so its association goes, and any composer slot still holding
+  // exactly the acknowledged snapshot is cleared because those words are now a message.
+  // A slot holding anything newer is left alone — only the matching snapshot clears
+  // (review 17, V17-01). The panel's own successful response performs the same clearing
+  // through clearSentDraft; this covers the acknowledgements that arrive by websocket or
+  // by reconciliation after a reload, when no panel was open to hear the answer.
+  private acknowledgeComposerOperation(key: string) {
+    const owner = this.identity();
+    for (const [slot, operations] of [...this.composerOperations]) {
+      for (const operation of operations) {
+        if (operation.key === key) this.clearSentDraft(slot, operation.content, owner);
+      }
+    }
+    this.forgetComposerOperations(key);
+  }
+
+  // threadComposerOperations lists this composer's still-unresolved operations for a
+  // thread, oldest first. The composer uses it to select the key the current words were
+  // already submitted under and to say honestly that other words here are unconfirmed.
+  //
+  // The live outbox is read before anything else so a derivation over this answer
+  // depends on the entries even while this composer has no operations recorded yet;
+  // an early return that skipped the read would cache the first empty answer and never
+  // see the register that follows the next send (review 17, V17-01).
+  threadComposerOperations(threadID: string): ComposerOperation[] {
+    const live = this.outbox;
+    const operations = this.composerOperations.get(`thread:${threadID}`);
+    if (!operations?.length) return [];
+    return operations.filter((operation) =>
+      live.some(
+        (entry) =>
+          entry.key === operation.key &&
+          !entry.recovery &&
+          entry.thread_id === threadID &&
+          entry.content === operation.content
+      )
+    );
+  }
+
   // trackOutbox records one submitted send so a lost acknowledgement is recoverable.
   // The destination is recorded whole — thread and conversation — so a restored
   // operation is retried where it was going, never where the app happens to be.
@@ -1251,6 +1389,9 @@ class Workspace {
       ? this.outbox.map((item) => (item.key === key ? recoveryEntry(item, explanation) : item))
       : this.outbox.filter((item) => item.key !== key);
     this.persistOutbox();
+    // Whatever ended this operation, it is not retryable any more: the composer's
+    // association to it ends with the entry, so the same words are new work again.
+    this.forgetComposerOperations(key);
     if (explanation)
       this.showToast(
         'A message needs your attention. Your text is available in Recovered messages.'
@@ -1342,13 +1483,11 @@ class Workspace {
     );
   }
 
-  // unresolvedThreadOperation is this client's durable record of one thread send whose
-  // outcome is still unknown. The panel adopts its key, so a reply attempted before a
-  // lost response is reconciled as the same operation rather than sent again as new
-  // work after the panel is closed or the page reloaded.
-  unresolvedThreadOperation(threadID: string) {
-    return this.outbox.find((entry) => !entry.recovery && entry.thread_id === threadID);
-  }
+  // threadComposerOperations above is this client's record of which unresolved
+  // operations a thread composer's words belong to. The panel selects a key from that
+  // association — not from the first outbox entry, and not by matching text against
+  // the outbox — so a retry of the newest reply reconciles under its own key while an
+  // older unresolved reply keeps its independent retry, discard and recovery state.
 
   discardPending(message: Message) {
     if (this.pending[message.idempotency_key]?.pending !== 'failed') return;
@@ -1363,7 +1502,10 @@ class Workspace {
     for (const message of messages) {
       if (message.user_id !== this.user?.id) continue;
       delete this.pending[message.idempotency_key];
-      // An acknowledgement is what clears an entry, whichever path delivered it.
+      // An acknowledgement is what clears an entry, whichever path delivered it. The
+      // composer's association ends with it too, and a draft still holding exactly the
+      // acknowledged words is cleared rather than offered as a duplicate.
+      this.acknowledgeComposerOperation(message.idempotency_key);
       this.releaseOutbox(message.idempotency_key);
       this.messages = this.messages.filter(
         (item) => !item.pending || item.idempotency_key !== message.idempotency_key
@@ -1500,6 +1642,10 @@ class Workspace {
     };
     this.pending[key] = message;
     this.trackOutbox(message, []);
+    // The submitted words and the key they were submitted under are associated here, at
+    // the one place a thread send is claimed. A later submission of exactly these words
+    // retries this operation under this key; anything else is new work.
+    this.recordComposerOperation(threadID, key, message.content);
     try {
       const saved = await api<Message>(
         `/threads/${encodeURIComponent(threadID)}/messages`,
@@ -1518,6 +1664,7 @@ class Workspace {
         this.releaseOutbox(key);
         return { state: 'dropped' };
       }
+      this.acknowledgeComposerOperation(key);
       this.releaseOutbox(key);
       delete this.pending[key];
       this.onConversationEvent?.({ t: 'message.created', d: saved });
@@ -1587,12 +1734,18 @@ class Workspace {
       if (this.user?.id !== sender || request.session !== this.sessionVersion) return;
       if (request.generation !== this.authorizationGeneration) {
         delete this.pending[message.idempotency_key];
+        this.acknowledgeComposerOperation(message.idempotency_key);
         this.releaseOutbox(message.idempotency_key);
         this.refreshWorkspace = true;
         this.scheduleChanges();
         return;
       }
       delete this.pending[message.idempotency_key];
+      // The stored message is the acknowledgement: the operation is over, and a draft
+      // still holding exactly its words is cleared — a slot holding anything newer is
+      // not. This is the acknowledgement path for a reconciliation that no open panel
+      // heard, and for a retry the author pressed on a pending row.
+      this.acknowledgeComposerOperation(message.idempotency_key);
       this.releaseOutbox(message.idempotency_key);
       this.onConversationEvent?.({ t: 'message.created', d: saved });
       if (saved.reply_to_id) this.queueParentRefresh(saved.reply_to_id, this.conversationId(saved));
@@ -2094,9 +2247,11 @@ class Workspace {
         this.draftsClearedFor = '';
         writeDrafts(storage, this.user.id, this.drafts);
         this.persistOutbox();
+        this.persistComposerOperations();
       } else {
         storage.removeItem(`brrp.drafts.${this.user.id}`);
         clearOutbox(storage, this.user.id);
+        clearOperations(storage, this.user.id);
         // The device scope was just cleared on purpose; a composer that unmounts now
         // must not write the text back into it.
         this.draftsClearedFor = this.user.id;
@@ -2273,12 +2428,14 @@ class Workspace {
       if (this.user) {
         storage.removeItem(`brrp.drafts.${this.user.id}`);
         clearOutbox(storage, this.user.id);
+        clearOperations(storage, this.user.id);
         // A sign-out clears this account's drafts and unconfirmed sends from the
         // device; a composer unmounting afterwards must not put them back.
         this.draftsClearedFor = this.user.id;
       }
       this.outbox = [];
       this.drafts = {};
+      this.composerOperations = new Map();
       try {
         clearUpdateDrafts(sessionStorage);
       } catch {
@@ -2315,6 +2472,8 @@ class Workspace {
     this.pending = {};
     this.outbox = [];
     this.outboxAccount = '';
+    this.composerOperations = new Map();
+    this.operationsAccount = '';
     this.readCursors = {};
     this.channelNotificationMutes = {};
     this.channelNotificationsReady = false;

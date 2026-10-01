@@ -45,3 +45,24 @@ export function canSendThreadReply(options: {
     options.draft.trim().length > 0
   );
 }
+
+/** One still-unresolved operation a thread composer recorded: its key and its words. */
+export type ThreadOperation = { key: string; content: string };
+
+/**
+ * The operation a composer's submitted words are a retry of, if any.
+ *
+ * The candidates are the composer's own association record for the thread — the
+ * submissions it actually made, each with the immutable snapshot it was submitted
+ * under. The exact words being submitted select *that* operation among every
+ * unresolved one: retrying the newest reply reuses its own key even while an older
+ * reply is still unresolved, instead of rotating the key because the older entry
+ * came first. `undefined` means these words are new work, which is what edited words
+ * and words whose operation has settled are (review 17, V17-01).
+ */
+export function retryOperationKey(
+  operations: readonly ThreadOperation[],
+  submitted: string
+): string | undefined {
+  return operations.find((operation) => operation.content === submitted)?.key;
+}

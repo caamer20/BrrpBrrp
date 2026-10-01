@@ -5,10 +5,14 @@ import ts from 'typescript';
 
 // Exercise request ordering with deferred responses and an inert browser shell.
 const source = await readFile(new URL('../src/lib/workspace.svelte.ts', import.meta.url), 'utf8');
-// The workspace imports the outbox store at runtime, and the shell below strips imports, so the
-// store's real source is compiled into the same module: the tests exercise the shipped code
-// rather than a stand-in for it.
+// The workspace imports the outbox and operation-association stores at runtime, and the
+// shell below strips imports, so the stores' real sources are compiled into the same
+// module: the tests exercise the shipped code rather than a stand-in for it.
 const outboxSource = await readFile(new URL('../src/lib/outbox.ts', import.meta.url), 'utf8');
+const operationsSource = await readFile(
+  new URL('../src/lib/operations.ts', import.meta.url),
+  'utf8'
+);
 const draftsSource = await readFile(new URL('../src/lib/drafts.ts', import.meta.url), 'utf8');
 // The active-view rule is a dependency of both markRead and the mention notification,
 // and the shell below strips imports, so it is inlined too — otherwise the methods would
@@ -17,13 +21,14 @@ const activeViewSource = await readFile(
   new URL('../src/lib/active-view.ts', import.meta.url),
   'utf8'
 );
-const shellModules = [outboxSource, draftsSource, activeViewSource]
+const shellModules = [outboxSource, operationsSource, draftsSource, activeViewSource]
   .map((file) =>
     ts
       .transpileModule(file, {
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 }
       })
       .outputText.replace(/^export /gm, '')
+      .replace(/import .*? from .*?;\n/g, '')
   )
   .join('\n');
 const compiled = ts
@@ -2194,14 +2199,14 @@ test('an unresolved operation keeps its original intent when other text reuses i
     return Promise.reject(apiError('server busy', 503));
   });
   assert.equal((await value.sendIntoThread(thread, 'the original reply', key)).state, 'uncertain');
-  assert.equal(value.unresolvedThreadOperation(thread).content, 'the original reply');
+  assert.equal(value.threadComposerOperations(thread)[0].content, 'the original reply');
   const durable = JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`));
   assert.equal(durable[0].content, 'the original reply', 'the durable intent changed');
 
   const reused = await value.sendIntoThread(thread, 'an edited reply', key);
   assert.equal(reused.state, 'refused');
   assert.equal(
-    value.unresolvedThreadOperation(thread).content,
+    value.threadComposerOperations(thread)[0].content,
     'the original reply',
     'the edit rewrote the operation it reused'
   );

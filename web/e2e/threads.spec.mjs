@@ -157,3 +157,117 @@ test('a thread a reader cannot reach is not found rather than forbidden', async 
     await expect(list.getByText(/Start a named thread/)).toBeVisible();
   }
 });
+
+// Review 17, V17-01, through the rendered member interface. Two replies are left
+// uncertain in a row — the first never reaches the server, the second is stored and
+// its response is discarded, which is precisely a committed send whose acknowledgement
+// was lost — and then each is retried. The operation identities must survive: retrying
+// the older reply posts under its own key while the newer stays untouched, and
+// retrying the newer words directs the receipt at the original reply instead of
+// storing a second one under a rotated key. The server's own message count is the
+// judge; a client that merely painted "sent" could not fake it.
+test('two uncertain thread replies retry under their own keys', async ({ page, request }) => {
+  test.setTimeout(180000);
+  const FIRST = 'A: the first uncertain reply in this thread';
+  const SECOND = 'B: the second uncertain reply in this thread';
+  await signInOverApi(request);
+  await signIn(page, OWNER);
+  await page
+    .getByRole('button', { name: new RegExp(CHANNEL, 'i') })
+    .first()
+    .click();
+  await expect(page.getByRole('heading', { name: CHANNEL })).toBeVisible();
+
+  const composer = page.locator('.composer textarea').first();
+  await composer.fill('A root line for the retry identity journey.');
+  await composer.press('Enter');
+  await expect(
+    page.locator('article.message:has-text("retry identity journey")').first()
+  ).toBeVisible();
+  await startThreadFrom(page, 'retry identity journey', 'Retry identity');
+  const thread = page.getByRole('dialog');
+  const reply = thread.getByLabel('Reply to this thread');
+
+  // The two uncertain outcomes are produced deliberately, and only for the first
+  // request carrying each text; every retry afterwards goes through untouched.
+  const posts = [];
+  const seen = new Map();
+  await page.route('**/api/threads/*/messages', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    const content = body?.content ?? '';
+    const count = (seen.get(content) ?? 0) + 1;
+    seen.set(content, count);
+    posts.push({ content, key: body?.idempotency_key });
+    if (count === 1 && content === FIRST) {
+      // Never delivered: the transport dropped it before the server saw it.
+      await route.abort();
+      return;
+    }
+    if (count === 1 && content === SECOND) {
+      // Delivered and stored, and the response is discarded — a committed reply whose
+      // acknowledgement was lost.
+      await route.fetch();
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+
+  await reply.fill(FIRST);
+  await thread.getByRole('button', { name: 'Reply', exact: true }).click();
+  // The refusal is honest: the text stays in the composer and the reply is visible as
+  // unconfirmed, with its own retry.
+  await expect(reply).toHaveValue(FIRST);
+  await expect(thread.locator('button.retry-link')).toHaveCount(1);
+
+  await reply.fill(SECOND);
+  await thread.getByRole('button', { name: 'Reply', exact: true }).click();
+  await expect(reply).toHaveValue(SECOND);
+  // Both replies are unconfirmed; the second may already be rendered from the server's
+  // own event, which is exactly the committed case.
+  await expect(thread.locator(`article.message:has-text("${SECOND}")`).first()).toBeVisible();
+
+  // Retrying the older reply uses its own key, and leaves the newer operation and the
+  // composer's words untouched. B's pending row may be hidden because the committed
+  // reply already rendered from the server's own event; the words in the composer and
+  // the captured keys are what the contract rests on, not that row's visibility.
+  const firstRow = thread
+    .locator(`article.message:has-text("${FIRST}")`)
+    .getByRole('button', { name: 'Message not sent · Retry' });
+  await firstRow.click();
+  await expect(reply).toHaveValue(SECOND);
+  const firstPosts = posts.filter((post) => post.content === FIRST);
+  expect(firstPosts.length).toBe(2);
+  expect(firstPosts[1].key).toBe(firstPosts[0].key);
+  expect(posts.filter((post) => post.content === SECOND).length).toBe(1);
+
+  // Pressing Reply on the unchanged, newly-uncertain words retries that operation
+  // under its own key: the receipt answers with the original reply instead of a
+  // second copy, and only then does the composer clear. Both operations are now
+  // settled, so no unconfirmed row is left behind.
+  await thread.getByRole('button', { name: 'Reply', exact: true }).click();
+  await expect(reply).toHaveValue('');
+  await expect(thread.locator('button.retry-link')).toHaveCount(0);
+  const secondPosts = posts.filter((post) => post.content === SECOND);
+  expect(secondPosts.length).toBe(2);
+  expect(secondPosts[1].key).toBe(secondPosts[0].key);
+
+  // The server's own record is the judge: one stored reply per text, each keeping the
+  // key it was originally submitted under.
+  const state = await (await request.get('/api/state')).json();
+  const channel = state.channels.find((item) => item.name === CHANNEL);
+  const threads = await (await request.get(`/api/channels/${channel.id}/threads`)).json();
+  const target = threads.find((item) => item.title === 'Retry identity');
+  expect(target, 'the journey thread is missing').toBeTruthy();
+  const stored = await (await request.get(`/api/threads/${target.id}/messages`)).json();
+  const storedFirst = stored.filter((message) => message.content === FIRST);
+  const storedSecond = stored.filter((message) => message.content === SECOND);
+  expect(storedFirst.length, 'the older reply was stored a wrong number of times').toBe(1);
+  expect(storedSecond.length, 'the committed reply was stored twice').toBe(1);
+  expect(storedFirst[0].idempotency_key).toBe(firstPosts[0].key);
+  expect(storedSecond[0].idempotency_key).toBe(secondPosts[0].key);
+});

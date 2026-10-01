@@ -34,31 +34,60 @@ test('a page is walked by its first row, not its last', () => {
 
 test('the composer keeps one immutable intent per unresolved operation', () => {
   const source = readSource('src/lib/components/NamedThreadPanel.svelte');
-  // The key follows the words being sent rather than being frozen blindly: the same
-  // words as an unresolved operation retry under its own key and reconcile, while
-  // edited words are new work and get a fresh key.
-  assert.match(
-    source,
-    /unresolved && unresolved\.content === submitted \? unresolved\.key : crypto\.randomUUID\(\)/
-  );
-  // The old design adopted a stored key into component state whose type was the UUID
-  // the first `crypto.randomUUID()` produced; the restored key was a plain string, and
-  // adopting it without validation would let stored data decide what key a send is
-  // submitted under.
-  assert.doesNotMatch(source, /operationKey/);
+  // The words being submitted select their own operation among every association the
+  // composer recorded for this thread — not the first outbox entry, and not a text
+  // search over the queue: retrying the newest reply must not rotate its key because
+  // an older unresolved reply happened to come first (review 17, V17-01).
+  assert.match(source, /workspace\.threadComposerOperations\(id\)/);
+  // The decision itself is the shared helper — the same function the deterministic
+  // identity tests call — so the panel cannot drift from the tested behavior.
+  assert.match(source, /retryOperationKey\(unresolvedOperations, submitted\)/);
+  assert.match(source, /import \{ threadSubmitState, canSendThreadReply, retryOperationKey \}/);
+  // The old design asked the store for the first unresolved entry in the thread; that
+  // lookup cannot tell one retry from another when a thread holds several.
+  assert.doesNotMatch(source, /unresolvedThreadOperation\(/);
+  // The association is written where the send is claimed, so a later submission of the
+  // same words can find the key it was submitted under.
+  const workspace = readSource('src/lib/workspace.svelte.ts');
+  assert.match(workspace, /recordComposerOperation\(threadID, key, message\.content\)/);
   // And the durable record is immutable on the store's side too, so an edit can never
   // rewrite what the key means.
-  const workspace = readSource('src/lib/workspace.svelte.ts');
   assert.match(workspace, /recorded\.content !== content\.trim\(\)/);
   assert.match(workspace, /item\.key === message\.idempotency_key && !item\.recovery/);
+  // Reusing a stored key must select only a still-unresolved operation at this
+  // destination; a released key is not a retry.
+  assert.match(
+    workspace,
+    /entry\.key === operation\.key &&\s*!entry\.recovery &&\s*entry\.thread_id === threadID/
+  );
+  // Released work is not retryable: every release ends the association with it.
+  assert.match(workspace, /this\.forgetComposerOperations\(key\);/);
+  // The live outbox must be read before any early return in the lookup: a derivation
+  // over the answer depends on the entries, and returning early first would cache the
+  // initial empty answer forever — the rendered journey caught exactly that.
+  assert.match(
+    workspace,
+    /threadComposerOperations\(threadID: string\): ComposerOperation\[\] \{\s*const live = this\.outbox;/
+  );
+  assert.match(
+    workspace,
+    /private composerOperations = \$state\(new Map<string, ComposerOperation\[\]>\(\)\)/
+  );
 });
 
 test('edited text after an uncertain send is announced as a new reply', () => {
   const source = readSource('src/lib/components/NamedThreadPanel.svelte');
   // The unresolved operation stays in the thread for its own retry or discard, and the
   // edited words are not silently submitted under its key or presented as a retry.
-  assert.match(source, /unresolved && draft\.trim\(\) && draft\.trim\(\) !== unresolved\.content/);
+  assert.match(source, /const newReplyNotice = \$derived\(/);
+  assert.match(
+    source,
+    /!unresolvedOperations\.some\(\(operation\) => operation\.content === draft\.trim\(\)\)/
+  );
   assert.match(source, /will be sent as a new reply/);
+  // The warning also covers unconfirmed replies shown as pending rows, so it does not
+  // depend on which session submitted them.
+  assert.match(source, /unresolvedOperations\.length > 0 \|\| pending\.length > 0/);
 });
 
 test('a thread that is not found is not re-requested', () => {
