@@ -27,6 +27,10 @@
     void activity.load();
     void activity.loadPreferences();
   });
+  // Mount and destroy are a pair on a singleton: closing the panel invalidates whatever
+  // was in flight, and opening it again says there is a listener. Without the mount,
+  // the second open in a session loaded nothing at all.
+  activity.mount();
   onDestroy(() => activity.destroy());
 
   // What a row says. It never says what was written: a private notification is the

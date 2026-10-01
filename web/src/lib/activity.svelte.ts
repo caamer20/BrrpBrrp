@@ -45,6 +45,17 @@ export interface NotificationPreference {
  * captures the version it started with, and a result for a superseded one is
  * dropped rather than applied.
  */
+import { admitted as isAdmitted } from './admission';
+
+/**
+ * The activity controller.
+ *
+ * Its admission question lives in `./admission` rather than inline, because the
+ * controller is a Svelte module that node cannot import (its imports are
+ * extensionless), so a test could only ever read this file's source. Extracting the one
+ * decision that matters made it directly testable, which is what found that teardown
+ * was permanent.
+ */
 class ActivityStore {
   entries = $state<ActivityEntry[]>([]);
   cursor = $state('');
@@ -68,13 +79,13 @@ class ActivityStore {
   }
 
   admitted(request: { account: string; generation: number; version: number }) {
-    return (
-      this.alive &&
-      request.account === (workspace.user?.id ?? '') &&
-      request.generation === workspace.authorizationGeneration &&
-      request.version === this.version &&
-      !workspace.authorizationUnverified
-    );
+    return isAdmitted(request, {
+      account: workspace.user?.id ?? '',
+      generation: workspace.authorizationGeneration,
+      version: this.version,
+      alive: this.alive,
+      authorizationUnverified: workspace.authorizationUnverified
+    });
   }
 
   /** Replaces the list. `append` is the "load older" case, which must not reset it. */
@@ -189,6 +200,26 @@ class ActivityStore {
     this.loaded = false;
     this.error = '';
     this.preferences = [];
+  }
+
+  /**
+   * Revives the controller when a panel mounts.
+   *
+   * This store is a module-level singleton, so a member who closes the Activity panel
+   * and opens it again mounted a new panel over a dead controller: `destroy` had set
+   * `alive` false for good, `alive` gates `admitted`, and `admitted` gates every load —
+   * so the second open rendered an empty panel with no error and no way to retry. The
+   * browser test could not see it because the panel is mounted once per journey.
+   *
+   * `alive` exists to discard a response that arrives after the panel is gone, which is
+   * a statement about *in-flight work* rather than about the controller's existence.
+   * So it is per-mount: unmount invalidates what was in flight, and mount says there is
+   * a listener again. The account and generation fences are unaffected — they are what
+   * keep one account's private metadata out of the next account's panel, and they do
+   * not depend on the panel being open.
+   */
+  mount() {
+    this.alive = true;
   }
 
   destroy() {

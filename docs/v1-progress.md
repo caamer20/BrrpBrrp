@@ -1052,3 +1052,28 @@ tokens at all.
 composer, because the tokenizer could be right and the renderer still fold it — the
 element is `pre-wrap`, so the break has to survive all the way to a line box.
 
+## Leaving the Activity panel must not disable it for the session
+
+The activity controller is a module-level singleton, so closing the panel and opening
+it again mounts a new panel over the same object. Teardown set `alive` false to discard
+a response arriving after the panel is gone — correct as a statement about work *in
+flight*, and wrong as a statement about the controller's existence. `alive` gates
+`admitted`, `admitted` gates every fetch, and nothing set it back. **The second time a
+member opened Activity in a session it rendered an empty panel with no error and no way
+to retry**, which from the outside is indistinguishable from a server that returned
+nothing.
+
+Teardown and mount are now a pair. The account, authority-generation and version fences
+are untouched by a mount — they are what keep one account's private activity metadata out
+of the next account's panel, and they now have tests saying so across any number of
+mounts. A remount revives admission for *new* work; the response of a request made
+before the teardown is still refused, because teardown advanced the controller's version
+and that fence does not come back.
+
+The admission question moved into `web/src/lib/admission.ts`. It had to: the controller
+is a Svelte module whose imports are extensionless, so node cannot import it and the
+existing contract tests could only read its *source* — which is how a permanently dead
+controller passed a test suite. The one decision that matters is now directly testable,
+and it returns a strict boolean rather than whatever the first falsy operand happened to
+be, so a caller and a logger cannot disagree about a state the types say is impossible.
+
