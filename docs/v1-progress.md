@@ -1091,3 +1091,32 @@ empty feed and a feed that was never fetched produce the same panel, so rows can
 them apart, but a request that never left the browser can. Removing the `mount()` call
 leaves exactly one fetch across two opens.
 
+
+
+## The schema-13 rehearsal has no baseline here, and the guard proves it
+
+Re-run at schema 24 against a seed made with the current binary, the rehearsal reports
+four failures, and all four are the same fact:
+
+```
+FAIL  the seed has 13 applied migrations — highest is 24
+FAIL  the seed is still the schema-13 snapshot — highest is 24
+FAIL  the request table has no attempt identity yet — ...,attempt_id
+FAIL  the seed really holds private evidence — 0 row(s)
+```
+
+That is the gate **working**. The rehearsal runs the real prior executable and seeds
+through its supported API, so passing the current binary where a schema-13 release
+belongs produces a fixture that never was what it claimed — and the script says so in
+four different ways rather than rehearsing a migration that did not happen.
+
+**What is needed, and is not here.** The schema-13 release's own archive, with its real
+SHA-256 in `scripts/baseline-releases.json`, served through `BRRP_BASELINE_RELEASE_URL` or
+placed in `BRRP_BASELINE_RELEASE_DIR`. No archived release in this repository writes
+schema 13 — the table above records what each one writes, verified by running them. The
+CI step therefore fails, which is the intended outcome: a rehearsal that runs against the
+wrong bytes qualifies nothing, and one that silently skips is the exact failure this gate
+exists to prevent.
+
+This is the one §5 item that cannot be completed locally. It is not blocked on analysis
+or on a missing test; it is blocked on an archive that has to be produced and pinned.
