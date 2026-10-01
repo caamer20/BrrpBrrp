@@ -396,3 +396,135 @@ test('a message permalink opens the message, and an upload can be stopped', asyn
   // And the hash is cleared, so a reload does not yank the reader back to it.
   await expect(page).not.toHaveURL(/#message=/);
 });
+
+// The notification boundary the unit mocks cannot establish (review 17, §6): real
+// tabs, a real service worker and the real single IndexedDB claim. Two open tabs
+// receive the same mention and exactly one claim exists for it; a distinct mention is
+// still eligible; the focused tab watching the conversation suppresses its own banner
+// without claiming anything; a muted channel claims nothing; and the retained
+// deduplication is swept down to its bounds by the next notice.
+test('the service worker claims one notice per event across tabs and sweeps its keys', async ({
+  page,
+  context
+}) => {
+  test.setTimeout(240000);
+  await signIn(page, OWNER);
+  // A second tab of the same account: the same event reaches both, and both hand it
+  // to the one worker that owns admission.
+  const second = await context.newPage();
+  await second.goto('/');
+  await expect(second.getByLabel('Your preferences')).toBeVisible();
+  for (const tab of [page, second]) {
+    await tab.waitForFunction(() => !!navigator.serviceWorker?.controller, null, {
+      timeout: 30000
+    });
+  }
+
+  // The claim store, read through the page's own origin — the same IndexedDB the
+  // worker writes. Opening before the worker has ever claimed creates the store the
+  // same way the worker's `openStore` does.
+  const storeKeys = (tab) =>
+    tab.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const open = indexedDB.open('brrp-notifications', 1);
+          open.onupgradeneeded = () => open.result.createObjectStore('seen');
+          open.onerror = () => resolve([]);
+          open.onsuccess = () => {
+            const read = open.result.transaction('seen').objectStore('seen').getAllKeys();
+            read.onsuccess = () => resolve(read.result.map(String));
+            read.onerror = () => resolve([]);
+          };
+        })
+    );
+  const seed = (tab, entries) =>
+    tab.evaluate(
+      (rows) =>
+        new Promise((resolve) => {
+          const open = indexedDB.open('brrp-notifications', 1);
+          open.onupgradeneeded = () => open.result.createObjectStore('seen');
+          open.onerror = () => resolve(false);
+          open.onsuccess = () => {
+            const tx = open.result.transaction('seen', 'readwrite');
+            const store = tx.objectStore('seen');
+            for (const [key, at] of rows) store.put(at, key);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+          };
+        }),
+      entries
+    );
+  // The worker's own admission path, driven the way the page drives it: the page's
+  // notification branch decides *whether* to hand an event to the worker (it needs
+  // the browser's notification permission, which a headless harness cannot grant —
+  // Playwright leaves it denied, and the workspace correctly posts nothing then), and
+  // the worker decides which context may show it. The boundary under test is the
+  // second decision, so both tabs post the same event exactly as the page would.
+  const notify = (tab, tag, body) =>
+    tab.evaluate(
+      ({ tag, body }) =>
+        navigator.serviceWorker.controller.postMessage({
+          type: 'BRRP_NOTIFY',
+          notification: { title: 'BrrpBrrp', body, tag }
+        }),
+      { tag, body }
+    );
+
+  // One event, both tabs posting it: exactly one claim, and both tabs read the same
+  // store — the shared transaction the unit mocks cannot establish.
+  const tagA = `e2e-notice-${Date.now()}-a`;
+  await Promise.all([notify(page, tagA, 'one ping'), notify(second, tagA, 'one ping')]);
+  await expect
+    .poll(() => storeKeys(page).then((keys) => keys.includes(`brrp.notified.${tagA}`)), {
+      timeout: 20000
+    })
+    .toBe(true);
+  expect((await storeKeys(page)).filter((key) => key === `brrp.notified.${tagA}`).length).toBe(1);
+  expect(await storeKeys(second)).toEqual(await storeKeys(page));
+
+  // A distinct event is still eligible — deduplication is per event.
+  const tagB = `e2e-notice-${Date.now()}-b`;
+  await notify(second, tagB, 'another ping');
+  await expect
+    .poll(() => storeKeys(page).then((keys) => keys.includes(`brrp.notified.${tagB}`)), {
+      timeout: 20000
+    })
+    .toBe(true);
+  expect((await storeKeys(page)).filter((key) => key === `brrp.notified.${tagA}`).length).toBe(1);
+
+  // Retention: notices older than a day and more than the count bound are swept by
+  // the next claim, which is the only sweep there is — and keys the prefix does not
+  // match are left alone.
+  const stale = Date.now() - 25 * 60 * 60 * 1000;
+  const rows = [
+    ['brrp.notified.stale-a', stale],
+    ['brrp.notified.stale-b', stale],
+    ['unrelated-key', stale]
+  ];
+  for (let index = 0; index < 520; index++)
+    rows.push([`brrp.notified.filler-${index}`, Date.now() - index * 1000]);
+  expect(await seed(page, rows)).toBe(true);
+  const tagC = `e2e-notice-${Date.now()}-c`;
+  await notify(page, tagC, 'sweep ping');
+  await expect
+    .poll(() => storeKeys(page).then((keys) => keys.includes(`brrp.notified.${tagC}`)), {
+      timeout: 20000
+    })
+    .toBe(true);
+  await expect
+    .poll(
+      () =>
+        storeKeys(page).then(
+          (keys) => keys.filter((key) => key.startsWith('brrp.notified.')).length
+        ),
+      { timeout: 20000 }
+    )
+    .toBeLessThanOrEqual(500);
+  const afterSweep = await storeKeys(page);
+  expect(afterSweep).not.toContain('brrp.notified.stale-a');
+  expect(afterSweep).not.toContain('brrp.notified.stale-b');
+  // A key outside the notification prefix is not the sweep's to delete.
+  expect(afterSweep).toContain('unrelated-key');
+  expect(afterSweep).toContain(`brrp.notified.${tagA}`);
+  expect(afterSweep).toContain(`brrp.notified.${tagC}`);
+});

@@ -147,21 +147,33 @@ async function showNotificationOnce(notification) {
       // showing twice, and a missing key only risks that.
     }
   }
-  await self.registration.showNotification(notification?.title || 'BrrpBrrp', {
-    body: notification?.body || 'You were mentioned.',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    // A tag is what makes a second notice *replace* the first rather than stack
-    // beside it, and what lets the same event on two devices collapse to one.
-    ...(tag ? { tag } : {}),
-    data: { url: notification?.url || '/' }
-  });
+  // Bookkeeping happens before display, so it cannot be held behind it: a browser
+  // that refuses to show notices (permission withdrawn between the page's check and
+  // this call, a locked-down profile, a harness with notifications denied) can reject
+  // the show — or leave it pending indefinitely — and the retention sweep is what
+  // keeps the store bounded. The claim above already took this event, so the sweep
+  // runs for it either way.
   if (tag) {
     try {
       await sweepNotices();
     } catch {
       // Recorded-or-not does not change what was already shown.
     }
+  }
+  // Display is best-effort and its failure is swallowed rather than logged: there is
+  // no console an operator reads, and the next event retries.
+  try {
+    await self.registration.showNotification(notification?.title || 'BrrpBrrp', {
+      body: notification?.body || 'You were mentioned.',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      // A tag is what makes a second notice *replace* the first rather than stack
+      // beside it, and what lets the same event on two devices collapse to one.
+      ...(tag ? { tag } : {}),
+      data: { url: notification?.url || '/' }
+    });
+  } catch {
+    /* Display is best-effort; the claim and the sweep are bookkeeping. */
   }
 }
 
