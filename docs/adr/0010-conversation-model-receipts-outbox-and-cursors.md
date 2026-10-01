@@ -212,3 +212,46 @@ Schema 6 is one transactional migration:
   other identifiers and a recovered text keeps its wording rather than an attachment claim.
 - Independent review (WP-28) and both-host lifecycle evidence (WP-24) remain external
   dependencies, as the completion reviews record.
+
+
+## Re-checked: a second thread is a conflict, and that is the decision
+
+A later handoff listed this as a defect — "`sendIntentDigest` omits thread identity;
+identical content/key sent to another thread replays the wrong message" — and proposed
+putting the destination into the key. It was implemented as migration 25 (rebuilding
+both `message_operations` and `messages` with the thread in their unique keys) and the
+proposed test passed against it.
+
+It was then reverted, because the existing test `TestAThreadIsPartOfTheSendIntent` had
+asserted the opposite all along, with a comment explaining exactly why, and because
+Decision 2 above is the approved answer:
+
+> The destination is *not* part of the key; it is part of the **intent** … The case
+> "different conversation under the same key" is therefore a conflict by intent
+> comparison, not by a silently scoped composite key, which is exactly what review 6
+> asked for.
+
+Three reasons the composite key is wrong, and none of them are visible in a test that
+only sends twice:
+
+- **It cannot express the conflict.** The whole point of the receipt is that reusing a
+  key for other work is *refused with a reason*. Scoping the key by destination turns a
+  refusal into a second delivery, and the client's retry machinery — which keeps the key
+  precisely so a retry reconciles rather than duplicating — loses the ability to tell a
+  lost acknowledgement from a second send.
+- **It weakens the legacy guard the comment describes.** `TestAThreadIsPartOfTheSendIntent`
+  notes that `UNIQUE(user_id, idempotency_key)` is the second of two guards and "the
+  digest is the durable guard; the index is the accident that has been catching the
+  everyday case." Making the index carry the thread keeps the everyday case and leaves
+  the durable guard doing the same work twice, in two places, which is the drift this
+  file exists to prevent.
+- **The evidence for the defect was mine.** The replay I observed — a 200 carrying the
+  first thread's message for a send into the second — was produced by removing the
+  digest's thread from the *comparison path* in the test harness I had just written,
+  not by the shipped code. The shipped code answers that case 409, which is correct.
+
+**What is actually load-bearing here** is the pairing the existing test already
+documents: the digest carries the thread, so a receipt survives the deletion of the row
+the index was guarding, and a retry after deletion reconciles against the receipt
+instead of recreating content. That is a real, tested property. "Two threads, one key"
+returning a conflict is the approved behaviour, not a gap.

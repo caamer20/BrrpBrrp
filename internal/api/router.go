@@ -97,6 +97,13 @@ type Server struct {
 	// atomically because the hook may run on a handler goroutine while the test that
 	// installed it is still running, so an ordinary field would be a data race.
 	streamAdmission atomic.Pointer[func()]
+	// threadCommitHook, when set, runs inside the committing transaction of a thread
+	// reply, after the thread's state has been re-read and before the row is written.
+	// It is the exact window the check is meant to cover, and it cannot be reached by
+	// concurrency on a single-connection store: a second writer waits for this
+	// transaction. A test installs it to place a lock underneath the send and observe
+	// what the committing transaction does about it. Production leaves it nil.
+	threadCommitHook atomic.Pointer[func(threadID string)]
 	// audienceInterleave, when set, runs while an audience snapshot is open, between
 	// the channel and role reads and the revision read. A test uses it to attempt an
 	// authorization change at exactly that point; because the snapshot holds the

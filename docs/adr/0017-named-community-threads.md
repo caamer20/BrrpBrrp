@@ -220,3 +220,36 @@ cursor in it.
 
 The table cascades from `threads`, so a deleted thread takes its readers' cursors with
 it and leaves nothing reachable through a thread id that no longer resolves.
+
+
+## The lock race is produced by stopping the send, not by racing it
+
+`createThreadMessage` resolves the thread and checks its state in one transaction,
+commits, and then runs the ordinary send. A lock landing between those two points is
+not seen by that check — it has already answered.
+
+Concurrency cannot reach that window. The store is a single connection, so a second
+writer waits for the open transaction rather than interleaving with it. No barrier,
+no repeated loop and no scheduler manipulation reaches it, which is what the original
+comment on the re-read said, and it is why the invariant was asserted by inspection
+rather than by a test: **the gap was invisible because it is unreachable by racing.**
+
+It is reachable by stopping. `threadCommitHook` runs at exactly that seam — after the
+check has committed, before the send begins — and a test installs it, locks the thread
+through the supported route from inside that window, and lets the send continue. The
+lock is real state applied through the real route; only the *timing* is staged.
+
+The assertion is the state afterwards rather than the status code, because a 403 alone
+does not distinguish "the committing transaction caught the lock" from "the earlier check
+happened to run after it". The test checks that the raced reply is absent from the
+thread, that the thread is locked, and that a reply sent *before* the race is still
+there — a fix that dropped everything would pass the first assertion.
+
+Removing the in-transaction re-read makes it fail with a reply in a locked thread. That
+is the whole point of the seam: it turns a comment into a regression.
+
+**Why the hook exists rather than a looser assertion.** The alternative was to assert
+the re-read's *presence* — a source string check, or a test that only proves the handler
+runs. Both pass against code that re-reads the thread somewhere harmless. This one fails
+against code that does not re-read it at the point that decides the write, which is the
+only place the distinction lives.

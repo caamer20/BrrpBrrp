@@ -468,3 +468,87 @@ func TestThreadCannotBeStartedFromOutsideTheChannel(t *testing.T) {
 		t.Fatalf("%d threads exist after a refused start", count)
 	}
 }
+
+// The deterministic lock race.
+//
+// `createThreadMessage` checks the thread's state in one transaction, commits, and then
+// runs the ordinary send. A lock landing between those two points is not seen by that
+// check — it has already answered. The reply therefore lands in a thread that stopped
+// accepting replies before it was written.
+//
+// Concurrency cannot produce this window. The store is a single connection, so a second
+// writer waits for the open transaction instead of interleaving with it, and no
+// scheduling, barrier or repeated loop reaches it. The previous comment on that
+// re-read said exactly that and therefore relied on inspection; this test stops the send
+// at the seam instead, and locks the thread underneath it.
+//
+// The assertion is the state afterwards, not the status code: a reply that landed in a
+// locked thread is the defect, and a 403 alone would not distinguish "the committing
+// transaction caught the lock" from "the earlier check happened to run after it".
+func TestALockLandingBetweenTheCheckAndTheWriteStillRefusesTheReply(t *testing.T) {
+	s, handler := testServer(t)
+	channelID, alice, _, owner := threadFixture(t, s, handler)
+	root := readJSON[[]db.Message](t, request(t, handler, "GET", "/api/channels/"+channelID+"/messages", nil, alice))[0]
+	thread := startThread(t, handler, channelID, alice, root.ID, "raced", "")
+
+	// The reply that will be raced.
+	reply := request(t, handler, "POST", "/api/threads/"+thread.ID+"/messages",
+		map[string]any{"content": "this must not land", "idempotency_key": "raced-reply-1"}, alice)
+	if reply.Code != 201 {
+		t.Fatalf("the control reply was refused: %d %s", reply.Code, reply.Body.String())
+	}
+
+	// Stop the next send in the window, and lock the thread there. The lock is applied
+	// through the same connection the server uses, from inside the handler, so it is a
+	// real state change rather than a mocked one.
+	locked := make(chan struct{})
+	var once bool
+	hook := func(threadID string) {
+		if once || threadID != thread.ID {
+			return
+		}
+		once = true
+		if w := request(t, handler, "PUT", "/api/threads/"+thread.ID+"/state",
+			map[string]any{"state": "locked"}, owner); w.Code != 200 {
+			t.Errorf("locking the thread inside the window failed: %d %s", w.Code, w.Body.String())
+		}
+		close(locked)
+	}
+	s.threadCommitHook.Store(&hook)
+	defer s.threadCommitHook.Store(nil)
+
+	raced := request(t, handler, "POST", "/api/threads/"+thread.ID+"/messages",
+		map[string]any{"content": "this raced the lock", "idempotency_key": "raced-reply-2"}, alice)
+	<-locked
+
+	if raced.Code != 403 {
+		t.Fatalf("a reply raced a lock that landed mid-send and was answered %d, want 403: %s", raced.Code, raced.Body.String())
+	}
+	// The state, not the status: the raced reply is not in the thread. The thread holds
+	// the one reply the control sent, and its state is locked.
+	var count int
+	if err := s.store.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM messages WHERE thread_id=? AND content=?`, thread.ID, "this raced the lock").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("A REPLY LANDED IN A THREAD LOCKED WHILE IT WAS BEING SENT")
+	}
+	var state string
+	if err := s.store.QueryRowContext(t.Context(), `SELECT state FROM threads WHERE id=?`, thread.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "locked" {
+		t.Fatalf("the thread is %q after the race, want locked", state)
+	}
+	// And the control reply is still there: a fix that dropped everything would pass the
+	// assertion above.
+	var kept int
+	if err := s.store.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM messages WHERE thread_id=? AND content=?`, thread.ID, "this must not land").Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != 1 {
+		t.Fatalf("the control reply is missing: %d rows, want 1", kept)
+	}
+}

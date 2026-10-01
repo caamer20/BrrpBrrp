@@ -226,6 +226,18 @@ func (s *Server) createThreadMessage(w http.ResponseWriter, r *http.Request, use
 	// was written. The route guard decides whether the handler runs; the committing
 	// transaction decides whether the row may be written, and only the second one is
 	// close enough to the write to be about it (ADR 0017; completion review 14, V14-04).
+	// The lock race, and the only place it can be produced. The check above has committed
+	// and the send below has not started; a lock landing here is ignored by that check and
+	// must be caught by the state the send's own committing transaction re-reads.
+	//
+	// Concurrency cannot reach this window — the store is one connection, so a second
+	// writer waits for the transaction rather than interleaving with it — which is
+	// exactly why no scheduling-based test can demonstrate the race and why the
+	// invariant would otherwise be asserted by inspection alone. Production leaves the
+	// hook nil.
+	if hook := s.threadCommitHook.Load(); hook != nil {
+		(*hook)(thread.ID)
+	}
 	r.SetPathValue("thread_write", "1")
 	s.createMessage(w, r, user)
 }
