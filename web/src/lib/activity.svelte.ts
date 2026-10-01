@@ -123,35 +123,33 @@ class ActivityStore {
   }
 
   /**
-   * Acknowledges everything currently listed, from the position rather than from a
-   * set of ids, so a row that arrived between the list and this call is not
-   * acknowledged by accident — the cursor is the last row the person actually saw.
+   * Acknowledges the activity the person has been shown: every unacknowledged row at
+   * or below the newest row on screen, which is what the control promises ("Mark N
+   * seen", for the N the list reported). Rows that arrive after the list was read are
+   * newer than that boundary and stay unacknowledged, so a busy morning cannot
+   * silently disappear into a page read before it started.
+   *
+   * The server returns the exact ids it acknowledged, and only those rows are marked
+   * here. The earlier design sent the *oldest* loaded row and painted the result as a
+   * count over the visible rows, which acknowledged rows the person never saw and
+   * displayed rows as seen that the server still held unacknowledged — the badge came
+   * back on reload (review 17, V17-04).
    */
   async acknowledge() {
     const request = this.identity();
     if (!this.admitted(request)) return false;
     if (this.entries.length === 0) return true;
-    // The cursor is the *oldest loaded* row, because the list is newest-first and the
-    // server acknowledges everything strictly older than this. That is right for the
-    // rows the person has actually seen.
-    const before = this.entries[this.entries.length - 1].id;
+    const before = this.entries[0].id;
     try {
-      const result = await api<{ acknowledged: number; unacknowledged_count: number }>(
-        '/me/activity/acknowledge',
-        'POST',
-        { before }
-      );
+      const result = await api<{
+        acknowledged: string[];
+        unacknowledged_count: number;
+      }>('/me/activity/acknowledge', 'POST', { before });
       if (!this.admitted(request)) return false;
       this.unacknowledged = result.unacknowledged_count;
-      // Only the rows the server actually acknowledged are marked. The count is
-      // carried for this reason: an acknowledgment that reports fewer rows than are on
-      // screen means the server applied a bound the client cannot see, and painting the
-      // whole page "seen" would claim the person looked at rows that stayed unacknowledged
-      // on the server — and would stay unacknowledged after a reload, which is a visible
-      // flicker of the badge coming back.
-      //
-      // The rows are still shown either way: acknowledgment says "seen", not "gone", and
-      // the person may want to look back.
+      // Exactly the persisted set is reflected, by identity. Rows are still shown
+      // either way: acknowledgment says "seen", not "gone", and the person may want
+      // to look back.
       this.entries = markAcknowledged(
         this.entries,
         acknowledgedRows(result.acknowledged),

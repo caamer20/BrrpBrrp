@@ -248,13 +248,25 @@ func TestBlockingStopsDeliveryAndUnblockingDoesNotReplay(t *testing.T) {
 	}
 }
 
-// Acknowledgment is durable, monotonic and separate from reading. A second device
-// acknowledging must not un-acknowledge, and a stale cursor must not move the record
-// backwards.
+// Acknowledgment is durable, monotonic and separate from reading. The boundary names
+// the newest row the person has been shown, the server answers with the exact set it
+// persisted, a second device acknowledging must not un-acknowledge, and a row that
+// arrived after the list was read is not swallowed by it.
 func TestAcknowledgmentIsDurableAndMonotonic(t *testing.T) {
 	s, h, ann, ben, _, conversation := activityFixture(t)
-	first := sendDirect(t, h, ben, conversation, "first", "act-ack-1")
-	second := sendDirect(t, h, ben, conversation, "second", "act-ack-2")
+	recipient := sessionUserID(t, s, ann)
+	sendDirect(t, h, ben, conversation, "first", "act-ack-1")
+	sendDirect(t, h, ben, conversation, "second", "act-ack-2")
+	// The boundary is an *activity row* id, not a message id: they are different
+	// identities, and a cursor that mixes them is how a test can pass for the wrong
+	// reason. The list is newest-first, so the first row is the newest shown.
+	activityIDs := func(page map[string]any) []string {
+		ids := []string{}
+		for _, row := range page["activity"].([]any) {
+			ids = append(ids, row.(map[string]any)["id"].(string))
+		}
+		return ids
+	}
 
 	// The count is account-wide, so it includes the fixture's own request: a person
 	// is not shown "2 unacknowledged" while the badge says 3.
@@ -262,33 +274,76 @@ func TestAcknowledgmentIsDurableAndMonotonic(t *testing.T) {
 	if before["unacknowledged_count"].(float64) != 3 {
 		t.Fatalf("unacknowledged count is %v, want 3", before["unacknowledged_count"])
 	}
-	// Acknowledge up to and including the first, using its id as the cursor.
-	w := request(t, h, "POST", "/api/me/activity/acknowledge", map[string]string{"before": second}, ann)
+	shown := activityIDs(before)
+	// The fixture's request row is *counted* but not listed: its request is no longer
+	// pending, so the list's eligibility projection withholds it while the badge still
+	// counts it. The boundary is the newest row the person was actually shown.
+	if len(shown) != 2 {
+		t.Fatalf("the list shows %d rows, want the 2 messages", len(shown))
+	}
+	newest := shown[0]
+	oldest := shown[len(shown)-1]
+
+	// Everything unacknowledged at or below the newest shown row is one explicit set,
+	// and the answer names exactly it — the withheld request row included, because the
+	// badge the button answered for counted it.
+	w := request(t, h, "POST", "/api/me/activity/acknowledge", map[string]string{"before": newest}, ann)
 	if w.Code != 200 {
 		t.Fatalf("acknowledge: %d %s", w.Code, w.Body.String())
 	}
-	// Acknowledging up to `second` acknowledges everything at or after it in id
-	// order, which is the request row and the first message: two rows, leaving one.
+	acknowledged := readJSON[map[string]any](t, w)["acknowledged"].([]any)
+	if len(acknowledged) != 3 {
+		t.Fatalf("the acknowledgment named %d rows, want the 3 that were unacknowledged", len(acknowledged))
+	}
 	after := listActivity(t, h, ann, "")
-	if after["unacknowledged_count"].(float64) != 1 {
-		t.Fatalf("unacknowledged count is %v, want 1", after["unacknowledged_count"])
+	if after["unacknowledged_count"].(float64) != 0 {
+		t.Fatalf("unacknowledged count is %v, want 0", after["unacknowledged_count"])
 	}
-	// A second device acknowledging an older position does not un-acknowledge what
-	// was already acknowledged.
-	if w := request(t, h, "POST", "/api/me/activity/acknowledge", map[string]string{"before": first}, ann); w.Code != 200 {
-		t.Fatalf("stale acknowledge: %d %s", w.Code, w.Body.String())
-	}
-	var reset int
-	if err := s.store.QueryRow(`SELECT count(*) FROM account_activity WHERE source_id=? AND acknowledged_at=''`, first).Scan(&reset); err != nil {
+	var remaining int
+	if err := s.store.QueryRow(`SELECT count(*) FROM account_activity WHERE user_id=? AND acknowledged_at=''`, recipient).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
-	if reset != 0 {
-		t.Fatal("a stale acknowledgment un-acknowledged a row")
+	if remaining != 0 {
+		t.Fatalf("%d rows the acknowledgment named are still unacknowledged on the server", remaining)
+	}
+
+	// A row that arrives after the list was read is newer than the boundary: an
+	// acknowledgment of what was already on screen must not swallow it.
+	sendDirect(t, h, ben, conversation, "third", "act-ack-3")
+	next := listActivity(t, h, ann, "")
+	if next["unacknowledged_count"].(float64) != 1 {
+		t.Fatalf("a row that arrived after the list left %v unacknowledged, want 1", next["unacknowledged_count"])
+	}
+	newestRow := activityIDs(next)[0]
+
+	// A second device acknowledging an older position does not un-acknowledge what
+	// was already acknowledged, and its named set is exactly the rows it persisted:
+	// none, because everything at or below the old boundary is already seen.
+	stale := request(t, h, "POST", "/api/me/activity/acknowledge", map[string]string{"before": oldest}, ann)
+	if stale.Code != 200 {
+		t.Fatalf("stale acknowledge: %d %s", stale.Code, stale.Body.String())
+	}
+	if named := readJSON[map[string]any](t, stale)["acknowledged"].([]any); len(named) != 0 {
+		t.Fatalf("a stale acknowledgment named %d rows, want none", len(named))
+	}
+	if counts := listActivity(t, h, ann, "")["unacknowledged_count"].(float64); counts != 1 {
+		t.Fatalf("the newer row was acknowledged by a stale boundary: %v unacknowledged, want 1", counts)
+	}
+
+	// The newer boundary acknowledges the arrival, exactly one row this time.
+	fresh := request(t, h, "POST", "/api/me/activity/acknowledge", map[string]string{"before": newestRow}, ann)
+	if fresh.Code != 200 {
+		t.Fatalf("acknowledge the arrival: %d %s", fresh.Code, fresh.Body.String())
+	}
+	if named := readJSON[map[string]any](t, fresh)["acknowledged"].([]any); len(named) != 1 {
+		t.Fatalf("the arrival's acknowledgment named %d rows, want 1", len(named))
+	}
+	if counts := listActivity(t, h, ann, "")["unacknowledged_count"].(float64); counts != 0 {
+		t.Fatalf("unacknowledged count after the arrival was acknowledged = %v, want 0", counts)
 	}
 	// The unacknowledged filter reaches only what is left, within the kind.
 	filtered := listActivity(t, h, ann, "?unacknowledged=1&kind=message")
-	rows := filtered["activity"].([]any)
-	if len(rows) != 1 || rows[0].(map[string]any)["source_id"] != second {
+	if rows := filtered["activity"].([]any); len(rows) != 0 {
 		t.Fatalf("the unacknowledged filter returned %v", rows)
 	}
 }

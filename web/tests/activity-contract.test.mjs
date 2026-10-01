@@ -60,12 +60,19 @@ test('acknowledgment is a separate call, not a side effect of reading', () => {
     /\/me\/activity\/acknowledge/,
     'loading the list posts an acknowledgment'
   );
-  // It is keyed by the last row the person actually saw, so a row that arrives
-  // between the list and the acknowledgment is not acknowledged by accident.
+  // It is keyed by the *newest* row the person actually saw, so everything at or
+  // below it is one explicit set and rows that arrive after the list stay unseen.
+  // The ids the server names are what the panel reflects — never a count painted
+  // over positions (review 17, V17-04).
   assert.match(
     source,
-    /acknowledge\(\)[\s\S]{0,900}this\.entries\[this\.entries\.length - 1\]\.id/,
-    'acknowledgment is not positioned at the last row shown'
+    /acknowledge\(\)[\s\S]{0,900}const before = this\.entries\[0\]\.id/,
+    'acknowledgment is not positioned at the newest row shown'
+  );
+  assert.match(
+    source,
+    /markAcknowledged\(\s*this\.entries,\s*acknowledgedRows\(result\.acknowledged\)/,
+    'the persisted set is not reflected by identity'
   );
 });
 

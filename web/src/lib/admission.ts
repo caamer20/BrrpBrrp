@@ -60,48 +60,35 @@ export function admitted(request: AdmissionRequest, now: AdmissionNow): boolean 
 }
 
 /**
- * How many rows the server said it acknowledged.
- *
- * A server that reports a count is believed. One that does not is answered for
- * generously: marking the whole page is the behaviour that predates the count, and it is
- * the right guess when the server acknowledged anything inside this page. Guessing low
- * would leave rows the server did mark looking unseen, which is the mistake that shows a
- * person a "N unseen" badge for rows they just acknowledged.
+ * The ids the server said it acknowledged, as a set the local list can be marked
+ * from. The server returns exactly the rows it persisted, so the client never has to
+ * guess which of the rows on screen a count refers to; a count painted over whichever
+ * entries happen to be loaded marked the wrong ones (review 17, V17-04).
  */
-export function acknowledgedRows(acknowledged: unknown): number {
-  return typeof acknowledged === 'number' && Number.isInteger(acknowledged) && acknowledged >= 0
-    ? acknowledged
-    : Number.POSITIVE_INFINITY;
+export function acknowledgedRows(acknowledged: unknown): ReadonlySet<string> {
+  if (!Array.isArray(acknowledged)) return new Set();
+  const ids = new Set<string>();
+  for (const id of acknowledged) if (typeof id === 'string' && id) ids.add(id);
+  return ids;
 }
 
 /**
- * Marks at most `limit` unacknowledged rows as seen, oldest first.
+ * Marks the rows whose ids are in `acknowledged` as seen, and leaves every other row
+ * exactly as it was.
  *
- * Oldest first because that is the direction the server acknowledged in: the cursor is
- * the oldest row the person has loaded, and everything strictly older than it was marked
- * in one statement. The count is therefore spent on the bottom of the page, not the top.
- *
- * Marking more than the server did is the defect this exists to prevent. The panel shows
- * each row's own "· seen" marker from this local state, so a row the server left
- * unacknowledged that the client painted would claim the person looked at something they
- * did not — and would revert on reload, which reads as a bug in the badge rather than a
- * bug in the marker.
+ * Marking by identity rather than by position is the contract: the list is
+ * newest-first, the server marks an id range, and between the two a row can be
+ * acknowledged on another device or arrive late. Painting a count over the top of the
+ * list claimed rows were seen that were not, and a reload then showed the badge
+ * returning — the visible form of the two sides disagreeing about the same set.
  */
-export function markAcknowledged<T extends { acknowledged: boolean; acknowledged_at: string }>(
-  entries: readonly T[],
-  limit: number,
-  at: string
-): T[] {
-  let left = limit;
-  // Walked from the bottom of the page, which is the oldest end of a newest-first list
-  // and therefore the end the server's `id < cursor` marks. Spending the count from the
-  // top would paint the rows the person is looking at while leaving the ones the server
-  // actually acknowledged showing as unseen.
-  const marked = [...entries];
-  for (let index = marked.length - 1; index >= 0 && left > 0; index--) {
-    if (marked[index].acknowledged) continue;
-    marked[index] = { ...marked[index], acknowledged: true, acknowledged_at: at };
-    left -= 1;
-  }
-  return marked;
+export function markAcknowledged<
+  T extends { acknowledged: boolean; acknowledged_at: string; id: string }
+>(entries: readonly T[], acknowledged: ReadonlySet<string>, at: string): T[] {
+  if (!acknowledged.size) return [...entries];
+  return entries.map((entry) =>
+    !entry.acknowledged && acknowledged.has(entry.id)
+      ? { ...entry, acknowledged: true, acknowledged_at: at }
+      : entry
+  );
 }

@@ -438,9 +438,17 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 // acknowledgment, and because the acknowledgment has to survive the page it was made
 // from.
 //
+// The boundary is the *newest* row the person has actually been shown, and every
+// unacknowledged row at or below it is marked. That is what the control promises —
+// "Mark N seen", for the N the list reported — and it is one explicit range, not a
+// guess about which rows a count referred to. Rows that arrived after the list was
+// read are newer than the boundary and stay unacknowledged. The ids actually written
+// are returned, so the client reflects exactly the persisted set instead of painting a
+// count over whichever rows are on screen (review 17, V17-04).
+//
 // The write is monotonic: an account that acknowledges from a second device does not
-// un-acknowledge on the first, and a stale client acknowledging an older position
-// cannot move the record backwards.
+// un-acknowledge on the first, only unacknowledged rows are updated, and a stale
+// client's earlier boundary cannot move a newer acknowledgment backwards.
 func (s *Server) acknowledgeActivity(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !s.requirePrivateConversations(w) {
 		return
@@ -467,21 +475,52 @@ func (s *Server) acknowledgeActivity(w http.ResponseWriter, r *http.Request, use
 		s.authorityFailed(w, err)
 		return
 	}
-	result, err := tx.ExecContext(r.Context(), `UPDATE account_activity SET acknowledged_at=?
-        WHERE user_id=? AND id<? AND acknowledged_at=''`,
-		db.Now(), principal.UserID, input.Before)
+	// The exact rows are read first and the update names them, so the answer is the
+	// persisted set rather than an affected-row count that could have come from a wider
+	// statement. The read is bounded by the same ceiling the table is pruned to, and the
+	// newest rows are kept when a backlog exceeds it.
+	rows, err := tx.QueryContext(r.Context(), `SELECT id FROM account_activity
+		WHERE user_id=? AND id<=? AND acknowledged_at='' ORDER BY id DESC LIMIT ?`,
+		principal.UserID, input.Before, activityUnacknowledgedLimit)
 	if err != nil {
 		s.failed(w, err)
 		return
 	}
-	affected, _ := result.RowsAffected()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			s.failed(w, err)
+			return
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if len(ids) > 0 {
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, db.Now())
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		if _, err := tx.ExecContext(r.Context(), `UPDATE account_activity SET acknowledged_at=?
+			WHERE acknowledged_at='' AND id IN (`+placeholders(len(ids))+`)`, args...); err != nil {
+			s.failed(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		s.failed(w, err)
 		return
 	}
 	counts := s.activityCounts(principal.UserID)
 	respond(w, http.StatusOK, map[string]any{
-		"acknowledged":         affected,
+		"acknowledged":         ids,
+		"acknowledged_count":   len(ids),
 		"unacknowledged_count": counts.unacknowledged,
 		"outstanding":          counts.outstanding,
 	})

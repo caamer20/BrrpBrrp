@@ -98,88 +98,85 @@ test('every false must come from a stated mismatch, never from a missing field',
 
 // Acknowledgment is a claim about what the person has seen, and the panel states it.
 //
-// The server acknowledges every row strictly older than the cursor, and reports how many
-// it actually marked. The client used to mark its whole loaded page regardless — so a row
-// the server did *not* acknowledge was shown with a "· seen" marker, and reverts to
-// unseen on reload. That is the visible tell: a badge that comes back.
-//
-// The count is spent from the bottom of the page, because that is the direction the
-// server acknowledged in.
+// The server acknowledges one explicit set — the unacknowledged rows at or below the
+// newest row the person was shown — and answers with exactly the ids it persisted. The
+// client reflects exactly those ids. The earlier design sent the *oldest* loaded row as
+// a boundary and painted the resulting count over the top of the list, which
+// acknowledged rows nobody had seen and displayed rows as seen that the server still
+// held unacknowledged — the badge came back on reload. That is review 17, V17-04, and
+// these tests pin the identity contract that replaced it.
 
 const row = (id, acknowledged = false) => ({ id, acknowledged, acknowledged_at: '' });
 const page = () => [row('n3'), row('n2'), row('n1')]; // newest first
 
-test('only as many rows as the server marked become seen', () => {
-  const marked = markAcknowledged(page(), 2, 'T');
+test('exactly the ids the server named become seen', () => {
+  const marked = markAcknowledged(page(), new Set(['n1', 'n3']), 'T');
   assert.deepEqual(
     marked.map((entry) => entry.acknowledged),
-    // The bottom two, because the cursor is the oldest row loaded.
-    [false, true, true]
+    [true, false, true],
+    'the client marked by position instead of by the ids the server named'
   );
 });
 
 test('a row the server did not acknowledge is never shown as seen', () => {
-  // The defect this prevents, stated directly.
-  const marked = markAcknowledged(page(), 1, 'T');
-  assert.equal(marked[0].acknowledged, false, 'the newest row was painted as seen');
-  assert.equal(marked[1].acknowledged, false, 'the middle row was painted as seen');
-  assert.equal(marked[2].acknowledged, true);
+  // The defect this prevents, stated directly: the server named only the newest row,
+  // and the middle and oldest must stay unseen no matter where they sit on the page.
+  const marked = markAcknowledged(page(), new Set(['n3']), 'T');
+  assert.equal(marked[0].acknowledged, true);
+  assert.equal(marked[1].acknowledged, false, 'an unnamed row was painted as seen');
+  assert.equal(marked[2].acknowledged, false, 'an unnamed row was painted as seen');
 });
 
 test('marking nothing marks nothing', () => {
-  const marked = markAcknowledged(page(), 0, 'T');
+  const marked = markAcknowledged(page(), new Set(), 'T');
   assert.deepEqual(
     marked.map((entry) => entry.acknowledged),
     [false, false, false]
   );
 });
 
-test('marking more than are on screen marks the page and no further', () => {
-  const marked = markAcknowledged(page(), 99, 'T');
+test('ids not on screen mark nothing and invent nothing', () => {
+  const marked = markAcknowledged(page(), new Set(['elsewhere']), 'T');
   assert.deepEqual(
     marked.map((entry) => entry.acknowledged),
-    [true, true, true]
+    [false, false, false]
   );
-  // Nothing beyond the page is invented, so a reload cannot reveal a row that was
-  // counted but never existed in this list.
   assert.equal(marked.length, 3);
 });
 
-test('an already-acknowledged row does not consume the budget', () => {
-  // The server reports rows it *changed*, so re-running the acknowledgment must not
-  // spend the count twice on a row that was already marked.
+test('an already-acknowledged row keeps its own timestamp', () => {
   const entries = [row('n3', true), row('n2'), row('n1')];
-  const marked = markAcknowledged(entries, 1, 'T');
+  entries[0].acknowledged_at = 'earlier';
+  const marked = markAcknowledged(entries, new Set(['n3', 'n1']), 'T');
   assert.deepEqual(
     marked.map((entry) => entry.acknowledged),
-    [true, false, true],
-    'an already-seen row consumed the count'
+    [true, false, true]
   );
-  // And the timestamp of an already-seen row is not rewritten: it records when the
-  // person saw it, not when they pressed the button again.
-  assert.equal(marked[0].acknowledged_at, '');
+  // The timestamp of an already-seen row records when the person saw it, not when
+  // they pressed the button again.
+  assert.equal(marked[0].acknowledged_at, 'earlier');
+  assert.equal(marked[2].acknowledged_at, 'T');
 });
 
-test('marking stamps the time once, not per row', () => {
-  const marked = markAcknowledged(page(), 3, '2026-01-01T00:00:00Z');
+test('marking stamps the acknowledged rows once, at one time', () => {
+  const marked = markAcknowledged(page(), new Set(['n1', 'n2', 'n3']), '2026-01-01T00:00:00Z');
   for (const entry of marked) assert.equal(entry.acknowledged_at, '2026-01-01T00:00:00Z');
 });
 
-test('a server that reports no count marks the page rather than under-claiming', () => {
-  // Guessing low would leave rows the server did mark looking unseen and put the badge
-  // back, which is the mistake this guess avoids.
-  assert.equal(acknowledgedRows(undefined), Number.POSITIVE_INFINITY);
-  assert.equal(acknowledgedRows(null), Number.POSITIVE_INFINITY);
-  assert.equal(acknowledgedRows(-1), Number.POSITIVE_INFINITY);
-  assert.equal(acknowledgedRows(1.5), Number.POSITIVE_INFINITY);
-  assert.equal(acknowledgedRows('3'), Number.POSITIVE_INFINITY);
-  assert.equal(acknowledgedRows(0), 0);
-  assert.equal(acknowledgedRows(7), 7);
+test('the server response is read as ids, and anything else names nothing', () => {
+  // A count is not a set: an older server that answers with a number cannot say
+  // which rows it marked, and painting any of them would be a guess the panel may not
+  // make. Reflecting nothing leaves the rows honestly unseen until reload confirms them.
+  assert.deepEqual([...acknowledgedRows(undefined)], []);
+  assert.deepEqual([...acknowledgedRows(null)], []);
+  assert.deepEqual([...acknowledgedRows(3)], []);
+  assert.deepEqual([...acknowledgedRows('n1')], []);
+  assert.deepEqual([...acknowledgedRows(['n1', '', null, 7, 'n2'])], ['n1', 'n2']);
 });
 
 test('marking an empty page is empty, not an error', () => {
-  assert.deepEqual(markAcknowledged([], 5, 'T'), []);
-  assert.deepEqual(markAcknowledged([], 0, 'T'), []);
+  assert.deepEqual(markAcknowledged([], new Set(['n1']), 'T'), []);
+  assert.deepEqual(markAcknowledged([], new Set(), 'T'), []);
 });
 
 // An activity entry must be followable.

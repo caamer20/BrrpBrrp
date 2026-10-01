@@ -1439,3 +1439,82 @@ test('two members hold a private call, and a third account cannot reach it', asy
  * negotiation, forwarding and authorization are unchanged; this does not validate a
  * physical microphone or a browser's permission prompt.
  */
+
+// The acknowledgment is one explicit set, reflected exactly (review 17, V17-04). The
+// control reports how many rows are unseen; pressing it marks those rows and no
+// others; the state is the server's, so it survives a reopen; and a row that arrives
+// afterwards is not swallowed by the earlier press — which is what "acknowledge
+// everything at or below the newest row shown" means, made visible.
+test('activity acknowledgment marks exactly the rows it reported and survives a reopen', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  const alice = { username: 'ack_alice', password: 'an activity ack passphrase' };
+  const bob = { username: 'ack_bob', password: 'an activity ack bob passphrase' };
+  await signInOverApi(request);
+  const aliceID = await createAccount(request, alice);
+  const bobID = await createAccount(request, bob);
+  await signInOverApi(request, bob);
+  const asked = await request.post('/api/directs', {
+    data: { user_id: aliceID, introduction: 'hello there' }
+  });
+  expect(asked.status()).toBe(201);
+  const pair = await asked.json();
+  await signInOverApi(request, alice);
+  expect((await request.post(`/api/directs/${pair.id}/accept`, { data: {} })).status()).toBe(200);
+  await signInOverApi(request, bob);
+  for (const [index, content] of ['first note', 'second note'].entries()) {
+    const sent = await request.post(`/api/conversations/${pair.id}/messages`, {
+      data: { content, idempotency_key: `ack-note-${index}` }
+    });
+    expect(sent.status()).toBe(201);
+  }
+
+  await signIn(page, alice);
+  const inbox = page.getByRole('button', { name: /Messages and requests/i });
+  const dialog = page.getByRole('dialog', { name: 'Messages', exact: true });
+  const activityRegion = dialog.getByRole('region', { name: 'Activity' });
+  const openActivity = async () => {
+    await inbox.click();
+    await dialog.getByRole('button', { name: 'Activity' }).click();
+    await expect(activityRegion).toBeVisible();
+  };
+  const feed = () => activityFeed(dialog);
+
+  await openActivity();
+  // The button counts what the badge counts: the request row is part of the account's
+  // unacknowledged activity even though the accepted request is no longer listed.
+  const mark = dialog.getByRole('button', { name: /^Mark \d+ seen$/ });
+  await expect(mark).toHaveText('Mark 3 seen');
+  const rows = feed().locator('li');
+  await expect(rows).toHaveCount(2);
+  await expect(feed().getByText('· seen')).toHaveCount(0);
+
+  await mark.click();
+  await expect(dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveCount(0);
+  await expect(feed().getByText('· seen')).toHaveCount(2);
+
+  // The state is the server's, not the panel's: closing and reopening reads it back.
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toHaveCount(0);
+  await openActivity();
+  await expect(dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveCount(0);
+  await expect(feed().getByText('· seen')).toHaveCount(2);
+
+  // A row that arrives after the acknowledgment is a new thing to see: it is counted,
+  // listed as unseen until the new boundary is acknowledged, and then cleared.
+  await signInOverApi(request, bob);
+  const third = await request.post(`/api/conversations/${pair.id}/messages`, {
+    data: { content: 'third note', idempotency_key: 'ack-note-2' }
+  });
+  expect(third.status()).toBe(201);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await openActivity();
+  const nextMark = dialog.getByRole('button', { name: /^Mark \d+ seen$/ });
+  await expect(nextMark).toHaveText('Mark 1 seen');
+  await expect(feed().getByText('· seen')).toHaveCount(2);
+  await nextMark.click();
+  await expect(dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveCount(0);
+  await expect(feed().getByText('· seen')).toHaveCount(3);
+});
