@@ -3,8 +3,11 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
@@ -590,5 +593,99 @@ func TestRequesterOptingOutDoesNotWithdrawAnOutstandingRequest(t *testing.T) {
 	}
 	if count, err := s.outstandingIncomingRequests(t.Context(), s.store, db.User{ID: bobID}); err != nil || count != 0 {
 		t.Fatalf("count after blocking = %d (err %v), want 0", count, err)
+	}
+}
+
+// The evidence queue's page boundary, which decides whether a reviewer ever sees the
+// last rows.
+//
+// The query asks for one row more than the page size and treats "one more came back" as
+// "there is another page". That is the only thing standing between a reviewer and rows
+// that exist but are never delivered: an empty cursor is what the client reads as
+// exhausted, and an exhausted source is never asked again. Get the boundary wrong in
+// either direction and a reviewer silently loses the tail of the queue — with no error,
+// because every response is a well-formed page.
+//
+// The boundary is asserted from both sides. Fifty reports is a whole page and the end of
+// the queue, and must say so; fifty-one is a page with more behind it, and must not.
+
+func TestTheEvidenceQueueEndsAtAPageBoundaryWithoutLosingRows(t *testing.T) {
+	t.Setenv("BRRP_ENABLE_PRIVATE_CONVERSATIONS", "true")
+	s, h := testServer(t)
+	admin := setupAdmin(t, s, h)
+	// `report.review_private` is delegated downward, so an actor may grant only what it
+	// holds — and the admin role does not hold every capability until the owner is
+	// designated. This is the ceremony an operator would run, not a shortcut.
+	enrollMFA(t, h, admin, "correct horse battery")
+	if w := request(t, h, "POST", "/api/owner", map[string]string{"username": "admin", "confirm": "admin"}, admin); w.Code != 200 {
+		t.Fatalf("designate the owner: %d %s", w.Code, w.Body.String())
+	}
+	_, reviewer := evidenceRole(t, s, h, admin, "queue_boundary", string(authz.ReportReviewPrivate))
+	reviewerID := evidenceUserID(t, h, reviewer)
+
+	seed := func(count int) {
+		for i := range count {
+			if _, err := s.store.Exec(`INSERT INTO private_message_reports
+				(id,message_id,conversation_id,reporter_id,author_id,reason,snapshot_text,created_at,updated_at,expires_at)
+				VALUES(?,?,?,?,?,?,'text',?,?,?)`,
+				db.ID(), "m"+strconv.Itoa(i), "conv", reviewerID, reviewerID,
+				"boundary fixture "+strconv.Itoa(i), db.Now(), db.Now(),
+				db.Timestamp(time.Now().UTC().Add(90*24*time.Hour))); err != nil {
+				t.Fatalf("seed report %d: %v", i, err)
+			}
+		}
+	}
+	page := func() (rows []map[string]any, cursor string) {
+		w := request(t, h, "GET", "/api/admin/private-reports", nil, reviewer)
+		if w.Code != 200 {
+			t.Fatalf("read the queue: %d %s", w.Code, w.Body.String())
+		}
+		body := readJSON[struct {
+			Reports    []map[string]any `json:"reports"`
+			NextCursor string           `json:"next_cursor"`
+		}](t, w)
+		return body.Reports, body.NextCursor
+	}
+
+	// Exactly one page and nothing behind it: a full page that is also the end.
+	seed(50)
+	rows, cursor := page()
+	if len(rows) != 50 {
+		t.Fatalf("a full page returned %d rows, want 50", len(rows))
+	}
+	if cursor != "" {
+		t.Fatalf("a queue of exactly 50 reported a further page at %q, so the last rows would never be requested", cursor)
+	}
+
+	// One more behind it: a full page that is *not* the end.
+	if _, err := s.store.Exec(`INSERT INTO private_message_reports
+		(id,message_id,conversation_id,reporter_id,author_id,reason,snapshot_text,created_at,updated_at,expires_at)
+		VALUES(?,'m-extra','conv',?,?,'one more row','text',?,?,?)`,
+		db.ID(), reviewerID, reviewerID, db.Now(), db.Now(),
+		db.Timestamp(time.Now().UTC().Add(90*24*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	rows, cursor = page()
+	if len(rows) != 50 {
+		t.Fatalf("the first page returned %d rows, want 50", len(rows))
+	}
+	if cursor == "" {
+		t.Fatal("51 reports produced one page and no cursor, so the 51st is unreachable")
+	}
+
+	// And the last row is genuinely reachable by asking for it.
+	rest := request(t, h, "GET", "/api/admin/private-reports?before="+url.QueryEscape(cursor), nil, reviewer)
+	if rest.Code != 200 {
+		t.Fatalf("the second page: %d %s", rest.Code, rest.Body.String())
+	}
+	second := readJSON[struct {
+		Reports    []map[string]any `json:"reports"`
+		NextCursor string           `json:"next_cursor"`
+	}](t, rest)
+	if len(second.Reports) != 1 {
+		t.Fatalf("the second page returned %d rows, want the single remaining one", len(second.Reports))
+	}
+	if second.NextCursor != "" {
+		t.Fatalf("the last page reported a further page at %q", second.NextCursor)
 	}
 }
