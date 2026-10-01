@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"brrpbrrp/internal/authz"
@@ -465,6 +466,53 @@ func (s *Server) accountSummaries(w http.ResponseWriter, r *http.Request, user d
 	respond(w, 200, summaries)
 }
 
+// effectiveRoleCapabilities resolves the capability set a role assignment list yields,
+// including the implicit default role that applies when nothing is assigned. It mirrors
+// authz.Service.Resolve deliberately: the authority check in setUserRoles has to see the
+// same final authority the account will actually hold.
+func effectiveRoleCapabilities(catalog []db.Role, assigned map[string]bool) map[string]bool {
+	capabilities := map[string]bool{}
+	if len(assigned) == 0 {
+		for _, role := range catalog {
+			if !role.IsDefault {
+				continue
+			}
+			for _, permission := range role.Permissions {
+				capabilities[permission] = true
+			}
+		}
+		return capabilities
+	}
+	for _, role := range catalog {
+		if !assigned[role.ID] {
+			continue
+		}
+		for _, permission := range role.Permissions {
+			capabilities[permission] = true
+		}
+	}
+	return capabilities
+}
+
+// roleCapabilityGain lists the capabilities a role-set change adds, in a stable order.
+// Removals are deliberately absent: an actor who may change the role is allowed to
+// reduce authority, and only the additions need grant authority of their own.
+func roleCapabilityGain(catalog []db.Role, before, after map[string]bool) []authz.Capability {
+	held := effectiveRoleCapabilities(catalog, before)
+	gained := make([]string, 0)
+	for capability := range effectiveRoleCapabilities(catalog, after) {
+		if !held[capability] {
+			gained = append(gained, capability)
+		}
+	}
+	sort.Strings(gained)
+	resolved := make([]authz.Capability, 0, len(gained))
+	for _, name := range gained {
+		resolved = append(resolved, authz.Capability(name))
+	}
+	return resolved
+}
+
 // setUserRoles replaces an account's role set. It applies each change through the
 // policy service so escalation, hierarchy and last-administrator guards are the
 // same ones the engine enforces everywhere else.
@@ -549,6 +597,17 @@ func (s *Server) setUserRoles(w http.ResponseWriter, r *http.Request, user db.Us
 	current := make(map[string]bool, len(assigned))
 	for _, id := range assigned {
 		current[id] = true
+	}
+	// The individual revocations and grants are not the change; the account's effective
+	// authority is. Removing an account's last assignment drops it onto the default role,
+	// and that fallback can hand out a capability the actor could not grant directly —
+	// a manager who holds role.manage but not message.send could empty a restricted
+	// account's role list and make its sends succeed. So the capabilities the requested
+	// set adds are computed with the implicit default included exactly as Resolve applies
+	// it, and the actor must be allowed to grant every one of them.
+	if err := principal.CanGrantCapabilities(roleCapabilityGain(catalog, current, wanted)); err != nil {
+		problem(w, 403, err.Error())
+		return
 	}
 	// Removals run before grants so a swap cannot momentarily leave the
 	// installation without its last administrator.
