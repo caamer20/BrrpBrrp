@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { expectAccessible, OWNER, signIn } from './support.mjs';
+import { createAccount, expectAccessible, OWNER, signIn, signInOverApi } from './support.mjs';
 
 test('first setup, persistent chat, search and sign-out', async ({ page, context }) => {
   test.setTimeout(120000);
@@ -203,42 +204,113 @@ test('first setup, persistent chat, search and sign-out', async ({ page, context
 // property under test is the one WP-12 names: the export contains what the account
 // may read and says what it could not include, and the panel is where a member
 // discovers either fact.
-test('a member requests their data export and sees what it holds', async ({ page }) => {
+test('a member requests their data export, downloads it, and removes it', async ({
+  page,
+  request
+}) => {
   test.setTimeout(120000);
-  await signIn(page, OWNER);
+  // The export is a member's own feature, so a member exercises it. The installation
+  // owner is deliberately not used here: privileged accounts are gated behind
+  // two-factor enrollment, and a journey that walked into that refusal and stopped
+  // would be accepting an error path instead of proving a download.
+  const member = { username: 'export_member', password: 'a passphrase for exporting' };
+  await signInOverApi(request);
+  await createAccount(request, member);
+  await signIn(page, member);
 
-  // The panel states plainly what the export is and is not, before anything is
-  // requested. A member should not have to produce a file to find out what it
-  // would contain.
+  // Something of this member's own to find in the file. The export's whole purpose is
+  // the account's own content, and a download that never happened cannot show it.
+  await page
+    .getByRole('button', { name: /general/i })
+    .first()
+    .click();
+  const composer = page.locator('.composer textarea').first();
+  await composer.fill('a line only this member wrote');
+  await composer.press('Enter');
+  await expect(
+    page.locator('article.message:has-text("a line only this member wrote")').first()
+  ).toBeVisible();
+
   await page.getByRole('button', { name: 'Your data export' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('heading', { name: 'Your data' })).toBeVisible();
   await expect(dialog.getByText(/does not include anyone else/)).toBeVisible();
-  await expect(dialog.getByText(/You have not requested an export yet/)).toBeVisible();
 
-  // The export leaves the building, so it is gated on a recent strong sign-in. The
-  // refusal must arrive here rather than as a silent failure later.
-  const response = page.waitForResponse(
-    (candidate) =>
-      candidate.url().includes('/api/me/export') && candidate.request().method() === 'POST'
-  );
-  await dialog.getByRole('button', { name: 'Request an export' }).click();
-  const posted = await response;
-  if (posted.status() === 401 || posted.status() === 403) {
-    // Re-authenticating is the product's answer here, and it is the correct one: an
-    // export started at an unattended machine is not the account holder's export.
-    await page.getByRole('button', { name: 'Close' }).click();
-    return;
-  }
-  expect(posted.status()).toBe(202);
-
-  // The record appears with its counts, and the panel offers a download rather than
-  // assuming the file is where somebody expects it.
-  await expect(dialog.getByRole('button', { name: 'Download' }).first()).toBeVisible({
-    timeout: 30000
+  // The first request is delivered and stored, and its response is discarded — a
+  // committed request whose acknowledgement was lost. The member presses Request
+  // again, and the same operation key must travel: the server answers with the export
+  // it already made rather than starting a second identical job nobody can explain.
+  const keys = [];
+  let lost = false;
+  await page.route('**/api/me/export', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    keys.push(route.request().postDataJSON()?.operation_key);
+    if (!lost) {
+      lost = true;
+      await route.fetch();
+      await route.abort();
+      return;
+    }
+    await route.continue();
   });
-  // And the account's own history is empty of anybody else's: this is a single
-  // account's list, not a server's.
+  await dialog.getByRole('button', { name: 'Request an export' }).click();
+  // The lost response is reported, not silently swallowed.
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await expect(dialog.locator('.export-row')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Request an export' }).click();
+  await expect(dialog.locator('.export-row')).toHaveCount(1);
+  await page.unroute('**/api/me/export');
+  expect(keys.length).toBe(2);
+  expect(keys[1], 'the retry travelled under a fresh key').toBe(keys[0]);
+
+  // The job becomes ready on the server; the panel holds no timer, so the member's own
+  // Refresh is used the way a member would.
+  const row = dialog.locator('.export-row').first();
+  await expect
+    .poll(
+      async () => {
+        if (await row.getByText(/conversations/).isVisible()) return true;
+        await dialog.getByRole('button', { name: 'Refresh' }).click();
+        return row.getByText(/conversations/).isVisible();
+      },
+      { timeout: 30000, intervals: [250, 500, 1000] }
+    )
+    .toBe(true);
+  await expect(row.getByText(/Being prepared|Could not be completed/)).toHaveCount(0);
+
+  // Download through the panel's own control — a link, which is how a download is
+  // offered — and read the file the member actually received.
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    row.getByRole('link', { name: 'Download' }).click()
+  ]);
+  const path = await download.path();
+  const text = await readFile(path, 'utf8');
+  const document = JSON.parse(text);
+  expect(document.format).toBe('brrpbrrp-member-export');
+  expect(document.account.username).toBe(member.username);
+  expect(text).toContain('a line only this member wrote');
+  // The account block is exactly the non-secret fields, and nothing in the file is a
+  // credential: a permission drop must not be smuggled in as a "field".
+  expect(Object.keys(document.account).sort()).toEqual([
+    'created_at',
+    'display_name',
+    'id',
+    'username'
+  ]);
+  for (const forbidden of ['password', 'session', 'token', 'secret', 'recovery_code']) {
+    expect(text.toLowerCase()).not.toContain(forbidden);
+  }
+
+  // Deleting removes the server copy and the offered download with it; the member's
+  // own file is unaffected, which is why the confirmation says so.
+  page.once('dialog', (confirmation) => confirmation.accept());
+  await row.getByRole('button', { name: 'Delete' }).click();
+  await expect(dialog.getByText('Export deleted from the server.')).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Download' })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Close' }).click();
 });
 

@@ -31,6 +31,12 @@
   let busy = $state('');
   let alive = true;
   let generation = 0;
+  // The key names one request, and it is kept until the server has answered it. A lost
+  // response and a second press are then the same request: the retry travels under the
+  // key the server may already have recorded, and answers with the export it already
+  // made instead of leaving two identical jobs with no explanation for either
+  // (review 17, V17-04).
+  let requestKey = '';
 
   onDestroy(() => {
     alive = false;
@@ -48,7 +54,10 @@
     const version = ++generation;
     const account = workspace.user?.id;
     records = [];
-    error = notice = '';
+    // The error is cleared by every load — it is about the list being shown. The
+    // notice is not: it reports an action that already happened, and a reload that
+    // erased it made "Export deleted from the server." a message nobody ever saw.
+    error = '';
     loading = true;
     try {
       const result = await api<ExportRecord[]>('/me/export');
@@ -66,12 +75,14 @@
     if (busy) return;
     busy = 'request';
     error = notice = '';
+    requestKey ||= crypto.randomUUID();
     try {
-      // The key is this account's and names this request. A retry is the same export
-      // rather than a second copy of somebody's own history.
       const record = await api<ExportRecord>('/me/export', 'POST', {
-        operation_key: crypto.randomUUID()
+        operation_key: requestKey
       });
+      // The server answered — accepted or already known — so this request is over and
+      // the next press is deliberately a new one.
+      requestKey = '';
       notice =
         record.state === 'building'
           ? 'Preparing your export. It will be ready here in a moment.'
