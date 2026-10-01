@@ -20,8 +20,10 @@
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { createConnection } from 'node:net';
+import { createConnection as createTcpConnection } from 'node:net';
+import { connect as createTlsConnection } from 'node:tls';
 import { createHash, randomBytes } from 'node:crypto';
 
 // A minimal text-only WebSocket client.
@@ -32,22 +34,56 @@ import { createHash, randomBytes } from 'node:crypto';
 // possible outcome. This is the frame handling a measurement needs and no more: a
 // handshake, masked text frames out, unmasked text frames in, and a close.
 
-class RawSocket {
-  constructor({ host, port, path, cookie, origin }) {
+export class RawSocket {
+  constructor({ host, port, path, cookie, origin, secure, rejectUnauthorized }) {
     this.host = host;
     this.port = port;
     this.path = path;
     this.cookie = cookie;
     this.origin = origin;
+    this.secure = secure === true;
+    // A capacity run against a deployment with a real certificate must verify it. The
+    // default of not verifying would let the run measure a man in the middle instead of
+    // the server, which is the one thing a capacity number must never be.
+    this.rejectUnauthorized = rejectUnauthorized !== false;
     this.socket = null;
     this.buffer = Buffer.alloc(0);
     this.onMessage = () => {};
+    this.onPing = () => {};
   }
 
-  connect() {
+  connect({ handshakeTimeoutMs = 10000 } = {}) {
     return new Promise((resolve, reject) => {
       const key = randomBytes(16).toString('base64');
-      this.socket = createConnection({ host: this.host, port: this.port }, () => {
+      // A deadline on the handshake. Without one, connecting to something that never
+      // answers — a plaintext client aimed at a TLS port, a port with nothing behind it —
+      // never settles, and a capacity run whose participants cannot connect hangs instead
+      // of reporting that they could not. A run that hangs produces no report, and no
+      // report is indistinguishable from a run that was never started.
+      const deadline = setTimeout(() => {
+        settled = true;
+        try {
+          this.socket?.destroy();
+        } catch {
+          /* Already gone. */
+        }
+        reject(new Error(`websocket handshake did not complete within ${handshakeTimeoutMs}ms`));
+      }, handshakeTimeoutMs);
+      const settle = (fn) => (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        fn(value);
+      };
+      const succeed = settle(resolve);
+      const fail = settle(reject);
+      // `wss://` and `https://` both need a TLS socket. A plain TCP connection to a TLS
+      // port sends the handshake in the clear, the server closes it, and every participant
+      // fails to connect — which is a run that measures nothing rather than a run that
+      // fails loudly. The certificate is verified unless the caller says otherwise,
+      // because a capacity number taken through an unverified connection is a number
+      // about somebody else's server.
+      const onOpen = () => {
         this.socket.write(
           `GET ${this.path} HTTP/1.1\r\n` +
             `Host: ${this.host}:${this.port}\r\n` +
@@ -58,8 +94,15 @@ class RawSocket {
             `Origin: ${this.origin}\r\n` +
             `Cookie: ${this.cookie}\r\n\r\n`
         );
-      });
-      this.socket.on('error', reject);
+      };
+      this.socket = this.secure
+        ? createTlsConnection(
+            { host: this.host, port: this.port, servername: this.host, rejectUnauthorized: this.rejectUnauthorized },
+            onOpen
+          )
+        : createTcpConnection({ host: this.host, port: this.port }, onOpen);
+      let settled = false;
+      this.socket.on('error', fail);
       this.socket.on('data', (chunk) => {
         this.buffer = Buffer.concat([this.buffer, chunk]);
         if (!this.handshaken) {
@@ -68,7 +111,7 @@ class RawSocket {
           const head = this.buffer.subarray(0, end).toString('latin1');
           this.buffer = this.buffer.subarray(end + 4);
           if (!/ 101 /.test(head.split('\r\n')[0])) {
-            reject(new Error(`websocket handshake failed: ${head.split('\r\n')[0]}`));
+            fail(new Error(`websocket handshake failed: ${head.split('\r\n')[0]}`));
             return;
           }
           // The server's accept value proves the handshake, not just the status line.
@@ -76,11 +119,11 @@ class RawSocket {
             .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
             .digest('base64');
           if (!head.includes(expected)) {
-            reject(new Error('websocket accept value did not match'));
+            fail(new Error('websocket accept value did not match'));
             return;
           }
           this.handshaken = true;
-          resolve();
+          succeed();
         }
         this.drain();
       });
@@ -120,8 +163,44 @@ class RawSocket {
         this.socket.end();
         return;
       }
+      // A ping must be answered with a pong carrying the same payload. The server
+      // heartbeats on an interval and drops a connection that has not answered, so a
+      // client that reads frames but never answers is disconnected part-way through a
+      // long run — and a run that loses its participants at the heartbeat interval
+      // measures a server nobody is really on. Ignoring the opcode was the defect; this
+      // is why it is explicit rather than left to the frame reader.
+      if (opcode === 0x9) {
+        this.writeFrame(0xa, payload);
+        this.onPing();
+        continue;
+      }
+      if (opcode === 0xa) continue;
       if (opcode === 0x1) this.onMessage(payload.toString('utf8'));
     }
+  }
+
+  /** Writes one masked frame with an arbitrary opcode. */
+  writeFrame(opcode, payload) {
+    const mask = randomBytes(4);
+    let header;
+    if (payload.length < 126) {
+      header = Buffer.from([0x80 | opcode, 0x80 | payload.length]);
+    } else if (payload.length < 65536) {
+      header = Buffer.alloc(4);
+      header[0] = 0x80 | opcode;
+      header[1] = 0x80 | 126;
+      header.writeUInt16BE(payload.length, 2);
+    } else {
+      header = Buffer.alloc(10);
+      header[0] = 0x80 | opcode;
+      header[1] = 0x80 | 127;
+      header.writeBigUInt64BE(BigInt(payload.length), 2);
+    }
+    const masked = Buffer.alloc(payload.length);
+    for (let index = 0; index < payload.length; index++) {
+      masked[index] = payload[index] ^ mask[index % 4];
+    }
+    this.socket.write(Buffer.concat([header, mask, masked]));
   }
 
   send(text) {
@@ -155,25 +234,30 @@ class RawSocket {
   }
 }
 
-const args = process.argv.slice(2);
-const option = (flag, fallback) => {
-  const index = args.indexOf(flag);
-  return index < 0 ? fallback : args[index + 1];
-};
+// The executable half. It is inside `main` and reached only through the entry-point
+// guard at the bottom, so importing `RawSocket` — to drive it against a real TLS server
+// in a test — does not parse arguments and exit. A measurement module that cannot be
+// imported cannot be tested, and an untested measurement client is how a run that
+// measures nothing comes to look like a passing run.
+async function main() {
+  const args = process.argv.slice(2);
+  const option = (flag, fallback) => {
+    const index = args.indexOf(flag);
+    return index < 0 ? fallback : args[index + 1];
+  };
 
-const base = (option('--base', process.env.BRRP_BASE_URL) || '').replace(/\/$/, '');
-const cookie = option('--cookie', process.env.BRRP_COOKIE || '');
-const clientCount = Number(option('--clients', 5));
-const durationSeconds = Number(option('--duration', 60));
-const channelCount = Number(option('--channels', 4));
-const intervalMs = Number(option('--interval-ms', 500));
-const reportPath = option('--report', '');
-const label = option('--label', 'ad-hoc');
-
-if (!base || !cookie) {
-  console.error('usage: --base URL --cookie NAME=VALUE [--clients N] [--duration SECONDS]');
-  process.exit(2);
-}
+  const base = (option('--base', process.env.BRRP_BASE_URL) || '').replace(/\/$/, '');
+  const cookie = option('--cookie', process.env.BRRP_COOKIE || '');
+  if (!base || !cookie) {
+    console.error('usage: --base URL --cookie NAME=VALUE [--clients N] [--duration SECONDS]');
+    process.exit(2);
+  }
+  const clientCount = Number(option('--clients', 5));
+  const durationSeconds = Number(option('--duration', 60));
+  const channelCount = Number(option('--channels', 4));
+  const intervalMs = Number(option('--interval-ms', 500));
+  const reportPath = option('--report', '');
+  const label = option('--label', 'ad-hoc');
 
 const BUDGETS = {
   delivery_p95_ms: 500,
@@ -217,8 +301,12 @@ class Client {
     const target = new URL(base);
     this.socket = new RawSocket({
       host: target.hostname,
-      port: Number(target.port) || 80,
+      // 443/80 are the defaults only for their scheme. A run against a deployment on
+      // 8443 with an explicit port must use it, and a run against TLS must not fall
+      // back to the plaintext default.
+      port: Number(target.port) || (target.protocol === 'https:' ? 443 : 80),
       path: '/ws',
+      secure: target.protocol === 'https:' || target.protocol === 'wss:',
       cookie,
       // The server requires the Origin to equal its configured base URL exactly, which
       // is what a browser sends and what makes this a faithful client rather than a
@@ -251,7 +339,6 @@ class Client {
   }
 }
 
-async function main() {
   const started = Date.now();
   const clients = [];
   for (let index = 0; index < clientCount; index++) clients.push(new Client(`client-${index}`));
@@ -361,7 +448,15 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+// Only run the load when this file is the entry point. A test that imports `RawSocket`
+// to drive it against a real server must not start a two-hour measurement, and
+// `import.meta.main` is the documented way to tell the two apart.
+const isEntryPoint =
+  import.meta.main === true ||
+  process.argv[1] === fileURLToPath(import.meta.url);
+if (isEntryPoint) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

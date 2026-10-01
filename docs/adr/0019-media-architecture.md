@@ -784,3 +784,34 @@ The room's bound of one screen hid this. With only one screen video published at
 the forwarded set is the room's set whichever question is asked, so the property could not
 be observed from outside — it is an accident of the bound, not a property of the
 forwarding, and it would have become a disclosure the moment the bound moved.
+
+
+## A capacity client has to speak the deployment's transport
+
+The capacity client connected with `net.createConnection` regardless of the URL's
+scheme, and read frames without ever answering a **ping**. Both were found by reading
+the script, and both are the shape of failure that does not announce itself:
+
+- Against a deployment behind HTTPS the handshake is sent in the clear, the server
+  closes the connection, and every participant fails to connect. **A run that connects to
+  nothing still writes a report**, and a report with no participants reads like a very
+  fast server.
+- The server heartbeats every 30 seconds and ends a connection that has not answered, so
+  a client that reads frames but never replies loses its participants part-way through a
+  long run — which is why a validation run has to last longer than the heartbeat before a
+  long measurement means anything.
+
+The client now opens a TLS socket for `https:`/`wss:` and verifies the certificate unless
+the caller opts out. The exemption exists because a measurement number taken through an
+unverified connection is a number about somebody else's server, so it is not the default.
+
+**The handshake has a deadline.** A plaintext client aimed at a TLS port gets no reply at
+all — the server waits for a ClientHello that never arrives — so the connect promise
+never settled and the run hung rather than reporting that its participants could not
+connect. Ten seconds, reported as a failure with the timeout in the message.
+
+`RawSocket` is exported and the module's executable half is reachable only through its
+entry-point guard, because a measurement client that cannot be imported cannot be tested.
+The seven tests drive it against real sockets: a TLS server it completes, a TLS server it
+*cannot* complete from plaintext, a ping answered with a pong carrying the same payload,
+and a text frame that still arrives — the permitted control for the ping change.
