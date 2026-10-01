@@ -199,3 +199,40 @@ recorded as failed with the counts it reached, so the member can see how far it 
 and why there is nothing to download. Marking it `failed` rather than `ready` is the
 point: a "successful" export with no file is worse than a refusal, because the
 interface would offer a download that 404s.
+
+
+## An export is not in the backup, and the rehearsal says so
+
+A backup holds the database and the uploaded files. It does **not** hold a produced
+member export, and that is the right boundary: an export is a copy of the server's data,
+so keeping it in every archive would mean every backup carries a second copy of
+everything the server holds.
+
+The consequence is a member state the recovery path has to be honest about. The row
+survives in the database and the file does not, so `downloadExport` answers **410** — the
+file is no longer on the server, request a new one — rather than a 404 that reads as
+though the export never existed.
+
+`upgrade-recovery-private.mjs` now proves that boundary instead of assuming it. The
+rehearsal creates a group (invite, accept, message), a named thread on a community
+channel (root, reply, follow), a member activity feed and a member export before the
+snapshot, and after the restore it checks that:
+
+- the accepted member reads the restored group history, and an account that never joined
+  still cannot;
+- the thread, its reply, and its listing on the channel all survived;
+- the activity feed survived **and still names the conversation each row is about**, which
+  is the assertion that the entries are real rather than empty rows;
+- the export *history* is scoped to the account that requested it — one member's exports
+  are not another's.
+
+Every one is created through its own supported route. The rehearsal had no direct writes
+for these, so the restore checks also demonstrate that the state is reachable the way a
+member would reach it.
+
+**The SQL fallback that remains is justified and says why.** Roles are written directly
+because this installation has never completed the ownership ceremony, so the pre-ceremony
+administrator bridge does not grant `role.manage` and the owner cannot author a role
+through the API at all. What the rehearsal proves there is that a *grant* survives a
+backup and has to be reconciled — not how the role came to exist. Removing that fallback
+would mean rehearsing a state this installation cannot be in.

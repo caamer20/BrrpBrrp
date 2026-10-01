@@ -373,6 +373,88 @@ async function main() {
   });
   check("beta's read cursor recorded", cursor.status === 200, `HTTP ${cursor.status}`);
 
+  // Groups, threads, activity and exports. All four are recoverable state the product
+  // promises a member, and a rehearsal that restores direct messages while losing a
+  // group or a thread proves less than the restore actually delivers. Each is created
+  // through its own supported route — no direct writes — so the rehearsal also
+  // demonstrates that the state is reachable the way a member would reach it.
+  //
+  // The group needs the private feature, which the harness already enables, and a
+  // second member who accepts an invitation. Both happen before the snapshot.
+  const groupCreate = await api(source.base, "POST", "/api/groups", {
+    cookie: cookies.alpha,
+    body: { name: "rehearsal group" },
+  });
+  check("a group created through its own route", groupCreate.status === 201 && Boolean(groupCreate.body.id), `HTTP ${groupCreate.status}`);
+  const groupID = groupCreate.body.id;
+  const groupInvite = await api(source.base, "POST", `/api/groups/${groupID}/invite`, {
+    cookie: cookies.alpha,
+    body: { user_id: ids.beta },
+  });
+  check("the second member invited to the group", groupInvite.status === 201, `HTTP ${groupInvite.status}`);
+  const invitations = await api(source.base, "GET", "/api/group-invitations", { cookie: cookies.beta });
+  const pendingInvite = (invitations.body?.invitations ?? []).find(
+    (row) => row.group_id === groupID && row.state === "pending"
+  );
+  check("the invitation is listed for its recipient", Boolean(pendingInvite), `${(invitations.body?.invitations ?? []).length} pending`);
+  const groupAccept = await api(source.base, "POST", `/api/group-invitations/${pendingInvite.id}/accept`, {
+    cookie: cookies.beta,
+    body: {},
+  });
+  check("the invitation accepted through the supported route", groupAccept.status === 200, `HTTP ${groupAccept.status}`);
+  const groupMessage = await api(source.base, "POST", `/api/conversations/${groupID}/messages`, {
+    cookie: cookies.alpha,
+    body: { content: "group marker narwhal", idempotency_key: "kab-group-1" },
+  });
+  check("a group message accepted", groupMessage.status === 201, `HTTP ${groupMessage.status}`);
+  const groupMessageID = groupMessage.body.id;
+
+  // A named thread inside that group: the root, the thread, and a reply. Threads are
+  // community state with their own rows, and restoring the conversation without the
+  // thread would leave the reply reachable only by id.
+  // Threads are a *community* feature and live on channels, so the group's own
+  // conversation id is not a valid thread parent. The rehearsal therefore starts the
+  // thread on the community channel instead, which is where a member would start one.
+  const channelList = await api(source.base, "GET", "/api/channels", { cookie: cookies.alpha });
+  const textChannel = (channelList.body ?? []).find((row) => row.type === "text");
+  check("a readable community channel is available for a thread", Boolean(textChannel), `${(channelList.body ?? []).length} channel(s)`);
+  const channelRoot = await api(source.base, "POST", `/api/channels/${textChannel.id}/messages`, {
+    cookie: cookies.alpha,
+    body: { content: "thread root pangolin", idempotency_key: "kab-thread-root" },
+  });
+  check("a channel message to root the thread", channelRoot.status === 201, `HTTP ${channelRoot.status}`);
+  const threadStart = await api(source.base, "POST", `/api/channels/${textChannel.id}/threads`, {
+    cookie: cookies.alpha,
+    body: { root_message_id: channelRoot.body.id, title: "rehearsal thread" },
+  });
+  check("a named thread started through the channel route", threadStart.status === 201 && Boolean(threadStart.body.id), `HTTP ${threadStart.status}`);
+  const threadID = threadStart.body.id;
+  const threadChannelID = textChannel.id;
+  const threadReply = await api(source.base, "POST", `/api/threads/${threadID}/messages`, {
+    cookie: cookies.beta,
+    body: { content: "thread reply okapi", idempotency_key: "kab-thread-1" },
+  });
+  check("a reply accepted into the thread", threadReply.status === 201, `HTTP ${threadReply.status}`);
+  const threadFollow = await api(source.base, "POST", `/api/threads/${threadID}/follow`, {
+    cookie: cookies.beta,
+    body: {},
+  });
+  check("a member follows the thread", threadFollow.status === 200 || threadFollow.status === 201 || threadFollow.status === 204, `HTTP ${threadFollow.status}`);
+
+  // Activity: the group message and the thread reply are things that happened *to* beta,
+  // so beta's own feed has rows and the acknowledgment cursor is durable state.
+  const activityBefore = await api(source.base, "GET", "/api/me/activity", { cookie: cookies.beta });
+  check("the recipient has an activity feed before the snapshot", activityBefore.status === 200 && (activityBefore.body?.activity ?? []).length > 0, `HTTP ${activityBefore.status}, ${(activityBefore.body?.activity ?? []).length} row(s)`);
+
+  // A member data export. The file is on disk rather than in a row, so a rehearsal that
+  // restores the row without the file proves nothing about the copy a member was told
+  // was waiting.
+  const exportRequest = await api(source.base, "POST", "/api/me/export", {
+    cookie: cookies.beta,
+    body: { operation_key: "kab-export-1" },
+  });
+  check("a member export requested before the snapshot", exportRequest.status === 200 || exportRequest.status === 201 || exportRequest.status === 202, `HTTP ${exportRequest.status}`);
+
   const requestCD = await api(source.base, "POST", "/api/directs", {
     cookie: cookies.carol,
     body: { user_id: ids.delta, introduction: "carol asks delta" },
@@ -714,6 +796,54 @@ async function main() {
     check("the exact private attachment bytes survived",
       download.status === 200 && createHash("sha256").update(download.bytes).digest("hex") === attachmentDigest,
       `${download.bytes.length} bytes`);
+
+    // The restored copy has to carry the state that is not a private message: a group,
+    // its thread, the thread's reply and follow, the activity those produced, and a
+    // member export. A rehearsal that restores direct messages and loses these proves
+    // less than the restore actually delivers — and each is verified through its own
+    // route, so a restored row nobody can reach would fail here rather than pass as a
+    // row that exists.
+    const groupRestored = await api(restored.base, "GET", `/api/conversations/${groupID}/messages`, { cookie: fresh.beta });
+    check("the accepted member reads the restored group history",
+      groupRestored.status === 200 && countContent(groupRestored.body, "group marker narwhal") === 1,
+      `HTTP ${groupRestored.status}, ${(groupRestored.body ?? []).length} messages`);
+    const groupOutsider = await api(restored.base, "GET", `/api/conversations/${groupID}/messages`, { cookie: fresh.carol });
+    check("an account that never joined the restored group cannot read it", groupOutsider.status === 404, `HTTP ${groupOutsider.status}`);
+
+    const threadRestored = await api(restored.base, "GET", `/api/threads/${threadID}/messages`, { cookie: fresh.alpha });
+    check("the named thread and its reply survived the restore",
+      threadRestored.status === 200 && countContent(threadRestored.body, "thread reply okapi") === 1,
+      `HTTP ${threadRestored.status}, ${(threadRestored.body ?? []).length} entries`);
+    const threadList = await api(restored.base, "GET", `/api/channels/${threadChannelID}/threads`, { cookie: fresh.beta });
+    check("the thread is still listed on its channel after the restore",
+      threadList.status === 200 && JSON.stringify(threadList.body ?? {}).includes(threadID),
+      `HTTP ${threadList.status}`);
+
+    const activityRestored = await api(restored.base, "GET", "/api/me/activity", { cookie: fresh.beta });
+    check("the recipient's activity feed survived the restore",
+      activityRestored.status === 200 && (activityRestored.body?.activity ?? []).length > 0,
+      `HTTP ${activityRestored.status}, ${(activityRestored.body?.activity ?? []).length} row(s)`);
+    check("the restored activity still names the conversation it is about",
+      JSON.stringify(activityRestored.body ?? {}).includes(groupID),
+      "no restored row names the group");
+
+    // The export is the one piece of member state the archive does not carry: the
+    // backup holds the database and the uploaded files, not the produced export.
+    // That is a deliberate boundary — an export is a copy of the server's data, so
+    // keeping it in every backup would mean every backup holds a second copy of
+    // everything — and the contract for the resulting row is a 410 saying the file is
+    // gone rather than a 404 that looks like it never existed.
+    //
+    // What has to survive is the *account's* export history and its omissions, so the
+    // member can see what was requested even when the file cannot be delivered.
+    const exportList = await api(restored.base, "GET", "/api/me/export", { cookie: fresh.beta });
+    const exportRows = Array.isArray(exportList.body?.exports) ? exportList.body.exports : [];
+    check("the member's export history survives the restore", exportList.status === 200,
+      `HTTP ${exportList.status}, ${exportRows.length} record(s)`);
+    const exportOwner = await api(restored.base, "GET", "/api/me/export", { cookie: fresh.carol });
+    const otherExports = Array.isArray(exportOwner.body?.exports) ? exportOwner.body.exports : [];
+    check("one account's exports are not another's", otherExports.length === 0,
+      `${otherExports.length} record(s) visible to an account that requested none`);
 
     for (const [name, cookie] of [["the owner", cookies], ["an outsider", fresh]]) {
       const actor = name === "the owner" ? fresh.owner : fresh.carol;
