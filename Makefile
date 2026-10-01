@@ -81,3 +81,20 @@ private-rehearsal:
 
 rollback-rehearsal:
 	node scripts/upgrade-rollback.mjs
+
+# Upgrades a real schema-13 data directory with the current tree and proves every
+# value and identity survived. The seed is written by the preserved baseline, whose
+# hash and embedded revision are recorded in scripts/schema13-baselines.json — the
+# rehearsal refuses any executable that does not match, and refuses a platform with no
+# recorded identity rather than accepting a lookalike (review 17, V17-05).
+SCHEMA13_BASELINE ?= dist/brrpbrrp-p9-checkpoint
+SCHEMA13_SEED ?= /tmp/brrpbrrp-schema13-seed
+SCHEMA13_REPORT_DIR ?= planning/schema13-rehearsal
+schema13-rehearsal: build
+	mkdir -p $(SCHEMA13_REPORT_DIR)
+	node scripts/upgrade-schema13-private.mjs --make-seed $(SCHEMA13_SEED) \
+		--old-binary $(SCHEMA13_BASELINE) \
+		--report $(SCHEMA13_REPORT_DIR)/seed.json
+	node scripts/upgrade-schema13-private.mjs --seed-dir $(SCHEMA13_SEED) \
+		--binary dist/brrpbrrp \
+		--report $(SCHEMA13_REPORT_DIR)/upgrade.json

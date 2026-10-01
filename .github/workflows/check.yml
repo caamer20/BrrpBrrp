@@ -205,36 +205,40 @@ jobs:
         run: node scripts/upgrade-recovery-private.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery-private.json
       # The schema-13 rehearsal needs a schema-13 data directory, and only a real
       # schema-13 executable can write one: a current binary produces a current
-      # database, and the rehearsal's own checks reject that. So the seed is built by
-      # the archived release this repository already pins as a baseline, and the
-      # rehearsal is then run against the candidate. If the pinned baseline is not
-      # available this step fails rather than quietly skipping — a rehearsal that did
-      # not run is not a passing rehearsal.
-      - name: Build the schema-13 upgrade seed from the pinned baseline
+      # database, and the rehearsal's own checks reject that. The seed is therefore
+      # built by a schema-13 executable acquired from the operator's approved host and
+      # verified against the digest provided with it.
+      #
+      # Nothing here names a version: the version was never the identity. The
+      # rehearsal's `--make-seed` verifies the executable's SHA256 against
+      # scripts/schema13-baselines.json for this platform and refuses a mismatch or a
+      # platform with no recorded identity (review 17, V17-05). The linux-amd64 entry
+      # is deliberately null until a hosted archive is acquired and its identity
+      # recorded; this step therefore fails with that exact instruction rather than
+      # seeding from the wrong bytes or silently skipping.
+      - name: Build the schema-13 upgrade seed from the verified baseline
         env:
-          BRRP_BASELINE_RELEASE_URL: ${{ vars.BRRP_BASELINE_RELEASE_URL }}
+          SCHEMA13_BASELINE_URL: ${{ vars.BRRP_SCHEMA13_BASELINE_URL }}
+          SCHEMA13_BASELINE_SHA256: ${{ vars.BRRP_SCHEMA13_BASELINE_SHA256 }}
         run: |
-          # Acquired through the pinned-baseline mechanism, so the bytes are verified
-          # against a recorded digest rather than unzipped from whatever happens to be
-          # in the workspace. The earlier form read dist/releases/... directly, and
-          # /dist/ is gitignored: the step depended on a file that is not in the
-          # repository, and the archive it named (0.3.0) writes schema 2, so it could
-          # not seed a schema-13 rehearsal even when present.
-          #
-          # 0.3.0 was checked by running it: it reports "BrrpBrrp 0.3.0" and writes a
-          # database whose schema_migrations maximum is 2, with no conversations and no
-          # private_message_reports. It predates private conversations entirely. See
-          # docs/v1-progress.md for every archived release and the schema each writes.
-          #
-          # This step therefore fails until the schema-13 release's own archive is
-          # pinned in scripts/baseline-releases.json and served from the approved host.
-          # That is the intended outcome: a rehearsal that runs against the wrong bytes
-          # qualifies nothing, and one that silently skips is the failure this gate
-          # exists to prevent.
-          node scripts/fetch-baseline-release.mjs --version 0.3.0 --platform linux/amd64
+          if [ -z "${SCHEMA13_BASELINE_URL}" ] || [ -z "${SCHEMA13_BASELINE_SHA256}" ]; then
+            echo "No schema-13 baseline is configured for this repository." >&2
+            echo "Acquire the archived linux/amd64 schema-13 release from the approved host," >&2
+            echo "set BRRP_SCHEMA13_BASELINE_URL and BRRP_SCHEMA13_BASELINE_SHA256 as repository" >&2
+            echo "variables, and record its sha256 and embedded revision under linux-amd64 in" >&2
+            echo "scripts/schema13-baselines.json. Then this step and the rehearsal can run." >&2
+            exit 1
+          fi
           mkdir -p /tmp/brrp-s13 && rm -rf /tmp/brrp-s13/*
-          unzip -q dist/releases/brrpbrrp-0.3.0-linux-amd64.zip -d /tmp/brrp-s13
-          node scripts/upgrade-schema13-private.mjs --make-seed /tmp/brrp-s13/data --old-binary /tmp/brrp-s13/brrpbrrp
+          curl -fsSL "${SCHEMA13_BASELINE_URL}" -o /tmp/brrp-s13/baseline.zip
+          echo "${SCHEMA13_BASELINE_SHA256}  /tmp/brrp-s13/baseline.zip" | sha256sum -c -
+          unzip -q /tmp/brrp-s13/baseline.zip -d /tmp/brrp-s13
+          old_binary="$(find /tmp/brrp-s13 -maxdepth 3 -type f -name brrpbrrp | head -1)"
+          if [ -z "${old_binary}" ]; then
+            echo "the downloaded archive contains no brrpbrrp executable" >&2
+            exit 1
+          fi
+          node scripts/upgrade-schema13-private.mjs --make-seed /tmp/brrp-s13/data --old-binary "${old_binary}" --report check-results/schema13-seed.json
       - name: Schema-13 upgrade rehearsal
         run: node scripts/upgrade-schema13-private.mjs --seed-dir /tmp/brrp-s13/data --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/schema13.json
       - name: Package one native and one source archive

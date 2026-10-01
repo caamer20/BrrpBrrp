@@ -269,3 +269,98 @@ was weakened and the closed delegated-escalation defect is described as closed.
 
 - Tranche 3: browser member/media/notification integration (two-browser media, DM/group
   journeys through joined clients, notification boundary), then tranche 4 recovery/packaging.
+
+---
+
+## Tranche 3 — Media profile, notification boundary, recovery and upgrades
+
+### 3a. Approved media profile, measured
+
+`MaxParticipants` was one constant doing two jobs; the process refused its eleventh
+voice peer, so the plan's profile was unreachable and the load harness measured a
+reduced combination. Now `MaxServerParticipants = 20` / `MaxRoomParticipants = 10`
+(with per-peer output slots and routing arrays following the room bound), and the
+forwarding harness runs the plan's own arrangement — two publishers, nine viewers
+each, twenty peers in two rooms of ten — writing
+`planning/m-review-17-checkpoint/video-forwarding-approved-profile.json`: **46.6
+Mbit/s mean egress, 47.2 peak, 78 MiB peak heap, 2226 mean goroutines over 20 s**
+against the plan's 50 Mbit/s arithmetic. Limits are 1 screen per room / 2 per
+server / 1 micro per room member / 20 server microphones, unchanged and matching
+the approved numbers. Also fixed: stopping a share released only the video
+publication, leaving its screen-audio publication and forwarders behind — one stop
+now releases the pair, with a regression.
+
+Commands: `BRRP_VIDEO_LOAD_SECONDS=20 BRRP_VIDEO_LOAD_REPORT=… go test -run
+'^TestVideoForwardingLoad$' -v ./internal/rtc` (PASS); `go test -race ./internal/rtc`
+(PASS, 125 s).
+
+### 3b. Notification admission boundary, in a real browser
+
+The worker's retention sweep ran only after a successful `showNotification`, so a
+profile that declines to display notices grew the dedup store past every bound.
+Bookkeeping now runs first and display is best-effort. A rendered journey drives
+the worker's own admission path (the page's permission gate cannot be granted in
+this harness — Playwright leaves notifications denied, and the workspace correctly
+posts nothing then, so the journey says that instead of pretending): one event
+posted by two tabs of one account claims exactly once, distinct events claim
+separately, stale and over-count keys are swept while keys outside the prefix
+survive. Release project: **5 passed**.
+
+### 3c. Recovery, upgrades and schema 25
+
+- **Migration 25** admits the `group_message` interruption preference. Migration 17
+  widened `account_activity` but not `private_notification_preferences`, so the route
+  accepted the kind and the write failed its CHECK — a member could not mute group
+  notifications at all, and the failure was a 500. Found by the private rehearsal;
+  schema statements in current docs updated (deployment, plan); `check-schema-docs`
+  green.
+- **schema-13 seed** now creates an accepted private conversation with submitted
+  evidence, a pending request (and a block when the preserved build has the route),
+  and writes `seed-manifest.json` with the exact identities it created.
+- **Baseline identity**: `scripts/schema13-baselines.json` records the preserved
+  executable per platform (sha256 + embedded revision); `--make-seed` refuses a
+  mismatch or a platform with no recorded identity; the seed manifest carries the
+  baseline identity and the verifying run refuses a fixture of unknown provenance.
+- **`--report`** on the schema-13 verifier writes machine-readable results (status,
+  checks with failures, identities) for both seed and verify runs; the pass/fail exit
+  status and the report come from the same list.
+- **Exactness**: the verifier asserts preserved values *and* that the recorded
+  identities still resolve, then runs a negative control (deleting asserted rows in a
+  damaged copy must be reported as a mismatch).
+- **Private rehearsal repairs** (`upgrade-recovery-private.mjs`): exports are read as
+  the raw array the API returns, with id/metadata comparison and the missing-file 410
+  asserted; the reviewer grant is seeded through the real ownership ceremony, MFA
+  enrollment, role route and assignment route (additively, because assignments
+  replace the set), both revocations are API-only with strict checks; new assertions
+  cover thread follow/read positions, a still-pending group invitation, group owner
+  and membership, activity acknowledgment and interruption preference; the
+  post-snapshot decisions now include a ban, a password rotation and an erasure, each
+  re-applied on the restored copy before cutover; sessions are disclosed as the one
+  thing the artifact deliberately does not carry; a negative control damages thread
+  and preference state in a copy and requires those tables to be reported as
+  mismatched.
+- **CI** no longer requests a version: the schema-13 baseline is acquired from an
+  operator-provided URL and digest (`BRRP_SCHEMA13_BASELINE_URL/_SHA256`) and the
+  rehearsal itself refuses a platform with no recorded identity; `make
+  schema13-rehearsal` runs the whole local path with reports.
+- **Results (local, `dist/brrpbrrp` built from this tree, schema 25)**:
+  `upgrade-schema13-private --make-seed --old-binary dist/brrpbrrp-p9-checkpoint`
+  (baseline identity verified) then `--seed-dir … --binary dist/brrpbrrp` →
+  **PASS** (13→25, values and identities preserved, negative control detected);
+  `upgrade-recovery.mjs` → **PASS 23/0**; `upgrade-recovery-private.mjs` →
+  **PASS 172/0**; future-schema refusal smoke: `migrate` exits 1 with "database
+  schema 9999 is newer than this binary supports (schema 25)…", `preflight` reports
+  `future_schema: true`.
+
+### Known limits of this tranche
+
+- The schema-13 fixture for hosted Linux CI still requires the operator to acquire
+  the archived schema-13 executable and record its identity; local qualification
+  uses the preserved darwin/x64 binary.
+- The notification journey drives the worker boundary directly; the operating-system
+  banner path (permission → `showNotification`) is not exercisable in a headless
+  harness and remains a physical-acceptance item.
+- Media browser journeys still need decoded-frame/two-browser coverage, relay paths,
+  late join, stop/restart and move/reconnect (audited by MediaScout; next tranche).
+- Rollback rehearsal with the archived alpha.5 release is run in the same tranche;
+  see the commit results.
