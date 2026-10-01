@@ -1031,3 +1031,24 @@ exists to prevent.
 `BRRP_BASELINE_RELEASE_DIR` or `BRRP_BASELINE_RELEASE_URL`, the way the alpha.5 and
 alpha.3 baselines already are. The acquisition path and its digest verification already
 exist and are exercised by the self-test; what is missing is the bytes.
+
+## Message shape is content
+
+Line breaks, blank lines and indentation in a message are what the author wrote, and
+they are preserved. The tokenizer used to drop every whitespace-only text run and then
+join the text either side of a line break with no separator, so `first` and `second` on
+consecutive lines tokenized to a single run reading `firstsecond`. A pasted log, a
+list, a stanza or a table — every reason somebody types more than one line — rendered
+as one run-on line.
+
+It was invisible in the tests because they checked token *kinds* and mentions, and a
+concatenation has exactly the same kinds as the text it came from. The line break is now
+emitted as its own text token so the merge cannot fold a mention or a link into it, and
+whitespace is only dropped when it is the empty string. A message holding nothing but
+spaces renders those spaces rather than nothing; an empty message still produces no
+tokens at all.
+
+`release.spec.mjs` asserts the rendered text of a shaped message through the real
+composer, because the tokenizer could be right and the renderer still fold it — the
+element is `pre-wrap`, so the break has to survive all the way to a line box.
+

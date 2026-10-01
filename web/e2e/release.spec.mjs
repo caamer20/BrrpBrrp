@@ -47,6 +47,18 @@ test('first setup, persistent chat, search and sign-out', async ({ page, context
   await page.reload();
   await expect(log.locator('.message-content').filter({ hasText: message })).toBeVisible();
 
+  // A message's shape is content. The tokenizer dropped every whitespace-only run and
+  // then joined the text either side of a line break, so a pasted log, a list or a
+  // stanza rendered as one run-on line. This asserts the *rendered* text rather than
+  // the tokenizer's output, because the tokenizer could be right and the renderer still
+  // fold it — the element is `pre-wrap`, so the break has to survive to a line box.
+  const shaped = 'first line\nsecond line\n\n  indented after a blank line';
+  await composer.fill(shaped);
+  await page.getByRole('button', { name: 'Send message' }).click();
+  const shapedContent = log.locator('.message-content').filter({ hasText: 'first line' });
+  await expect(shapedContent).toBeVisible();
+  expect(await shapedContent.last().innerText()).toBe(shaped);
+
   // A focused discussion keeps its own draft, uploads, and live replies.
   await composer.fill('Keep my channel draft');
   const original = log

@@ -108,5 +108,71 @@ test('a link host is readable and never throws on a malformed address', () => {
 
 test('empty input produces no tokens rather than one empty piece', () => {
   assert.deepEqual(tokenizeMessage(''), []);
-  assert.deepEqual(tokenizeMessage('   '), []);
+  // A message holding only spaces is *not* empty. The send boundary refuses one, so
+  // this shape only reaches the renderer after an edit emptied the text, and rendering
+  // the spaces is closer to what the author sees than rendering nothing at all.
+  assert.deepEqual(tokenizeMessage('   '), [{ kind: 'text', value: '   ' }]);
+});
+
+// A message's shape is content. Two lines are not one word, and a line that holds
+// nothing but spaces is a blank line, not an absence.
+//
+// The tokenizer dropped every whitespace-only text token and then joined the text runs
+// either side of a line break with no separator, so `first\nsecond` tokenized to a
+// single text token reading `firstsecond`. A pasted log, a list, a poem, or a table —
+// every one of which is why somebody types more than one line — rendered as one run-on
+// line. It was invisible in the tests because the tests only ever checked token *kinds*
+// and mentions, and a concatenation has the same kinds as the text it came from.
+
+test('two lines stay two lines rather than concatenating', () => {
+  const tokens = tokenizeMessage('first\nsecond');
+  assert.deepEqual(
+    tokens.map((t) => t.value),
+    ['first\nsecond'],
+    'a line break between two runs of text was dropped'
+  );
+});
+
+test('a blank line between two paragraphs survives', () => {
+  const tokens = tokenizeMessage('above\n\nbelow');
+  assert.equal(tokens.map((t) => t.value).join(''), 'above\n\nbelow');
+});
+
+test('leading indentation and internal runs of spaces are preserved', () => {
+  assert.equal(tokenizeMessage('    indented')[0].value, '    indented');
+  assert.equal(tokenizeMessage('a  b')[0].value, 'a  b');
+  // A mention between two runs of text must not swallow the spacing around it.
+  const tokens = tokenizeMessage('hi  @alice  there');
+  assert.deepEqual(
+    tokens.map((t) => [t.kind, t.value]),
+    [
+      ['text', 'hi  '],
+      ['mention', '@alice'],
+      ['text', '  there']
+    ]
+  );
+});
+
+test('a message holding only spaces is one space, not nothing', () => {
+  // An all-blank message is refused at the send boundary, so this shape only arises
+  // from a message that had content and lost it to tokenizing. Rendering nothing is the
+  // better failure than rendering the text it was carrying.
+  const tokens = tokenizeMessage('   ');
+  assert.equal(tokens.map((t) => t.value).join(''), '   ');
+});
+
+test('code keeps its own whitespace without gaining the surrounding message line breaks', () => {
+  const tokens = tokenizeMessage('before\n```\n  indented\n\n  blank above\n```\nafter');
+  const code = tokens.find((t) => t.kind === 'code');
+  assert.equal(code.value, '  indented\n\n  blank above');
+  // The prose around the block keeps its own break. The fence line itself is consumed
+  // as the fence, so it does not contribute a break of its own -- but the line after the
+  // closing fence does, and the merge must not fold it into the block.
+  assert.equal(
+    tokens
+      .filter((t) => t.kind === 'text')
+      .map((t) => t.value)
+      .join(''),
+    'before\nafter'
+  );
 });

@@ -47,7 +47,7 @@ export function tokenizeMessage(input: string): Token[] {
     code.length = 0;
   };
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const fence = /^\s*(```+|~~~+)\s*([A-Za-z0-9+#-]*)\s*$/.exec(line);
     if (fence) {
       if (inCode) {
@@ -63,6 +63,15 @@ export function tokenizeMessage(input: string): Token[] {
       code.push(line);
       continue;
     }
+    // The line break is itself content. A message is not a sequence of unrelated lines:
+    // `first` and `second` on consecutive lines are one sentence with a line break in
+    // it, and rendering them as `firstsecond` changes what was written.
+    //
+    // It is emitted as a separator rather than appended to the previous run, because a
+    // previous run may end with a mention or a link and appending would glue the break
+    // onto a token the component renders as an element. A dedicated text token keeps
+    // the merge below from folding it into anything.
+    if (index > 0) tokens.push({ kind: 'text', value: '\n' });
     for (const piece of tokenizeLine(line)) tokens.push(piece);
   }
   // An unterminated fence is still code: the alternative is rendering a half-pasted
@@ -116,18 +125,24 @@ function tokenizeLine(line: string): Token[] {
 function mergeText(tokens: Token[]): Token[] {
   const merged: Token[] = [];
   for (const token of tokens) {
-    // Whitespace alone is not content. An empty message — or one holding only spaces —
-    // renders nothing rather than a blank block, and the component does not have to
-    // know the difference between "no tokens" and "one empty token".
-    if (token.kind === 'text' && !token.value.trim()) continue;
+    // Whitespace is content and is never dropped. Dropping it is what made two lines
+    // render as one: the break is a text token, and this used to discard it along with
+    // any run of spaces, after which the merge joined the words either side together.
+    //
+    // An *empty* token is still dropped, because an empty message should produce no
+    // tokens rather than one empty element for the component to render as nothing.
+    if ((token.kind === 'text' || token.kind === 'code') && token.value === '') continue;
     const previous = merged.at(-1);
     if (token.kind === 'text' && previous?.kind === 'text') {
       previous.value += token.value;
       continue;
     }
-    if (token.kind === 'code' && !token.value.trim()) continue;
     merged.push({ ...token });
   }
+  // A run of separators with no content between them — the blank lines of a message
+  // that is nothing but newlines — is kept, because that is what it said. Only a
+  // completely empty result collapses, so the component can still ask "is there
+  // anything here?" without receiving a phantom element.
   return merged;
 }
 
