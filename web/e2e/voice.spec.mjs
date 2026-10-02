@@ -76,6 +76,27 @@ async function capturePeers(page) {
   });
 }
 
+// decodedVideo reads what a page's inbound video has actually done: frames decoded,
+// and the width of the widest decoded frame. The frame count alone would accept a
+// still picture and a picture from the wrong share alike; the width is what makes
+// "this is the 320-wide canvas the journey shares" checkable rather than assumed.
+async function decodedVideo(target) {
+  return target.evaluate(async () => {
+    let frames = 0;
+    let width = 0;
+    for (const peer of window.__brrpPeers ?? []) {
+      if (peer.connectionState !== 'connected') continue;
+      const report = await peer.getStats();
+      report.forEach((entry) => {
+        if (entry.type !== 'inbound-rtp' || entry.kind !== 'video') return;
+        frames += entry.framesDecoded ?? 0;
+        width = Math.max(width, entry.frameWidth ?? 0);
+      });
+    }
+    return { frames, width };
+  });
+}
+
 async function audioBytes(page) {
   return page.evaluate(async () => {
     let inbound = 0;
@@ -429,22 +450,6 @@ test('a screen share is published to the room, and stopping it releases the trac
 const SHARER = { username: 'screen_sharer', password: 'a screen sharer passphrase' };
 const VIEWER = { username: 'screen_viewer', password: 'a screen viewer passphrase' };
 
-// Recorded gap (review 17): a browser viewer negotiates receive lines and the call
-// survives the share, but it never decodes a frame. The publisher encodes
-// (`framesEncoded > 3`), the viewer answers `connected` with `sendonly:video` and
-// `sendonly:audio` lines, and `framesDecoded` stays 0 — the server's `answerViewOnly`
-// exchange leaves the view line `inactive`, so the screen's output is never bound to
-// it. A `recvonly` client line, which is the direction that should carry server media,
-// currently ends the call when the answer is applied. The fix lands on both sides
-// together: the server must answer a viewer's `recvonly` video line with `sendonly`
-// from the screen's output transceiver (the Go viewer test then asserts received RTP
-// and decoded output rather than only the negotiation), and the browser's receive
-// helper switches direction with it. Until then this stays an explicit unfinished
-// boundary rather than a narrowed claim in the journey above.
-test.fixme('a browser viewer decodes the shared screen', async ({ browser }) => {
-  void browser;
-});
-
 test('a shared screen reaches another browser and stops cleanly', async ({
   page,
   request,
@@ -543,7 +548,8 @@ test('a shared screen reaches another browser and stops cleanly', async ({
     // The viewer learns a share exists: the announcement reaches the voice store,
     // which negotiates receive lines for the picture and for the share's audio. This
     // is the boundary the workspace router used to drop — `screen.published` does not
-    // start with `voice.`, so the client's whole receive path was dead code
+    // start with `voice.`, so the client's whole receive path was dead code. The lines
+    // are `recvonly`, which is how a viewer says it wants media sent to it
     // (review 17, two-browser screen journey).
     await expect
       .poll(
@@ -563,8 +569,8 @@ test('a shared screen reaches another browser and stops cleanly', async ({
                 .getTransceivers()
                 .map((t) => `${t.direction}:${t.receiver?.track?.kind ?? 'none'}`);
               if (
-                kinds.some((entry) => entry.startsWith('sendonly:video')) &&
-                kinds.some((entry) => entry.startsWith('sendonly:audio'))
+                kinds.some((entry) => entry.startsWith('recvonly:video')) &&
+                kinds.some((entry) => entry.startsWith('recvonly:audio'))
               )
                 return true;
             }
@@ -604,8 +610,22 @@ test('a shared screen reaches another browser and stops cleanly', async ({
       )
       .toBeGreaterThan(3);
 
+    // And the viewer decodes it: the picture arrives, it is the shared one (320 wide),
+    // and new frames keep coming. Until the server answered the viewer's own receive
+    // line with the transceiver carrying the screen, this connection reported
+    // `connected` and decoded nothing (review 17, two-browser screen journey).
+    await expect
+      .poll(async () => (await decodedVideo(viewer)).frames, { timeout: 30000 })
+      .toBeGreaterThan(1);
+    const firstDecoded = await decodedVideo(viewer);
+    expect(firstDecoded.width, 'the decoded picture is not the shared one').toBe(320);
+    await expect
+      .poll(async () => (await decodedVideo(viewer)).frames, { timeout: 30000 })
+      .toBeGreaterThan(firstDecoded.frames + 3);
+
     // Stopping the share releases it: the room hears the stop, the browser's capture
-    // is stopped, and both clients are still in the call afterwards.
+    // is stopped, the picture stops arriving, and both clients are still in the call
+    // afterwards.
     await sidebarVoice(page).getByRole('button', { name: 'Stop sharing screen' }).click();
     await expect
       .poll(() => page.evaluate(() => window.__shareState.stopped), { timeout: 30000 })
@@ -619,6 +639,13 @@ test('a shared screen reaches another browser and stops cleanly', async ({
         { timeout: 30000 }
       )
       .toBeGreaterThan(0);
+    const stoppedDecoded = await decodedVideo(viewer);
+    await viewer.waitForTimeout(4000);
+    const afterStopDecoded = await decodedVideo(viewer);
+    expect(
+      afterStopDecoded.frames - stoppedDecoded.frames,
+      'the viewer kept decoding pictures after the share stopped'
+    ).toBeLessThanOrEqual(3);
     expect(await connected(page), 'the sharer left the call when the share stopped').toBe(true);
     expect(await connected(viewer), 'the viewer left the call when the share stopped').toBe(true);
 
@@ -632,6 +659,9 @@ test('a shared screen reaches another browser and stops cleanly', async ({
       sidebarVoice(page).getByText(/Everyone in the conversation can see it/)
     ).toBeVisible({ timeout: 30000 });
     expect(await connected(viewer), 'the viewer left the call on the share restart').toBe(true);
+    await expect
+      .poll(async () => (await decodedVideo(viewer)).frames, { timeout: 30000 })
+      .toBeGreaterThan(afterStopDecoded.frames + 3);
   } finally {
     await viewerContext.close().catch(() => {});
     const leave = sidebarVoice(page).getByRole('button', { name: /Leave (voice|call)/ });

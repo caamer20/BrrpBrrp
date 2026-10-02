@@ -839,3 +839,65 @@ control is the ordering itself: moving the announce to before the SDP exchange f
 "the room holds 1 publications after a failed negotiation, want at most 0". The test uses
 a structurally invalid offer rather than an empty one, because an empty SDP is refused by
 a guard that runs before either ordering — a test using it would pass against both.
+
+
+## A viewer's line carries the screen, and a publisher never views its own share
+
+Alpha.8 recorded the first half as an unfinished boundary: a browser viewer negotiated a
+line for a screen nobody was sending on, the server answered it with a trackless
+transceiver while the real screen output appeared as an m-line the client had never
+offered, and the connection reported `connected` with `framesDecoded` at zero. Both sides
+were wrong, and each was only half the defect.
+
+The client said it wanted to send. `addScreenReceive` asked with `sendonly` and no track,
+which is a statement that the client intends to publish — the answer to it can never
+deliver a picture. A client that means to receive says `recvonly`, and now it does.
+
+The server bound the wrong section. Pion associates an arriving m-line with a same-kind
+transceiver that is not yet associated, so the screen output has to exist **before**
+`SetRemoteDescription` for the answer's section to be the one the screen travels on.
+Created afterwards, it became an extra m-line the client never offered: negotiation
+succeeded and no frame could arrive. `renegotiate` now reads the offer's own view lines
+(`viewRequestKinds`: `a=recvonly`, or the view stream id) and creates the outputs first.
+
+Fixing only those two produced the second defect, and it is the reason this section
+exists. A publication is announced to the room, and the publisher is *in* the room: told
+that a screen existed, the sharing client asked to view it, the server answered with a
+video line for it, and `ontrack` treated the arriving track as a picture to display —
+`attachScreen` stopped the previous stream, which was the capture. The sharer's own share
+died the instant it started; the browser journey's publisher encoded zero frames while
+the connection stayed `connected`. So the boundary is now stated on both sides, each as a
+rule:
+
+- **A publisher is never told about its own publication.** It already has the publication
+  id from the answer that registered the share, and the announcement exists so that
+  *another* client can negotiate a line for it. The owner is filtered out of the
+  recipients, and the client also ignores an announcement addressed to a publication it
+  owns, so a replayed or cross-tab event cannot restart the cycle.
+- **A local capture is not the stream the panel renders.** The two were one field, and
+  the consequence was that a stream arriving from the server stopped the capture. They
+  are separate now, and while a capture is live nothing arriving on the connection can
+  replace it. Leaving the call releases the capture, which also protects the next call
+  from a stale one.
+- **An offer that names no publication may ask to receive and may not ask to send.** A
+  `recvonly` line — or a line carrying the view stream id — is a view request and is
+  answered with the output that carries the screen. A `sendonly`/`sendrecv` video section
+  that names no publication is refused with "a second offer must name the publication it
+  is adding": the receive path must not become a way to publish by omitting a field. A
+  section whose mid this connection has already negotiated is a re-offer of media the
+  connection already has, not an addition.
+- **A view line can never become a publication.** Forwarding is gated on ownership of a
+  live publication of the kind, so media arriving on a viewer's line is dropped rather
+  than registered. `TestAViewLineIsAnsweredAndCannotPublish` is the permitted control
+  standing beside `TestAnUnmarkedSendingVideoLineIsStillRefused`, so the fix is not
+  "refuse everything".
+
+The evidence is layered, and the layers prove different things.
+`TestAViewerReceivesScreenFramesOnTheOfferItMade` drives real peer connections: it counts
+the answer's video sections, requires exactly one answered `sendonly`, and reads RTP off
+the receiver — synthetic frames written by the server, which is not evidence about a
+browser. The two-browser journey proves the browser half: the viewer's inbound
+`framesDecoded` advances, its `frameWidth` is the 320-pixel canvas the sharer draws,
+decoding stops when the share stops, and decoding resumes on a restart while the sharer
+stays in the call. Neither replaces the other, and neither says anything about a physical
+capture device or a real network path.

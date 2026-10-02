@@ -45,6 +45,13 @@ class Voice {
   // The sender for a published screen, so a restart replaces the track rather than
   // negotiating a second one into a room whose bound is one screen.
   private screenSender: RTCRtpSender | null = null;
+  // The local capture, kept apart from `screenStream` — which is what the panel
+  // renders and is either the capture or a share arriving from the server. The two
+  // were one field, and the consequence was that a stream arriving from the server
+  // stopped the capture the client was publishing: the sharer's own share died the
+  // moment the answer to its own view line was applied (review 17, two-browser screen
+  // journey).
+  private capture: MediaStream | null = null;
   // System audio is a *separate* publication from the screen's video. The server
   // bounds them separately — a screen's audio is only meaningful alongside its
   // video — and a client that sent them as one would be refused by the screen's own
@@ -421,11 +428,17 @@ class Voice {
       // on the announcement because a share is two publications: the picture arrives on
       // the view offer this client already made, while the screen's audio is announced
       // afterwards and needs its own m-line.
-      if (event.t === 'screen.published')
+      if (event.t === 'screen.published') {
+        // A publisher never asks to view its own publication: the capture is already
+        // here, and the media the server would send back is the same picture relayed
+        // at best. The server withholds the announcement from the owner; this keeps a
+        // replayed or cross-tab event from restarting the cycle.
+        if (event.d?.owner && event.d.owner === workspace.user?.id) return;
         this.requestScreenReceive(event.d?.kind, event.d?.connection_id);
-      else {
+      } else {
         this.screenStream?.getTracks().forEach((track) => track.stop());
         this.screenStream = null;
+        this.capture = null;
         this.screenShared = false;
       }
     }
@@ -526,6 +539,14 @@ class Voice {
    */
   private attachScreen(stream: MediaStream | undefined | null) {
     if (!stream) return;
+    // While this client is publishing a screen, its own capture is what the panel
+    // shows. A stream arriving from the server at that moment is the same picture
+    // relayed back — the answer to a view line the client should not have asked for —
+    // and attaching it here stopped the capture's tracks, ending the very share the
+    // announcement was about. The server no longer announces a publication to its
+    // owner and the client no longer requests one, so this is the third layer: the
+    // capture cannot be stopped by anything arriving on the connection.
+    if (this.capture) return;
     this.screenStream?.getTracks().forEach((track) => track.stop());
     this.screenStream = stream;
     // The flag comes first, so the element is in the DOM before it is asked to render.
@@ -854,6 +875,18 @@ class Voice {
     this.closePeer();
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
+    // A share does not outlive the call it was published to. The capture is released
+    // here rather than left running: the browser's sharing indicator would stay on
+    // with nothing receiving it, and the next call would render a stale picture.
+    this.capture?.getTracks().forEach((track) => track.stop());
+    this.capture = null;
+    this.screenStream = null;
+    this.screenShared = false;
+    this.screenState = 'idle';
+    this.screenMessage = '';
+    this.publishedScreen = false;
+    this.publishedScreenAudio = false;
+    this.screenRequested = false;
     this.chime?.stop();
     this.chime = null;
     this.audioContext?.close().catch(() => {});
@@ -1054,6 +1087,7 @@ class Voice {
     }
 
     this.screenStream = result.stream;
+    this.capture = result.stream;
     // The browser can end a share without telling us through any path we control:
     // the user stops it in their own UI, the tab closes, or the browser revokes the
     // capture. This is the only signal for all three, and without it a stopped share
@@ -1202,6 +1236,7 @@ class Voice {
     if (this.screenStream) {
       stopScreen(this.screenStream);
       this.screenStream = null;
+      this.capture = null;
     }
     // The track is stopped, but the transceiver stays: removing it would renegotiate
     // the connection again, and a share that restarts a moment later would then need a
@@ -1249,16 +1284,14 @@ function addScreenReceive(peer: RTCPeerConnection, kind: 'video' | 'audio') {
       )
         return;
     }
-    // `sendonly`, with no track, is the direction the server's view path accepts: a
-    // recvonly line is answered as inactive by the current `answerViewOnly` exchange,
-    // and the browser then refuses the answer and ends the call (measured in the
-    // two-browser journey, review 17). The consequence is that no browser viewer
-    // decodes frames yet — the server's screen output and the view line negotiate
-    // `inactive` — and that is recorded as an open defect rather than papered over:
-    // fixing it is an SDP-direction change on the server's answer side plus a
-    // recvonly client line, with the Go viewer test extended to assert received
-    // frames rather than only the negotiation.
-    const added = peer.addTransceiver(kind, { direction: 'sendonly' });
+    // `recvonly` is the direction a viewer says it with. A client line marked
+    // `sendonly` (which this used to send, carrying a track it never wrote to) told the
+    // server the client meant to *send*, so the answer could never deliver a picture —
+    // and a bare `recvonly` line used to be refused outright because the server decided
+    // what an offer was from transceivers it had already created. The server now reads
+    // the offer's own direction before applying it, so the client asks for exactly what
+    // it wants (review 17, two-browser screen journey).
+    const added = peer.addTransceiver(kind, { direction: 'recvonly' });
     // The stream id has to be on the track, and a browser builds the transceiver's
     // media description from the track, so the id is applied through the receiver the
     // transceiver creates rather than by editing the SDP — which is validated against

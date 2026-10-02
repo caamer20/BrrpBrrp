@@ -733,6 +733,7 @@ type forwarder struct {
 	// "a replacement microphone was forwarded" from "a track existed".
 	written uint64
 }
+
 func (f *forwarder) write(source string, packet *rtp.Packet) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -786,14 +787,41 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 		if signal.SDP == nil || signal.SDP.SDP == "" {
 			return errors.New("a renegotiation needs an offer")
 		}
+		// A view line is how a client asks to receive, and it is answered below. What
+		// is still refused is a *sending* video line the server was not told about:
+		// the receive path must not become a way to publish by omitting a field,
+		// whichever view lines the same offer carries. A section this connection has
+		// already negotiated is not an addition — re-offering media that already has
+		// a mid and a publication changes nothing.
+		if unnamedOfferAddsVideo(peer, *signal.SDP) {
+			return errors.New("a second offer must name the publication it is adding")
+		}
+		// A viewer's output transceiver is created *before* the offer is applied, and
+		// this ordering is the whole fix. Pion associates an arriving m-line with an
+		// existing unassociated transceiver of the same kind, so creating the screen
+		// output first is what makes the answer's section the one that carries the
+		// screen track. Creating it afterwards left the client's line answered by a
+		// trackless transceiver and the real output as an m-line the client never
+		// offered: the connection stayed `connected`, the view lines existed, and no
+		// browser viewer ever decoded a frame (review 17, two-browser screen journey).
+		wanted := viewRequestKinds(*signal.SDP)
+		for _, kind := range wanted {
+			if err := peer.addScreenOutputOfKind(kind); err != nil {
+				return err
+			}
+		}
 		if err := peer.pc.SetRemoteDescription(*signal.SDP); err != nil {
 			return err
 		}
-		if peerIsViewing(peer) {
-			// The server needs an output to send the screen on, and a viewer that joins
-			// before anybody shares does not have one yet.
-			if err := peer.addScreenOutput(); err != nil {
-				return err
+		if len(wanted) > 0 || peerIsViewing(peer) {
+			// A viewer that joins before anybody shares still needs an output, and a
+			// marker-only offer (a client that says so with its stream id rather than
+			// with a direction) reaches here through `peerIsViewing` rather than
+			// through the offer's own text.
+			if len(wanted) == 0 {
+				if err := peer.addScreenOutput(); err != nil {
+					return err
+				}
 			}
 			return s.answerViewOnly(peer)
 		}
@@ -1019,9 +1047,20 @@ func (s *SFU) announcePublication(peer *Peer, publication Publication) {
 	s.room(room).add(&publication)
 	var recipients []*Peer
 	for _, other := range s.peers {
-		if other.state.ChannelID == room {
-			recipients = append(recipients, other)
+		if other.state.ChannelID != room {
+			continue
 		}
+		// The publisher is not told about its own publication. It already has the
+		// publication id from the answer that registered it, and the announcement's
+		// whole purpose is to tell *somebody else* that a screen exists so it can
+		// negotiate a line for it. Delivered back to the publisher, it made the
+		// sharing client ask to view its own share: the view request was answered
+		// with a video line the client then attached as a picture, which stopped the
+		// capture the share was publishing (review 17, two-browser screen journey).
+		if other == peer {
+			continue
+		}
+		recipients = append(recipients, other)
 	}
 	s.mu.Unlock()
 	for _, other := range recipients {
@@ -1389,6 +1428,72 @@ func (s *SFU) renegotiateForTest(peer *Peer, publicationID string) error {
 	return nil
 }
 
+// viewRequestKinds reads which publications a client is asking to *receive*, from the
+// offer itself.
+//
+// Two things say it: the direction a client writes down (`a=recvonly`, which is
+// unambiguous) and the view stream id, which a client puts on a line it never writes
+// to. The direction attribute is otherwise no guide at all — a bare transceiver has no
+// direction and the SDP default makes it sendrecv — which is why the marker exists,
+// and why both are read here rather than only one. A publisher's screen line carries
+// neither: it is `sendonly` (or sendrecv) with its own stream id.
+func viewRequestKinds(description webrtc.SessionDescription) []PublicationKind {
+	var kinds []PublicationKind
+	for _, media := range remoteMedia(description.SDP) {
+		if !mediaDeclaresView(media) && !mediaIsRecvOnly(media) {
+			continue
+		}
+		switch {
+		case isVideoMedia(media):
+			kinds = append(kinds, PublicationScreenVideo)
+		case isAudioMedia(media):
+			kinds = append(kinds, PublicationScreenAudio)
+		}
+	}
+	return kinds
+}
+
+// unnamedOfferAddsVideo reports whether an offer that names no publication carries a
+// video section that would send media the server has not been told about.
+//
+// The question is asked of the offer's own text rather than of the transceivers it
+// produced, because by then the two cases look identical: an unmarked sending line and
+// the view line a client uses to receive both appear as a video transceiver on this
+// connection. What separates them is the direction the client wrote down and whether
+// the section is new — a section whose mid this connection has already negotiated is
+// media the connection already has, not an addition, and a re-offer of it changes
+// nothing about who publishes.
+func unnamedOfferAddsVideo(peer *Peer, description webrtc.SessionDescription) bool {
+	negotiated := map[string]bool{}
+	for _, transceiver := range peer.pc.GetTransceivers() {
+		if mid := transceiver.Mid(); mid != "" {
+			negotiated[mid] = true
+		}
+	}
+	for _, media := range remoteMedia(description.SDP) {
+		if !isVideoMedia(media) || !mediaSends(media) || mediaDeclaresView(media) {
+			continue
+		}
+		if negotiated[mediaMid(media)] {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// mediaMid reads a section's mid, which is how a re-offer refers to media this
+// connection has already negotiated. An empty mid is a new section, because a section
+// that has been negotiated always has one.
+func mediaMid(media sdpMedia) string {
+	for _, attribute := range media.attributes {
+		if strings.HasPrefix(attribute, "a=mid:") {
+			return strings.TrimPrefix(attribute, "a=mid:")
+		}
+	}
+	return ""
+}
+
 // peerIsViewing reports whether the offer that was just applied is a client asking to
 // receive rather than to publish.
 //
@@ -1491,12 +1596,29 @@ func isVideoMedia(media sdpMedia) bool {
 	return len(fields) > 0 && (strings.Contains(fields[0], "video") || strings.Contains(fields[0], "image"))
 }
 
+func isAudioMedia(media sdpMedia) bool {
+	fields := strings.Fields(media.header)
+	return len(fields) > 0 && strings.HasPrefix(fields[0], "audio")
+}
+
+// mediaIsRecvOnly reports the direction a client wrote down for a section. It is the
+// unambiguous half of "this line is a view": a client that means to receive says so,
+// while a bare transceiver says nothing and defaults to sendrecv.
+func mediaIsRecvOnly(media sdpMedia) bool {
+	for _, attribute := range media.attributes {
+		if attribute == "a=recvonly" {
+			return true
+		}
+	}
+	return false
+}
+
 func mediaSends(media sdpMedia) bool {
 	for _, attribute := range media.attributes {
 		switch attribute {
 		case "a=sendonly", "a=sendrecv":
 			return true
-		case "a=recvonly":
+		case "a=recvonly", "a=inactive":
 			return false
 		}
 	}
@@ -1507,8 +1629,16 @@ func mediaSends(media sdpMedia) bool {
 
 func mediaDeclaresView(media sdpMedia) bool {
 	for _, attribute := range media.attributes {
-		if strings.HasPrefix(attribute, "a=brrpbrrp-view") {
-			return true
+		if !strings.HasPrefix(attribute, "a=msid:") {
+			continue
+		}
+		// Either position may carry the marker: a client that adds a track puts it on
+		// the track (the second token), and one that adds a transceiver puts it on the
+		// stream (the first). Both are the same statement — this line is not written to.
+		for _, field := range strings.Fields(strings.TrimPrefix(attribute, "a=msid:")) {
+			if IsViewOnlyStream(field) {
+				return true
+			}
 		}
 	}
 	return false

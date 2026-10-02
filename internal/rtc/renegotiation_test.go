@@ -1,6 +1,7 @@
 package rtc
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -823,18 +824,153 @@ func TestAViewerCanNegotiateToReceiveAScreenWithoutPublishing(t *testing.T) {
 	}
 }
 
-// A second offer that does not say it is a view is still refused. The receive path
-// must not become a way to publish by omitting a field.
-func TestAnUnmarkedSecondOfferIsStillRefused(t *testing.T) {
+// A viewer that asks to receive with an explicit `recvonly` line gets the transceiver
+// that actually carries the screen: one video section in the answer, `sendonly`, and
+// frames that arrive. The older shape of this test asserted only that the two sides
+// agreed — the client's line was answered by a trackless transceiver while the real
+// output appeared as an m-line the client never offered, so the connection reported
+// `connected` and no browser viewer ever decoded a frame (review 17, two-browser
+// screen journey).
+func TestAViewerReceivesScreenFramesOnTheOfferItMade(t *testing.T) {
+	sfu := newTestSFU(t)
+	publisher := connectPeer(t, sfu, "ana", "room")
+	viewer := connectPeer(t, sfu, "bo", "room")
+	waitFor(t, "both peers to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
+			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
+	})
+
+	publisher.setScreenTrack(t)
+	offer, err := publisher.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	if err := sfu.Signal("ana", "ana", Signal{
+		ConnectionID: sfu.connectionIDFor("ana"),
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: publisher.pc.LocalDescription().SDP},
+		Publication:  PublicationScreenVideo,
+	}); err != nil {
+		t.Fatalf("the publisher could not share: %v", err)
+	}
+	waitFor(t, "the publication to be announced", func() bool {
+		for _, publication := range sfu.Publications("room") {
+			if publication.Kind == PublicationScreenVideo {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The viewer says what it wants with the direction attribute: this line is
+	// `recvonly` and carries no track, which is what a browser builds for a screen it
+	// means to watch.
+	receiver, err := viewer.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewOffer, err := viewer.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := viewer.pc.SetLocalDescription(viewOffer); err != nil {
+		t.Fatal(err)
+	}
+	if err := sfu.Signal("bo", "bo", Signal{
+		ConnectionID: sfu.connectionIDFor("bo"),
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: viewer.pc.LocalDescription().SDP},
+	}); err != nil {
+		t.Fatalf("a viewer could not negotiate to receive: %v", err)
+	}
+
+	answer := viewer.pc.RemoteDescription()
+	if answer == nil {
+		t.Fatal("the viewer's offer was never answered")
+	}
+	sections, direction := describeVideoSections(answer.SDP)
+	if sections != 1 {
+		t.Fatalf("the answer carries %d video sections, want 1: a second section is an m-line the viewer never offered", sections)
+	}
+	if direction != "sendonly" {
+		t.Fatalf("the viewer's video line is answered %q, want sendonly: any other direction connects and delivers nothing", direction)
+	}
+
+	// And the frames written to the screen output arrive on it.
+	arrived := make(chan struct{}, 64)
+	go func() {
+		track := receiver.Receiver().Track()
+		if track == nil {
+			return
+		}
+		for {
+			if _, _, err := track.ReadRTP(); err != nil {
+				return
+			}
+			select {
+			case arrived <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	for n := uint32(1); n <= 20; n++ {
+		sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, screenFrame(n))
+	}
+	select {
+	case <-arrived:
+	case <-time.After(handshakeBudget):
+		t.Fatal("no screen frame reached a viewer that asked for one")
+	}
+}
+
+// describeVideoSections counts the video m-sections in a description and reports the
+// direction of the first one. Answer-side direction is the property a viewer's media
+// depends on, and an extra section is the defect this exists to catch.
+func describeVideoSections(sdp string) (int, string) {
+	sections, direction := 0, ""
+	inVideo := false
+	for _, raw := range strings.Split(sdp, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if strings.HasPrefix(line, "m=") {
+			inVideo = strings.HasPrefix(line, "m=video")
+			if inVideo {
+				sections++
+			}
+			continue
+		}
+		if !inVideo || direction != "" {
+			continue
+		}
+		switch line {
+		case "a=sendonly", "a=recvonly", "a=sendrecv", "a=inactive":
+			direction = strings.TrimPrefix(line, "a=")
+		}
+	}
+	return sections, direction
+}
+
+// An offer that names no publication must not be able to add one. The receive path
+// must not become a way to publish by omitting a field, so a *sending* video line the
+// server was not told about — `sendonly` or `sendrecv` — is refused whichever other
+// lines the offer carries. The permitted half of the same boundary is
+// TestAViewLineIsAnsweredAndCannotPublish beside it: a `recvonly` line is how a viewer
+// asks, and it is answered.
+func TestAnUnmarkedSendingVideoLineIsStillRefused(t *testing.T) {
 	sfu := newTestSFU(t)
 	peer := connectPeer(t, sfu, "ana", "room")
 	waitFor(t, "the peer to connect", func() bool {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
 	})
-	// A bare video transceiver with no view marker: this is what the old code could not
-	// tell apart from a viewer, and it is refused rather than guessed at.
-	if _, err := peer.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
-		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+	// A video transceiver that means to send, with no publication named.
+	track, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}, "unmarked", "ana-unmarked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.pc.AddTransceiverFromTrack(track,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
 		t.Fatal(err)
 	}
 	offer, err := peer.pc.CreateOffer(nil)
@@ -849,7 +985,92 @@ func TestAnUnmarkedSecondOfferIsStillRefused(t *testing.T) {
 		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: peer.pc.LocalDescription().SDP},
 	})
 	if err == nil {
-		t.Fatal("a second offer naming no publication and no view was accepted")
+		t.Fatal("a sending video line naming no publication was accepted")
+	}
+}
+
+// The permitted control beside the refusal: a `recvonly` line, which names no
+// publication either, is a legitimate view request and is answered — and being
+// answered does not make it a publication. The viewer owns nothing afterwards, and
+// media arriving on its connection is not forwarded to anybody, so the line that asks
+// to receive can never become a way to publish.
+func TestAViewLineIsAnsweredAndCannotPublish(t *testing.T) {
+	sfu := newTestSFU(t)
+	publisher := connectPeerWithCapacity(t, sfu, "ana", "room", 3)
+	viewer := connectPeerWithCapacity(t, sfu, "bo", "room", 3)
+	connectPeerWithCapacity(t, sfu, "cy", "room", 3)
+	for _, who := range []string{"ana", "bo", "cy"} {
+		id := who
+		waitFor(t, id+" to connect", func() bool {
+			return sfu.connectionStateOf(id) == webrtc.PeerConnectionStateConnected
+		})
+	}
+	// A screen exists, so a view line has something to be answered with.
+	publisher.setScreenTrack(t)
+	offer, err := publisher.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	if err := sfu.Signal("ana", "ana", Signal{
+		ConnectionID: sfu.connectionIDFor("ana"),
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: publisher.pc.LocalDescription().SDP},
+		Publication:  PublicationScreenVideo,
+	}); err != nil {
+		t.Fatalf("the publisher could not share: %v", err)
+	}
+	waitFor(t, "the publication to be announced", func() bool {
+		for _, publication := range sfu.Publications("room") {
+			if publication.Kind == PublicationScreenVideo {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The viewer asks to receive, naming no publication: accepted.
+	if _, err := viewer.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+		t.Fatal(err)
+	}
+	viewOffer, err := viewer.pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := viewer.pc.SetLocalDescription(viewOffer); err != nil {
+		t.Fatal(err)
+	}
+	if err := sfu.Signal("bo", "bo", Signal{
+		ConnectionID: sfu.connectionIDFor("bo"),
+		SDP:          &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: viewer.pc.LocalDescription().SDP},
+	}); err != nil {
+		t.Fatalf("a viewer's recvonly line was refused: %v", err)
+	}
+
+	// The view is not a publication, and it is not the viewer's own.
+	for _, publication := range sfu.Publications("room") {
+		if publication.Owner == "bo" {
+			t.Fatalf("the viewer's receive line was registered as a publication: %+v", publication)
+		}
+	}
+
+	// And media arriving on the viewer's connection is not forwarded: an observer with
+	// a screen output sees nothing when the viewer — not the publication's owner —
+	// feeds the screen's kind.
+	sfu.mu.Lock()
+	observerPeer := sfu.peers["cy"]
+	if err := observerPeer.addScreenOutput(); err != nil {
+		sfu.mu.Unlock()
+		t.Fatal(err)
+	}
+	sfu.mu.Unlock()
+	viewerPeer := sfuPeer(t, sfu, "bo")
+	before := screenWrites(t, sfu, "cy")
+	sfu.forwardPublication(viewerPeer, PublicationScreenVideo, screenFrame(1))
+	if written := screenWrites(t, sfu, "cy") - before; written != 0 {
+		t.Fatalf("media arriving on a view line was forwarded: %d packets reached a viewer", written)
 	}
 }
 

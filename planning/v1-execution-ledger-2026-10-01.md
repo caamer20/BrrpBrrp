@@ -488,3 +488,138 @@ backup format 2.
   screen-decode gap and the host/physical/beta gates in the release record remain
   open.
 
+## Tranche 6 — The interrupted screen-view change, finished
+
+**Source and dirty state before the tranche.** HEAD `f8bbc74` on
+`codex/p9-private-reporting`, application 0.4.0-alpha.8, schema 25, backup format 2,
+carrying the interrupted four-file change (+281/−35, `git diff` SHA-256
+`e4fd0dcf1d23712343ebb17ef028ae969d001aefeb9b6da3956d2fa2010f8a24`) from the session
+that was ended mid-change. Until it was finished, the change made the tree worse than
+HEAD: `TestAnUnmarkedSecondOfferIsStillRefused` failed, the two-browser journey failed
+at `voice.spec.mjs:632` (the publisher encoded 0 frames in 30 s — an assertion that
+passes at HEAD), and `decodedVideo(viewer)` was called six times and defined nowhere.
+
+### 6a. Rehearsal teardown on every exit path
+
+- **Failing behavior and reproduction.** Ten `brrpbrrp serve --data-dir …` processes
+  from aborted rehearsal runs (3 started 30 September, 7 on 1 October) were still
+  listening when this session began — `ps aux | grep 'brrpbrrp serve' | grep -v grep`
+  counted 10. The rehearsal scripts stop a server only on the path that reaches
+  `stopServer`: `check()` throws on the first failed check, the top-level `catch`
+  printed a message and called `process.exit(1)`, and the live children were never
+  signalled. A failed check is the ordinary case — the alpha.6 binary below fails the
+  same way.
+- **Changed files and reason.** `scripts/upgrade-recovery.mjs`,
+  `scripts/upgrade-recovery-private.mjs`, `scripts/upgrade-rollback.mjs`,
+  `scripts/schema13-seed.mjs`, `web/e2e/run.mjs` — every spawned rehearsal server is
+  tracked in a set; a `process.on('exit')` handler kills whatever is still live, and
+  SIGINT/SIGTERM handlers stop children gracefully (SIGTERM, 1.5 s, SIGKILL) before
+  exiting. `upgrade-rollback.mjs` also tracks its one-shot CLI child and its
+  expected-to-refuse probe.
+- **Commands and results.** The 10 orphans were stopped by PID (`kill`, then
+  `ps … | wc -l` → 0, no rehearsal or `make` was running). Interrupt test: the private
+  rehearsal was started against `dist/brrpbrrp-e2e`, SIGTERM was sent to the parent
+  once its child server was observed (pid 39741), the parent exited rc 1, and
+  `pgrep -f teardown-test4` found nothing. Failed-check test: the same rehearsal with
+  the stale `dist/brrpbrrp-alpha6-preview` fails "a group created through its own
+  route" (HTTP 404), the run aborts, rc 1, and `pgrep -f teardown-test5` found
+  nothing.
+- **What the evidence proves.** Three exit paths — normal stop, interrupt, failed
+  check — leave zero processes. It does not prove a `SIGKILL`ed parent is covered
+  (nothing can), and the e2e harness's signal backstop is verified by inspection
+  rather than by an interrupted browser run.
+
+### 6b. Why the sharer's own share died — mechanism from the trace, not from the theory
+
+The interrupted change reasoned about the server but died on the client. Evidence, in
+the order it was collected:
+
+- The journey's own diagnostic, taken after the share started, on the **sharer's**
+  page: `share: {grabbed: 1, stopped: 1}`, both screen senders
+  `readyState: "ended"`, `framesEncoded: 0`, and a transceiver list containing
+  `recvonly/recvonly:video` — the publisher had asked to view *its own* screen.
+- A stop-trace instrumented into the spec (`MediaStreamTrack.prototype.stop` recording
+  stacks) identified the caller exactly: `at sh.attachScreen (index-….js) at
+  s.ontrack (index-….js)` for the video track labelled `Shared two-browser screen` and
+  its audio. `attachScreen` stops the previous stream; the previous stream was the
+  capture.
+- The mechanism that made `ontrack` fire: the server announced the new publication to
+  the whole room, the publisher included. The client's `screen.published` handler
+  asked for a view (`requestScreenReceive`), the server answered the new
+  `recvonly` line, and the browser reported the negotiated receive direction —
+  at which point the arriving video track was treated as "a screen to display".
+- A Go reproduction of the same sequence (`publisher` publishes through the production
+  signal path, then sends an unnamed offer with `recvonly` video+audio lines) showed
+  the server accepting it, which is why the client half — not the server half — was the
+  one that ended the share.
+- Related, and kept: `internal/api/voice.go` leaves the call when an **unnamed**
+  `rtc.signal` fails ("Voice negotiation failed"), so any refusal of a view offer would
+  also have dropped the sharer from the call. That is the path the old
+  `TestAnUnmarkedSecondOfferIsStillRefused` protected, and it is why the contract had
+  to be re-stated rather than deleted.
+
+### 6c. The fix, and the contract it states
+
+- **`internal/rtc/sfu.go`.** `announcePublication` no longer sends the announcement to
+  the publication's owner. An unnamed offer is now refused only when it adds a
+  *sending* video section this connection has not negotiated (`unnamedOfferAddsVideo`,
+  decided from the offer's own `m=`/`a=recvonly`/`a=msid`/`a=mid` text);
+  `viewRequestKinds` is rebuilt on the same section parser and accepts `a=recvonly` or
+  the view stream id (in either msid position); the screen output is still created
+  before `SetRemoteDescription`, which is what makes the answer's section the one the
+  screen travels on.
+- **`web/src/lib/voice.svelte.ts`.** The client asks with `recvonly`; it ignores
+  `screen.published` for a publication it owns; and the local capture is a field of its
+  own (`capture`) so nothing arriving on the connection — `ontrack` included — can stop
+  it. `leave()` releases the capture, which also stops a stale one from blocking the
+  next call.
+- **`internal/rtc/renegotiation_test.go`.** `TestAnUnmarkedSecondOfferIsStillRefused`
+  is replaced by two tests: the denial
+  (`TestAnUnmarkedSendingVideoLineIsStillRefused` — a `sendonly` video line naming no
+  publication) and the permitted control
+  (`TestAViewLineIsAnsweredAndCannotPublish` — a `recvonly` line is answered, registers
+  no publication for the viewer, and media arriving on that connection is never
+  forwarded). `TestAViewerReceivesScreenFramesOnTheOfferItMade` (from the interrupted
+  change) counts one video section in the answer, requires `sendonly`, and reads frames
+  off the receiver.
+- **`web/e2e/voice.spec.mjs`.** `decodedVideo()` is written (frames decoded + widest
+  decoded frame width from inbound video stats); the temporary `DIAG-PUB` block and the
+  stop-tracing instrumentation are removed; the journey asserts the viewer decodes the
+  shared 320-pixel picture, stops decoding within 4 s of the share stopping, decodes
+  again after a restart, and that the sharer stays connected throughout.
+- **`docs/adr/0019-media-architecture.md`.** The section "A viewer's line carries the
+  screen, and a publisher never views its own share" records the decision: an offer
+  that names no publication may ask to receive and may not ask to send, and a view line
+  can never become a publication.
+
+### 6d. Commands, results and counts
+
+- `$GO test ./internal/rtc -count=1` → **ok** (all tests; the failing test from the
+  interrupted change now passes, and the rewritten pair passes).
+- `$GO test ./internal/rtc -count=1 -race` → **ok**, 22.9 s.
+- `npm --prefix web test` → 304/304 pass; `npm --prefix web run check` → 0 errors,
+  0 warnings; `npm --prefix web run format:check` → clean.
+- Voice browser project (`BRRP_E2E_PRIVATE_CONVERSATIONS=0 … --project=voice`) →
+  **10 passed, 0 failed, 0 skipped** (the `fixme` is gone). The single journey
+  `a shared screen reaches another browser and stops cleanly` passes in ~11–12 s,
+  against ~31 s of failure before the fix.
+- Twenty consecutive voice-project runs: see the tranche-6 addendum below.
+
+### 6e. What this evidence proves, and what it does not
+
+- A synthetic RTP run (the Go tests) proves the server binds the viewer's own line to
+  the transceiver carrying the screen, answers it `sendonly`, and forwards the owner's
+  frames; it does not prove a browser decodes them.
+- A generated browser stream (the journey, `canvas.captureStream`) proves the browser
+  half — decode counts, frame width, stop and restart — on this host, in headless
+  Chromium, with a canvas capture. It says nothing about a physical display capture,
+  screen audio from a real system, Firefox/WebKit, or a network path other than
+  loopback.
+- The refusal contract is proven for the offers the tests construct, not for every
+  malformed client an attacker could write; the property that bounds that ("media
+  arriving on a view line is never forwarded") is enforced at the forwarding boundary
+  by publication ownership, which is tested separately
+  (`TestAPacketIsForwardedOnlyForThePeerThatOwnsThePublication`,
+  `TestOnlyTheOwnerCanFeedAPublishedScreen`).
+
+
