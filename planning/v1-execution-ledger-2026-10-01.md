@@ -723,5 +723,97 @@ descoped by a decision rather than by silence.
   network, off-host storage or second releaser is available today. The gate documents
   and evidence templates stay ready for whoever can run them (Phases D–I).
 
+## Tranche 7 — Phase A: a clone that passes its own checks
+
+**Source and dirty state before the tranche.** HEAD `f8bbc74` (application
+0.4.0-alpha.8, schema 25, backup format 2) plus the completed screen-view change.
+The owner answered the kickoff list on 2 October: no remote for now, external TURN and
+IPv6 documented as a limit, emphasis and quotes only for message formatting, a VP8
+fallback is acceptable, the feature gates open before the beta after review entry, the
+100-account limit stays for v1, and no long-lead item is available yet (decisions are
+recorded above).
+
+### 7a. The documentation checks could not pass on a fresh clone
+
+- **Failing behavior and reproduction.** In a tree containing only tracked files
+  (`git ls-files -z | tar -cf - --null -T -` into an empty directory),
+  `node scripts/check-doc-links.mjs` failed with "docs/next-release.md is listed here
+  but does not exist" and `node scripts/check-schema-docs.mjs` died reading that file
+  (ENOENT). `.gitignore` excludes it on purpose as an operator note, and CI runs both
+  scripts on a clone, so both steps were red for every consumer.
+- **Changed files and reason.** `scripts/check-doc-links.mjs` — the note is an
+  *optional* document: skipped when absent, checked when present, and a link *to* it is
+  not a broken route in a clone that does not have it. `scripts/check-schema-docs.mjs` —
+  the same, plus a required document that has gone missing is now a failure rather than
+  a crash. Both gained `--self-test` (five cases each: a tree without the note passes, a
+  broken link in a tracked document fails, a missing required document fails, a present
+  note's links and numbers are checked, and the ignore rules still ignore).
+- **Commands and results.** Both scripts and both self-tests pass in this checkout and
+  in a tracked-files-only copy. Wired into `make check` and into CI beside the two
+  existing steps.
+
+### 7b. Formatting and module drift are gates now
+
+- **Failing behavior.** `gofmt -l internal cmd scripts` listed 16 files, and
+  `go mod tidy -diff` wanted `github.com/pion/stun/v3` as a direct requirement rather
+  than an indirect one. Both were found by a manual sweep, which is not a gate.
+- **Changed files and reason.** The 16 files were formatted and the module file was
+  tidied; `make check` and CI now run `gofmt -l internal cmd scripts` (empty or red) and
+  `go mod tidy -diff` (silent or red). `GOFMT` is derived from `GO`'s directory when
+  `GO` is a path, so the gate cannot silently check nothing because the binary was not
+  found.
+- **Results.** `gofmt -l` empty; `go mod tidy -diff` clean; both run inside the clone
+  check below.
+
+### 7c. The packaging audit was already red at HEAD
+
+- **Failing behavior and reproduction.** In a detached worktree at the *pre-session*
+  revision (`git worktree add --detach /tmp/pristine f8bbc74`) and with this tree's Go
+  toolchain, `node scripts/check-source-package.mjs` fails: `docs/v1-progress.md links
+  to ../planning/v1-execution-ledger-2026-10-01.md, which the source package does not
+  contain`. So `make check` was red before this session began, and the roadmap's new
+  state column repeated the same mistake.
+- **Changed files and reason.** `docs/v1-progress.md` and `docs/roadmap.md` name the
+  ledger the way the rest of that file already does, in backticks: the planning
+  directory is the development record and is deliberately not packaged, so a shipped
+  document must not link into it. `scripts/release.go` packages
+  `scripts/check-schema-docs.mjs` — the audit caught that omission the moment the gate
+  was added to `make check`, which is the audit working.
+- **Results.** The audit passes: 489 files, 51 native package documents, every
+  documented local link resolved in both sets, every Makefile script and `.dockerignore`
+  input packaged, the operator-specific notes excluded.
+
+### 7d. One truthful status page
+
+- `docs/v1-progress.md`'s status table no longer says groups are unbuilt, threads are
+  outstanding, DM activity and notification preferences do not exist, or export and
+  group lifecycle cleanup remain; it carries one WP-14 row instead of two, and the
+  WP-13/WP-16–22 row names the phase-B media and platform gaps instead of listing built
+  features as future work.
+- `docs/roadmap.md` gains a dated state column and no longer claims there are no direct
+  messages or screen sharing; README's scope paragraph describes threads, roles and
+  delegation, consented DMs and groups, screen sharing with its own audio, and the two
+  gates; CONTRIBUTING's verification block asks for the race budget `make test` actually
+  uses (60 minutes) and says why.
+- Dated records — the release records, this ledger's earlier tranches, the
+  implementation sections — are untouched.
+
+### 7e. Phase A status
+
+- **A.1 off-machine copy: blocked on the owner**, who answered "not now". The repository
+  remains on one disk; this is the only Phase A item that is not done.
+- **A.2, A.3, A.4: done**, with the evidence above.
+- **Exit criterion.** `make check` passes in a fresh clone of this commit: the
+  repository was cloned into an empty directory (`git clone --no-hardlinks`), which
+  therefore has no `node_modules`, no `.tools` and no untracked operator note; with
+  `GO`/`GOMODCACHE` pointed at this machine's toolchain, `make check` ran `npm ci` (102
+  packages), the production build, `go vet`, `go mod tidy -diff`, `svelte-check`,
+  formatting, the licence check, both documentation checks with their self-tests, the
+  Docker input audit, the source-package audit and the browser-step audit, and exited 0.
+- **What this does not prove.** It is one machine and one operating system: "on any
+  machine" needs the hosted CI run, which is Phase C's first hosted run and is not
+  available yet. The clone check also does not run the Go tests or the browser suites —
+  those are separate gates with their own evidence above.
+
 
 
