@@ -32,7 +32,7 @@ evidence about the binary, not about the deployment.
 ```powershell
 # Download the released archive and verify its published hash before extracting.
 # Do not use an executable built in a checkout: the point is the bytes people get.
-Expand-Archive .\brrpbrrp-0.4.0-alpha.7-windows-amd64.zip -DestinationPath .\extract
+Expand-Archive .\brrpbrrp-0.4.0-alpha.8-windows-amd64.zip -DestinationPath .\extract
 Get-FileHash .\extract\brrpbrrp.exe -Algorithm SHA256
 # Compare against the release's published SHA256. Record both.
 ```
@@ -126,7 +126,7 @@ test matrix.
 ### 2.1 Build and run the actual image
 
 ```sh
-docker build -t brrpbrrp:0.4.0-alpha.7 .
+docker build -t brrpbrrp:0.4.0-alpha.8 .
 docker compose up -d
 docker compose ps
 docker compose logs --tail 100
@@ -229,7 +229,7 @@ One JSON file per run, under `planning/m5-checkpoint/`. Record, for each procedu
   "procedure": "windows-service-install",
   "host": { "os": "Windows Server 2022", "build": "20348", "arch": "x86_64" },
   "source_commit": "<40 hex>",
-  "artifact": { "name": "brrpbrrp-0.4.0-alpha.7-windows-amd64.zip", "sha256": "<hex>" },
+  "artifact": { "name": "brrpbrrp-0.4.0-alpha.8-windows-amd64.zip", "sha256": "<hex>" },
   "commands": ["<exact command>", "..."],
   "observed": "<what was actually seen, with values>",
   "result": "pass | fail | blocked",

@@ -364,3 +364,127 @@ survive. Release project: **5 passed**.
   late join, stop/restart and move/reconnect (audited by MediaScout; next tranche).
 - Rollback rehearsal with the archived alpha.5 release is run in the same tranche;
   see the commit results.
+
+---
+
+## Tranche 4 — The screen path, end to end as far as this host goes
+
+**Source and dirty state before the tranche.** HEAD `0b6108d`, working tree carrying
+only `internal/rtc/sfu.go`, `internal/rtc/renegotiation_test.go` and the two e2e
+specs from the previous tranche's browser work. Application 0.4.0-alpha.7, schema 25,
+backup format 2.
+
+### 4a. Screen audio as its own publication, on its own offer
+
+- **Failing behavior and reproduction.** A two-browser journey produced the server
+  answer to the screen's audio announcement as a *second* answer for a description
+  that was already applied; the browser refuses that, and the sharer's call ended
+  ("Voice negotiation failed") the moment screen audio was included. The server-side
+  tests (`TestScreenAudioIsNamedWithoutResendingTheOffer`,
+  `TestAScreenAudioTrackIsNotMistakenForTheMicrophone`) pinned both the fix and the
+  refusal of an offerless announcement that is not screen audio.
+- **Changed files and reason.** `internal/rtc/sfu.go` — the announcement carries the
+  publication kind and no description; the audio publication is registered to the same
+  peer, bounded separately, and released with the picture; an empty-string description
+  that is not screen audio stays a malformed client. The preserved patch's callback
+  synchronization, ICE candidate-pair diagnostics and relay classification land in the
+  same commit (`ae9b5bd`) with its tests.
+- **Commands and results.** `go test ./internal/rtc -count=1` → ok; focused race reruns
+  of the three screen tests ×6 → 6/6 pass.
+
+### 4b. Screen publications reach the voice store, and offers pair with answers
+
+- **Failing behavior and reproduction.** `screen.published` never reached the voice
+  store: the workspace router forwarded `voice.*` only, so the client's receive path
+  was dead code and no viewer ever negotiated a receive line (journey
+  `voice › a shared screen reaches another browser…`). With routing restored, the
+  sharer's call ended whenever a viewer was present: a self-initiated view offer was
+  created while the publisher's own offer still waited for its answer, leaving the
+  connection in `have-local-offer` and refusing that answer.
+- **Changed files and reason.** `web/src/lib/workspace.svelte.ts` (route `screen.*`
+  events into the voice store); `web/src/lib/voice.svelte.ts` (explicit offer/answer
+  queue `negotiate`/`settleAnswer`; publish goes through it; one receive negotiation
+  adds both receive lines; audio named without a description); `web/e2e/voice.spec.mjs`
+  (journey asserts both clients stay connected through share, stop and restart, the
+  viewer learns the publication, the publisher encodes frames, and stopping releases
+  it).
+- **Recorded gap, not a narrowed claim.** A browser viewer still decodes no frames:
+  the server's view exchange leaves the view line `inactive`. This is a skipped test
+  with its measurement and the two-sided fix it needs, and it stays in the "Known
+  issues" of the release record.
+- **Commands and results.** `npm run check` → 0/0; `npm run build` → ok; voice project
+  → 10 passed, 1 skipped (the gap); full default suite → 25 passed, 1 skipped; full
+  opted-in suite → 39 passed, 1 skipped.
+
+### 4c. Gate budgets corrected by measurement
+
+- The whole-tree `-race` sweep hit the API package's 40-minute budget at **2402 s**
+  while reporting no failure of its own. Budgets raised to 60 m in `Makefile` and
+  `.github/workflows/check.yml`, with the measurement recorded in both.
+- One RTC handshake poll missed its 5-second window under that parallel load while the
+  same tests pass 6/6 in isolation; the poll's budget is 20 s. Both changes are in
+  commit `4cf45f2` with their reasons.
+
+### 4d. A data race in the harness teardown, found by the sweep
+
+- **The finding.** The whole-tree `-race` sweep reported one data race during
+  `TestScreenPacketsReachAnotherParticipant`: `SFU.leavePeerOwned` deleting from the
+  peers map on Pion's connection-state goroutine while a **test** goroutine read the
+  same map. The production path was correct — `leavePeerOwned` holds the SFU lock —
+  and the reader was test code reaching into `sfu.peers[...]` without it, including
+  reads that ran while a *previous* test's teardown callbacks were still finishing.
+- **The fix.** One locked accessor (`sfuPeer`) replaces 26 unlocked reads in
+  `renegotiation_test.go`; the remaining direct reads in the other test files were
+  already inside `sfu.mu`; and `newTestSFU`'s teardown now waits (bounded by
+  `handshakeBudget`) until the peers map is empty, so a callback from a finished test
+  cannot straddle into the next one. Two harness waits that missed a 5-second window
+  under parallel `-race` load are `handshakeBudget` (20 s, polled).
+- **Reproduction and verification.** Before the fix: 1 race in a `-count=4` race run
+  (405 s). After: `-count=4` race runs, **0 data races**, exit 0 (425 s). The focused
+  screen tests also pass 6/6 in isolation. The API package, which is the package the
+  old 40-minute budget could not contain, then passed alone under race:
+  **2573.2 s, exit 0, 0 data races**.
+- **Not the product.** No production code changed for this; the record keeps it in the
+  tranche because the sweep is what exposed it and because a flaky harness is how a
+  real race gets ignored later.
+
+### 4e. Dependency and vulnerability gates
+
+- `npm audit --audit-level=moderate` reported **1 high** (six `devalue` advisories,
+  reached through `svelte`); `npm audit fix` moved devalue 5.9.2 → 5.9.4 and the audit
+  is clean. The built bundle does not contain it (`devalue` is absent from `dist/`), so
+  the exposure was tooling-side, but a high advisory in the lockfile of a release
+  candidate is not something to carry in the record.
+- `govulncheck` (v1.8.0, CI's version): **0 vulnerabilities** in code and imported
+  packages; 1 in required modules that the code does not call.
+
+
+---
+
+## Tranche 5 — The 0.4.0-alpha.8 candidate
+
+- **Version identity.** Four places, not three: `internal/app/version.go`,
+  `web/package.json`, `web/package-lock.json`, `scripts/release.go`. The identity test
+  (`TestVersionIdentityAgrees`) caught the lockfile, which is why it exists.
+- **Artifacts.** `make release GO=.tools/go/bin/go` built six native packages plus the
+  Docker source archive from a clean tree (`vcs.modified=false`,
+  `vcs.revision=4cf45f2…`), wrote `SHA256SUMS`, and every digest was checked with
+  `shasum -a 256 -c`.
+- **Consumer execution.** The `darwin/amd64` archive was extracted and its binary run
+  by `scripts/check-package.mjs`: CLI setup, backup, restore, refused double restore,
+  folder lock, healthcheck, production guard, embedded UI and manifest, graceful stop
+  — all pass. The first execution hit the script's per-command budget because macOS
+  scans a new Mach-O on first run; the rerun is the evidence.
+- **Rehearsals.** Community 23/0 (schema 25, FULL→FULL), private 172/0, rollback 57/0
+  (alpha.7 archive at schema 21 → this build at schema 25), schema-13 upgrade 28/0
+  (13→25, baseline `2869db55…` verified by digest, negative control detected).
+- **Release-engineering checks.** Dependency notices/SBOM current (39 components, 20
+  license texts); source package 487 files/50 native documents with every local link
+  resolved; Docker input audit 24 COPY sources; browser-step audit 2 steps.
+- **Documents.** `docs/releases/0.4.0-alpha.8.md` (this candidate's record), README,
+  the plan and ledger headers, and the production-readiness commands.
+- **Known limits.** No hosted CI execution (no remote); no Docker image build; the
+  Linux and Windows packages are built and digest-verified but not executed; the
+  screen-decode gap and the host/physical/beta gates in the release record remain
+  open.
+
