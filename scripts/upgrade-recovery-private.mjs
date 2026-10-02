@@ -46,6 +46,45 @@ const checks = [];
 const transcript = [];
 let workDirForCleanup = null;
 
+// Every rehearsal server is tracked so the process tears its children down on every
+// exit path — a failed check throwing out of the run, a readiness loop throwing after
+// spawn, a signal — not only on the path that reaches stopServer. Ten servers from
+// aborted runs on 30 September and 1 October were still listening the next day
+// because a failed check threw straight past the stop calls.
+const liveChildren = new Set();
+
+function trackChild(child) {
+  liveChildren.add(child);
+}
+
+function untrackChild(child) {
+  liveChildren.delete(child);
+}
+
+function killLiveChildren() {
+  for (const child of liveChildren) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  }
+  liveChildren.clear();
+}
+
+process.on("exit", killLiveChildren);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, async () => {
+    console.error(`Rehearsal interrupted (${signal}); stopping rehearsal servers.`);
+    // SIGTERM first so a server can close its database cleanly; the exit-handler
+    // backstop and killLiveChildren cover one that refuses.
+    for (const child of liveChildren) child.kill("SIGTERM");
+    await new Promise((done) => setTimeout(done, 1500));
+    killLiveChildren();
+    process.exit(1);
+  });
+}
+
 function parseArgs(argv) {
   const parsed = { keep: false, binary: null, workDir: null, report: null };
   for (let index = 0; index < argv.length; index += 1) {
@@ -138,6 +177,7 @@ function startServer(binary, dataDir, port) {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  trackChild(child);
   const log = [];
   child.stdout.on("data", (chunk) => log.push(chunk.toString()));
   child.stderr.on("data", (chunk) => log.push(chunk.toString()));
@@ -166,6 +206,7 @@ async function stopServer(server) {
     new Promise((resolve) => setTimeout(() => resolve(false), 20000)),
   ]);
   if (!exited) server.child.kill("SIGKILL");
+  untrackChild(server.child);
 }
 
 async function api(base, method, route, { body, cookie, raw, contentType } = {}) {
@@ -1489,6 +1530,7 @@ try {
 } catch (error) {
   console.error(`\nRehearsal stopped: ${error.message}`);
   console.error(`Workspace kept for inspection: ${workDirForCleanup ?? "(not created)"}`);
+  killLiveChildren();
   process.exit(1);
 }
 if (!options.keep) rmSync(outcome.workDir, { recursive: true, force: true });

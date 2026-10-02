@@ -11,6 +11,26 @@ let server;
 let serverOutput = '';
 let serverError;
 
+// The harness stops its server on the paths it controls (the finally below); this
+// backstop covers the ones it does not — a Ctrl-C or a CI cancel — so an interrupted
+// browser run cannot leave a server listening on a loopback port.
+function stopServerNow() {
+  if (server && server.exitCode === null && server.signalCode === null) {
+    try {
+      server.kill('SIGKILL');
+    } catch {
+      /* already exited */
+    }
+  }
+}
+process.on('exit', stopServerNow);
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    stopServerNow();
+    process.exit(1);
+  });
+}
+
 async function freePort() {
   const listener = createServer();
   await new Promise((done, reject) => {

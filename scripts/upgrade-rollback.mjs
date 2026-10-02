@@ -61,6 +61,45 @@ const coverage = [];
 const transcript = [];
 let workDirForCleanup;
 
+// Every rehearsal server is tracked so the process tears its children down on every
+// exit path — a failed check throwing out of the run, a readiness loop throwing after
+// spawn, a signal — not only on the path that reaches stopServer. Ten servers from
+// aborted runs on 30 September and 1 October were still listening the next day
+// because a failed check threw straight past the stop calls.
+const liveChildren = new Set();
+
+function trackChild(child) {
+  liveChildren.add(child);
+}
+
+function untrackChild(child) {
+  liveChildren.delete(child);
+}
+
+function killLiveChildren() {
+  for (const child of liveChildren) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  }
+  liveChildren.clear();
+}
+
+process.on("exit", killLiveChildren);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, async () => {
+    console.error(`Rehearsal interrupted (${signal}); stopping rehearsal servers.`);
+    // SIGTERM first so a server can close its database cleanly; the exit-handler
+    // backstop and killLiveChildren cover one that refuses.
+    for (const child of liveChildren) child.kill("SIGTERM");
+    await new Promise((done) => setTimeout(done, 1500));
+    killLiveChildren();
+    process.exit(1);
+  });
+}
+
 function parseOptions(argv) {
   const parsed = { keep: false };
   for (let index = 0; index < argv.length; index++) {
@@ -97,12 +136,19 @@ function record(name, supported, detail = "") {
 function run(binary, args, cwd) {
   return new Promise((resolve) => {
     const child = spawn(binary, args, { cwd });
+    trackChild(child);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.once("error", (error) => resolve({ status: 127, stdout, stderr: error.message }));
-    child.once("exit", (code) => resolve({ status: code ?? 1, stdout, stderr }));
+    child.once("error", (error) => {
+      untrackChild(child);
+      resolve({ status: 127, stdout, stderr: error.message });
+    });
+    child.once("exit", (code) => {
+      untrackChild(child);
+      resolve({ status: code ?? 1, stdout, stderr });
+    });
   });
 }
 
@@ -132,6 +178,7 @@ async function startServer(binary, dataDir, port, logFile) {
     env: serverEnv(dataDir, port),
     stdio: ["ignore", "pipe", "pipe"],
   });
+  trackChild(child);
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk));
   child.stderr.on("data", (chunk) => (output += chunk));
@@ -154,7 +201,10 @@ async function startServer(binary, dataDir, port, logFile) {
 }
 
 async function stopServer(server) {
-  if (server.child.exitCode !== null || server.child.signalCode !== null) return;
+  if (server.child.exitCode !== null || server.child.signalCode !== null) {
+    untrackChild(server.child);
+    return;
+  }
   server.child.kill("SIGTERM");
   await Promise.race([
     new Promise((done) => {
@@ -164,6 +214,7 @@ async function stopServer(server) {
     new Promise((done) => setTimeout(done, 5000)),
   ]);
   if (server.child.exitCode === null && server.child.signalCode === null) server.child.kill("SIGKILL");
+  untrackChild(server.child);
   await new Promise((done) => setTimeout(done, 100));
 }
 
@@ -825,6 +876,7 @@ async function main() {
 async function startServerFailure(binary, dataDir, logFile) {
   const port = await freePort();
   const child = spawn(binary, ["serve"], { env: serverEnv(dataDir, port), stdio: ["ignore", "pipe", "pipe"] });
+  trackChild(child);
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk));
   child.stderr.on("data", (chunk) => (output += chunk));
@@ -852,6 +904,7 @@ async function startServerFailure(binary, dataDir, logFile) {
     new Promise((done) => setTimeout(done, 5000)),
   ]);
   writeFileSync(logFile, output);
+  untrackChild(child);
   return { failed: !served && child.exitCode !== 0, served, output };
 }
 
@@ -861,6 +914,7 @@ try {
 } catch (error) {
   console.error(`\nRehearsal stopped: ${error.message}`);
   console.error(`Workspace kept for inspection: ${workDirForCleanup ?? "(not created)"}`);
+  killLiveChildren();
   process.exit(1);
 }
 if (!options.keep && outcome.summary.passed) rmSync(outcome.workDir, { recursive: true, force: true });

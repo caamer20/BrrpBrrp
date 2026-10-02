@@ -34,6 +34,34 @@ async function freePort() {
   return port;
 }
 
+// The seed's server is tracked so an interrupted parent takes it down: the finally
+// below covers the paths this function can see, and the exit handler covers the ones
+// it cannot (a signal while a request is in flight, an uncaught throw elsewhere).
+const liveChildren = new Set();
+
+function killLiveChildren() {
+  for (const child of liveChildren) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already exited */
+    }
+  }
+  liveChildren.clear();
+}
+
+process.on('exit', killLiveChildren);
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, async () => {
+    console.error(`Seed interrupted (${signal}); stopping the seed server.`);
+    // SIGTERM first so the server closes its database cleanly on the way out.
+    for (const child of liveChildren) child.kill('SIGTERM');
+    await new Promise((done) => setTimeout(done, 1500));
+    killLiveChildren();
+    process.exit(1);
+  });
+}
+
 async function waitReady(base, child, getOutput) {
   for (let attempt = 0; attempt < 150; attempt++) {
     if (child.exitCode !== null || child.signalCode !== null)
@@ -69,6 +97,7 @@ export async function makeSchema13Seed({ seedDir, oldBinary, cwd }) {
   // The prior release needs its own frontend assets, so the script is resolved from the
   // archive root rather than from whatever happens to be in the working directory.
   const child = spawn(oldBinary, ['serve'], { env, stdio: ['ignore', 'pipe', 'pipe'], cwd });
+  liveChildren.add(child);
   let output = '';
   child.stdout.on('data', (chunk) => (output += chunk));
   child.stderr.on('data', (chunk) => (output += chunk));
@@ -213,6 +242,7 @@ export async function makeSchema13Seed({ seedDir, oldBinary, cwd }) {
     // land after the rehearsal has started reading it.
     await new Promise((done) => setTimeout(done, 800));
     if (child.exitCode === null) child.kill('SIGKILL');
+    liveChildren.delete(child);
   }
 }
 
