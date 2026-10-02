@@ -570,14 +570,25 @@ test.describe('phone viewport', () => {
     const composer = page.getByRole('textbox', { name: 'Message general' });
     await expect(composer).toBeVisible();
     await expect(composer).toBeInViewport();
+    // The message is held in flight so the sweep reads the state a person sees while it
+    // is being sent, rather than whichever state the race happened to land on. That row
+    // used to be faded to half opacity, which put the text they had just typed — and the
+    // "Sending…" line — below the contrast minimum whenever the two raced (2 October).
+    await page.route('**/api/**/messages', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      await new Promise((done) => setTimeout(done, 1500));
+      return route.continue();
+    });
     await composer.fill('a message from a phone-sized viewport');
     await composer.press('Enter');
+    await expect(page.getByText('Sending…')).toBeVisible();
+    await expectAccessible(page);
     await expect(
       page.locator('article.message:has-text("a message from a phone-sized viewport")').first()
     ).toBeVisible();
+    await page.unroute('**/api/**/messages');
     // The composer stays reachable after the message lands, rather than being pushed
     // off-screen by the new row.
     await expect(composer).toBeInViewport();
-    await expectAccessible(page);
   });
 });

@@ -1045,8 +1045,14 @@ kbd {
   border-color: var(--accent);
   background: var(--selected);
 }
-.pending {
-  opacity: 0.5;
+/* A message that is still sending keeps full contrast. It used to be faded to half
+   opacity, which put the text a person had just typed — and the "Sending…" line itself —
+   below the 4.5:1 minimum: the row failed an accessibility sweep whenever it was
+   inspected while in flight (phone-viewport journey, 2 October). "Sending…" already says
+   what is happening, and the dotted underline marks the state without dimming anything. */
+.pending .message-delivery {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
 }
 .retry-link {
   background: transparent;
