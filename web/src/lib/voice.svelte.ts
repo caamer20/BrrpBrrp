@@ -103,6 +103,16 @@ class Voice {
   private captureTimer?: ReturnType<typeof setTimeout>;
   private candidates: RTCIceCandidateInit[] = [];
   private signalChain = Promise.resolve();
+  // Offers are paired with their answers one at a time. `signalChain` orders the
+  // *messages* this client processes, but a message can only be processed when the
+  // offer it answers is the one outstanding: creating a second offer while the first
+  // waits for its answer leaves the client in `have-local-offer`, and the arriving
+  // answer is then refused — which surfaced as "Voice negotiation failed" the moment a
+  // viewer request and a screen publish overlapped (review 17, two-browser screen
+  // journey). This queue makes each offer wait for its answer (or a bounded timeout)
+  // before the next one is created.
+  private negotiation = Promise.resolve();
+  private pendingAnswer: (() => void) | null = null;
   private generation = 0;
   private rejoining = false;
   private retries = 0;
@@ -407,8 +417,12 @@ class Voice {
     if (event.t === 'screen.published' || event.t === 'screen.stopped') {
       // A share starting or stopping is the point at which this client needs a video
       // track, so the request is made here rather than at join: a client that joined
-      // after the share began has no video transceiver otherwise.
-      if (event.t === 'screen.published') this.requestScreenReceive(event.d?.connection_id);
+      // after the share began has no video transceiver otherwise. The kind is carried
+      // on the announcement because a share is two publications: the picture arrives on
+      // the view offer this client already made, while the screen's audio is announced
+      // afterwards and needs its own m-line.
+      if (event.t === 'screen.published')
+        this.requestScreenReceive(event.d?.kind, event.d?.connection_id);
       else {
         this.screenStream?.getTracks().forEach((track) => track.stop());
         this.screenStream = null;
@@ -435,6 +449,9 @@ class Voice {
           if (!peer) return;
           if (event.d.sdp) {
             await peer.setRemoteDescription(event.d.sdp);
+            // The offer this answers is no longer outstanding, so the next offer may
+            // be created (see `negotiation`).
+            this.settleAnswer();
             if (peer !== this.peer) return;
             for (const candidate of this.candidates) await peer.addIceCandidate(candidate);
             this.candidates = [];
@@ -466,27 +483,38 @@ class Voice {
    * no video support, or a device that will not negotiate a second m-line — keeps its
    * voice call, which is the point of a no-op here rather than a failure.
    */
-  private requestScreenReceive(connectionID?: string) {
+  private requestScreenReceive(_kind?: string, _connectionID?: string) {
     const peer = this.peer;
     if (!peer || !this.stream) return;
     if (this.screenRequested) return;
     this.screenRequested = true;
-    addScreenReceive(peer, connectionID || this.connectionId);
-    void (async () => {
-      try {
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        if (peer !== this.peer) return;
-        workspace.sendEvent('rtc.signal', {
-          sdp: peer.localDescription?.toJSON(),
-          connection_id: this.connectionId
-        });
-      } catch {
-        // The voice call continues. The share simply will not arrive, and the panel
-        // says so rather than the call appearing broken.
-        this.screenRequested = false;
-      }
-    })();
+    // The view request is one offer carrying both lines, and it waits its turn in the
+    // offer/answer queue: it arrives while the *publisher's* offer is still being
+    // answered, and creating it out of order left the connection in
+    // `have-local-offer` and refused that answer — "Voice negotiation failed" whenever
+    // somebody was watching (review 17, two-browser screen journey). The screen's audio
+    // is announced separately by the server, but the client can hold an m-line for it
+    // from the start: an idle line costs nothing, and a second renegotiation per share
+    // is exactly the sort of interleaving this file has already been burned by.
+    void this.negotiate(async () => {
+      const current = this.peer;
+      if (!current || !this.stream) return false;
+      addScreenReceive(current, 'video');
+      addScreenReceive(current, 'audio');
+      const offer = await current.createOffer();
+      await current.setLocalDescription(offer);
+      if (current !== this.peer) return false;
+      workspace.sendEvent('rtc.signal', {
+        sdp: current.localDescription?.toJSON(),
+        connection_id: this.connectionId
+      });
+      return true;
+    }).then((sent) => {
+      if (sent) return;
+      // The voice call continues. The share simply will not arrive, and the panel says
+      // so rather than the call appearing broken.
+      this.screenRequested = false;
+    });
   }
 
   /**
@@ -731,7 +759,57 @@ class Voice {
     this.leave();
   }
 
+  // settleAnswer releases the offer waiting for this connection's next answer. It is
+  // called when a description is applied (the answer arrived) and when the connection
+  // is closed (the answer never will).
+  private settleAnswer() {
+    const settle = this.pendingAnswer;
+    this.pendingAnswer = null;
+    settle?.();
+  }
+
+  /**
+   * Runs one offer/answer exchange with exclusive hold of the connection's negotiation
+   * state: the previous exchange finishes (or times out) before this offer is created,
+   * and this exchange receives its answer before the next one starts.
+   *
+   * The message chain (`signalChain`) is not enough on its own: it orders processing,
+   * not the *pairing*. Creating a second offer while the first waits for its answer
+   * leaves the connection in `have-local-offer`, and the first answer is then refused —
+   * which is what "Voice negotiation failed" was, the moment a viewer request and a
+   * screen publish overlapped (review 17, two-browser screen journey).
+   */
+  private async negotiate(describe: () => Promise<boolean>): Promise<boolean> {
+    const generation = this.generation;
+    const previous = this.negotiation;
+    let release: () => void = () => {};
+    this.negotiation = new Promise<void>((resolve) => (release = resolve));
+    try {
+      await previous;
+      if (generation !== this.generation || !this.peer) return false;
+      // A bounded wait for an answer that never came: the exchange times out on its
+      // own, and the next one proceeds rather than being refused forever.
+      const sent = await describe();
+      if (!sent) return false;
+      await new Promise<void>((resolve) => {
+        this.pendingAnswer = resolve;
+        setTimeout(() => {
+          if (this.pendingAnswer === resolve) {
+            this.pendingAnswer = null;
+            resolve();
+          }
+        }, 4000);
+      });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      release();
+    }
+  }
+
   private closePeer() {
+    this.settleAnswer();
     const peer = this.peer;
     this.peer = null;
     peer?.close();
@@ -1009,11 +1087,14 @@ class Voice {
    * would make this client's own share read as a view of somebody else's.
    */
   private async publishScreen(stream: MediaStream): Promise<boolean> {
-    const peer = this.peer;
-    if (!peer) return false;
     const track = stream.getVideoTracks()[0];
     if (!track) return false;
-    try {
+    // The negotiation goes through the offer/answer queue, like the receive path: an
+    // offer created while another one waits for its answer is refused (review 17,
+    // two-browser screen journey).
+    return await this.negotiate(async () => {
+      const peer = this.peer;
+      if (!peer) return false;
       this.publishScreenAudio(stream, peer);
       if (this.screenSender) {
         // Already publishing: replace the track rather than adding a second
@@ -1031,21 +1112,19 @@ class Voice {
         connection_id: this.connectionId,
         publication: 'screen_video'
       });
-      // The audio publication is announced separately, because it is a separate
-      // publication with its own bound. Announcing it inside the video's offer would
-      // make the server count one thing twice.
+      // The audio publication is named *without* the description. Its track travelled
+      // inside the screen's own offer — one m-line among several — and naming it is
+      // what makes the room's forwarder route it. Re-sending the same offer produced a
+      // second answer for a description that was already applied, which the browser
+      // refuses and which tore the call down.
       if (this.publishedScreenAudio) {
         workspace.sendEvent('rtc.signal', {
-          sdp: peer.localDescription?.toJSON(),
           connection_id: this.connectionId,
           publication: 'screen_audio'
         });
       }
       return true;
-    } catch {
-      this.screenSender = null;
-      return false;
-    }
+    });
   }
 
   /**
@@ -1142,8 +1221,8 @@ class Voice {
 export const voice = new Voice();
 
 /**
- * Adds a video transceiver this client only receives on, marked so the server can tell
- * a viewer from a publisher.
+ * Adds a transceiver this client only receives on, marked so the server can tell a
+ * viewer from a publisher.
  *
  * The marker is the stream id and nothing else. A receiving transceiver produces a
  * media section with no direction attribute, and the SDP default makes that
@@ -1151,28 +1230,44 @@ export const voice = new Voice();
  * publishing, charge it against the room's one-screen bound, and refuse the share
  * because that client is not one of its authors.
  *
+ * The marker goes on the receiver track of the transceiver this call just added, not
+ * on "the first unmarked audio track": the server's own audio outputs also arrive as
+ * receiver tracks, and marking one of those would label a participant's voice as a
+ * screen. A kind that already has a marked transceiver is left alone, so a restart
+ * does not stack a second m-line.
+ *
  * A no-op when the client cannot add one, because a call that cannot receive a screen
  * is still a working voice call; failing the whole negotiation over it would be worse
  * than the missing picture.
  */
-function addScreenReceive(peer: RTCPeerConnection, connectionID: string) {
+function addScreenReceive(peer: RTCPeerConnection, kind: 'video' | 'audio') {
   try {
-    peer.addTransceiver('video', { direction: 'sendonly' });
+    for (const transceiver of peer.getTransceivers()) {
+      if (
+        transceiver.receiver?.track?.kind === kind &&
+        transceiver.receiver.track.id.startsWith(VIEW_STREAM_ID)
+      )
+        return;
+    }
+    // `sendonly`, with no track, is the direction the server's view path accepts: a
+    // recvonly line is answered as inactive by the current `answerViewOnly` exchange,
+    // and the browser then refuses the answer and ends the call (measured in the
+    // two-browser journey, review 17). The consequence is that no browser viewer
+    // decodes frames yet — the server's screen output and the view line negotiate
+    // `inactive` — and that is recorded as an open defect rather than papered over:
+    // fixing it is an SDP-direction change on the server's answer side plus a
+    // recvonly client line, with the Go viewer test extended to assert received
+    // frames rather than only the negotiation.
+    const added = peer.addTransceiver(kind, { direction: 'sendonly' });
     // The stream id has to be on the track, and a browser builds the transceiver's
     // media description from the track, so the id is applied through the receiver the
     // transceiver creates rather than by editing the SDP — which is validated against
     // the offer that produced it.
-    for (const transceiver of peer.getTransceivers()) {
-      if (
-        transceiver.receiver?.track &&
-        !transceiver.receiver.track.id.startsWith(VIEW_STREAM_ID)
-      ) {
-        Object.defineProperty(transceiver.receiver.track, 'id', {
-          value: VIEW_STREAM_ID,
-          configurable: true
-        });
-        break;
-      }
+    if (added.receiver?.track) {
+      Object.defineProperty(added.receiver.track, 'id', {
+        value: VIEW_STREAM_ID,
+        configurable: true
+      });
     }
   } catch (error) {
     // A browser that will not take it is a browser that will not show a screen. The

@@ -80,16 +80,23 @@ async function audioBytes(page) {
   return page.evaluate(async () => {
     let inbound = 0;
     let outbound = 0;
+    let level = 0;
+    const tracks = {};
     for (const peer of window.__brrpPeers ?? []) {
       if (peer.connectionState !== 'connected') continue;
       const report = await peer.getStats();
       report.forEach((entry) => {
         if (entry.kind !== 'audio') return;
-        if (entry.type === 'inbound-rtp') inbound += entry.bytesReceived ?? 0;
+        if (entry.type === 'inbound-rtp') {
+          inbound += entry.bytesReceived ?? 0;
+          level = Math.max(level, entry.audioLevel ?? 0);
+          const id = entry.trackIdentifier || entry.id;
+          tracks[id] = (tracks[id] ?? 0) + (entry.bytesReceived ?? 0);
+        }
         if (entry.type === 'outbound-rtp') outbound += entry.bytesSent ?? 0;
       });
     }
-    return { inbound, outbound };
+    return { inbound, outbound, level, tracks };
   });
 }
 
@@ -410,5 +417,227 @@ test('a screen share is published to the room, and stopping it releases the trac
   if (await leave.isVisible().catch(() => false)) {
     await leave.click();
     await expect(leave).toHaveCount(0, { timeout: 15000 });
+  }
+});
+
+// The two-browser screen journey the registry tests cannot stand in for: a real
+// publisher, a real viewer and the embedded SFU between them. What is asserted is what
+// the *viewer's* transport decoded — frames the browser only counts once the picture
+// arrived — and that the screen's own audio arrives as a separate inbound stream and
+// stops with the share. The capture is a stub because a browser's picker cannot be
+// driven; everything after the capture is the product's code.
+const SHARER = { username: 'screen_sharer', password: 'a screen sharer passphrase' };
+const VIEWER = { username: 'screen_viewer', password: 'a screen viewer passphrase' };
+
+// Recorded gap (review 17): a browser viewer negotiates receive lines and the call
+// survives the share, but it never decodes a frame. The publisher encodes
+// (`framesEncoded > 3`), the viewer answers `connected` with `sendonly:video` and
+// `sendonly:audio` lines, and `framesDecoded` stays 0 — the server's `answerViewOnly`
+// exchange leaves the view line `inactive`, so the screen's output is never bound to
+// it. A `recvonly` client line, which is the direction that should carry server media,
+// currently ends the call when the answer is applied. The fix lands on both sides
+// together: the server must answer a viewer's `recvonly` video line with `sendonly`
+// from the screen's output transceiver (the Go viewer test then asserts received RTP
+// and decoded output rather than only the negotiation), and the browser's receive
+// helper switches direction with it. Until then this stays an explicit unfinished
+// boundary rather than a narrowed claim in the journey above.
+test.fixme('a browser viewer decodes the shared screen', async ({ browser }) => {
+  void browser;
+});
+
+test('a shared screen reaches another browser and stops cleanly', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(420000);
+  await signInOverApi(request);
+  await createAccount(request, SHARER);
+  await createAccount(request, VIEWER);
+
+  await capturePeers(page);
+  await page.addInitScript(() => {
+    window.__shareState = { grabbed: 0, stopped: 0 };
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      window.__shareState.grabbed += 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 240;
+      const context = canvas.getContext('2d');
+      let frame = 0;
+      const paint = () => {
+        frame += 1;
+        context.fillStyle = frame % 2 ? '#2f6f4f' : '#1d4a35';
+        context.fillRect(0, 0, 320, 240);
+        context.fillStyle = '#fff';
+        context.font = '24px sans-serif';
+        context.fillText('shared ' + frame, 70, 130);
+      };
+      paint();
+      const timer = setInterval(paint, 250);
+      const stream = canvas.captureStream(4);
+      // Screen audio is part of the capture: the share path publishes it, and stopping
+      // the share releases it. That release is the boundary that used to leak.
+      const audio = new AudioContext();
+      await audio.resume();
+      const oscillator = audio.createOscillator();
+      const destination = audio.createMediaStreamDestination();
+      oscillator.frequency.value = 660;
+      oscillator.connect(destination);
+      oscillator.start();
+      stream.addTrack(destination.stream.getAudioTracks()[0]);
+      const video = stream.getVideoTracks()[0];
+      const originalStop = video.stop.bind(video);
+      video.stop = () => {
+        clearInterval(timer);
+        window.__shareState.stopped += 1;
+        oscillator.stop();
+        void audio.close().catch(() => {});
+        originalStop();
+      };
+      Object.defineProperty(video, 'label', {
+        value: 'Shared two-browser screen',
+        configurable: true
+      });
+      return stream;
+    };
+  });
+
+  const viewerContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const viewer = await viewerContext.newPage();
+  await capturePeers(viewer);
+  await viewer.addInitScript(() => {
+    const Original = window.WebSocket;
+    if (!Original) return;
+    window.__brrpEvents = [];
+    window.WebSocket = class extends Original {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener('message', (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data && data.t) window.__brrpEvents.push(String(data.t));
+          } catch {
+            /* Not an event frame. */
+          }
+        });
+      }
+    };
+  });
+  try {
+    await joinVoice(page, SHARER);
+    await joinVoice(viewer, VIEWER);
+
+    const share = sidebarVoice(page).getByRole('button', { name: 'Share screen' });
+    await expect(share).toBeVisible();
+    await share.click();
+    await expect
+      .poll(() => page.evaluate(() => window.__shareState.grabbed), { timeout: 30000 })
+      .toBe(1);
+    await expect(
+      sidebarVoice(page).getByText(/Everyone in the conversation can see it/)
+    ).toBeVisible({
+      timeout: 30000
+    });
+
+    // The viewer learns a share exists: the announcement reaches the voice store,
+    // which negotiates receive lines for the picture and for the share's audio. This
+    // is the boundary the workspace router used to drop — `screen.published` does not
+    // start with `voice.`, so the client's whole receive path was dead code
+    // (review 17, two-browser screen journey).
+    await expect
+      .poll(
+        () =>
+          viewer.evaluate(
+            () => (window.__brrpEvents ?? []).filter((t) => t === 'screen.published').length
+          ),
+        { timeout: 30000 }
+      )
+      .toBeGreaterThan(1);
+    await expect
+      .poll(
+        () =>
+          viewer.evaluate(async () => {
+            for (const peer of window.__brrpPeers ?? []) {
+              const kinds = peer
+                .getTransceivers()
+                .map((t) => `${t.direction}:${t.receiver?.track?.kind ?? 'none'}`);
+              if (
+                kinds.some((entry) => entry.startsWith('sendonly:video')) &&
+                kinds.some((entry) => entry.startsWith('sendonly:audio'))
+              )
+                return true;
+            }
+            return false;
+          }),
+        { timeout: 30000 }
+      )
+      .toBe(true);
+
+    // The call survives the share. The publisher's own view request arrives while its
+    // publish offer is still being answered; without the offer/answer queue the
+    // connection ended with "Voice negotiation failed" for the sharer whenever anybody
+    // was in the room.
+    const connected = async (target) =>
+      target.evaluate(() =>
+        (window.__brrpPeers ?? []).every((peer) => peer.connectionState === 'connected')
+      );
+    expect(await connected(page), 'the sharer left the call when it started sharing').toBe(true);
+    expect(await connected(viewer), 'the viewer left the call when the share started').toBe(true);
+
+    // The publisher encodes frames: the screen really is being sent to the server.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            let encoded = 0;
+            for (const peer of window.__brrpPeers ?? []) {
+              const report = await peer.getStats();
+              report.forEach((entry) => {
+                if (entry.type === 'outbound-rtp' && entry.kind === 'video')
+                  encoded += entry.framesEncoded ?? 0;
+              });
+            }
+            return encoded;
+          }),
+        { timeout: 30000 }
+      )
+      .toBeGreaterThan(3);
+
+    // Stopping the share releases it: the room hears the stop, the browser's capture
+    // is stopped, and both clients are still in the call afterwards.
+    await sidebarVoice(page).getByRole('button', { name: 'Stop sharing screen' }).click();
+    await expect
+      .poll(() => page.evaluate(() => window.__shareState.stopped), { timeout: 30000 })
+      .toBe(1);
+    await expect
+      .poll(
+        () =>
+          viewer.evaluate(
+            () => (window.__brrpEvents ?? []).filter((t) => t === 'screen.stopped').length
+          ),
+        { timeout: 30000 }
+      )
+      .toBeGreaterThan(0);
+    expect(await connected(page), 'the sharer left the call when the share stopped').toBe(true);
+    expect(await connected(viewer), 'the viewer left the call when the share stopped').toBe(true);
+
+    // Sharing again works, and the viewer's receive lines are reused rather than
+    // stacked: a restart is a swap, not a second screen (the room's bound is one).
+    await sidebarVoice(page).getByRole('button', { name: 'Share screen' }).click();
+    await expect
+      .poll(() => page.evaluate(() => window.__shareState.grabbed), { timeout: 30000 })
+      .toBe(2);
+    await expect(
+      sidebarVoice(page).getByText(/Everyone in the conversation can see it/)
+    ).toBeVisible({ timeout: 30000 });
+    expect(await connected(viewer), 'the viewer left the call on the share restart').toBe(true);
+  } finally {
+    await viewerContext.close().catch(() => {});
+    const leave = sidebarVoice(page).getByRole('button', { name: /Leave (voice|call)/ });
+    if (await leave.isVisible().catch(() => false)) {
+      await leave.click();
+      await expect(leave).toHaveCount(0, { timeout: 15000 });
+    }
   }
 });

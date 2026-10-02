@@ -1894,7 +1894,19 @@ class Workspace {
         ...event.d.states
       ];
     }
-    if (event.t.startsWith('voice.') || event.t === 'rtc.signal') this.onVoiceEvent?.(event);
+    if (
+      event.t.startsWith('voice.') ||
+      event.t === 'rtc.signal' ||
+      // The screen announcements belong to the voice store too: `screen.published` is
+      // what makes a viewer negotiate for a picture at all, and `screen.stopped` is how
+      // it learns the share ended. They are not named `voice.*`, and for a while the
+      // router here only forwarded that prefix — so the client's entire receive path
+      // was dead code and no browser ever watched a screen (review 17, two-browser
+      // screen journey).
+      event.t === 'screen.published' ||
+      event.t === 'screen.stopped'
+    )
+      this.onVoiceEvent?.(event);
     if (event.t === 'typing.update') {
       if (event.d.typing) this.typing[event.d.user_id] = event.d;
       else delete this.typing[event.d.user_id];

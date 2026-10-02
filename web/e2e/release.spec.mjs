@@ -528,3 +528,56 @@ test('the service worker claims one notice per event across tabs and sweeps its 
   expect(afterSweep).toContain(`brrp.notified.${tagA}`);
   expect(afterSweep).toContain(`brrp.notified.${tagC}`);
 });
+
+// A phone-sized viewport, driven through the real interface: the critical flows
+// (switch channel, read, send, stay reachable) must work at 390×844 rather than only
+// at a desktop width. This is simulated-reflow evidence, not physical-device
+// acceptance — touch, on-screen keyboards and real mobile browsers remain physical
+// work — but it catches a layout that simply cannot be used narrow, which no
+// desktop-viewport journey can.
+test.describe('phone viewport', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('a member reads and sends at phone width', async ({ page }) => {
+    test.setTimeout(180000);
+    // The shared signIn helper waits for the preferences control, which is behind the
+    // collapsed header at this width; the form is driven directly and the signed-in
+    // state is read from the workspace itself.
+    await page.goto('/');
+    if (
+      await page
+        .getByRole('heading', { name: 'Welcome back.' })
+        .isVisible()
+        .catch(() => false)
+    ) {
+      await page.getByLabel('Username').fill(OWNER.username);
+      await page.locator('input[autocomplete="current-password"]').fill(OWNER.password);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+    }
+    await expect(page.getByRole('heading', { name: 'general' })).toBeVisible({ timeout: 30000 });
+    // The sidebar may be collapsed into a drawer at this width; opening it is the
+    // supported way in.
+    const openChannels = page.getByRole('button', { name: 'Open channels' });
+    if (await openChannels.isVisible().catch(() => false)) {
+      await openChannels.click();
+      await page
+        .getByRole('button', { name: /general/i })
+        .first()
+        .click();
+    }
+    await expect(page.getByRole('heading', { name: 'general' })).toBeVisible();
+
+    const composer = page.getByRole('textbox', { name: 'Message general' });
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeInViewport();
+    await composer.fill('a message from a phone-sized viewport');
+    await composer.press('Enter');
+    await expect(
+      page.locator('article.message:has-text("a message from a phone-sized viewport")').first()
+    ).toBeVisible();
+    // The composer stays reachable after the message lands, rather than being pushed
+    // off-screen by the new row.
+    await expect(composer).toBeInViewport();
+    await expectAccessible(page);
+  });
+});
