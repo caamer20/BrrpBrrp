@@ -622,4 +622,31 @@ the order it was collected:
   (`TestAPacketIsForwardedOnlyForThePeerThatOwnsThePublication`,
   `TestOnlyTheOwnerCanFeedAPublishedScreen`).
 
+### 6f. Twenty consecutive voice-project runs
+
+Run after the change was implemented, built and formatted (the artifact is the
+`dist/brrpbrrp-e2e` built from this commit's sources immediately before the twenty
+runs, SHA-256 `ff9738e92a7f34732e9f90fbe53d7e7bae08377b2a40a545efe5462ba3c239ee`):
+
+- `BRRP_E2E_BINARY=…/dist/brrpbrrp-e2e BRRP_E2E_PRIVATE_CONVERSATIONS=0 npm --prefix web run test:e2e -- --project=voice`
+  twenty times in sequence, one worker, a fresh server and data directory per run.
+- **20/20 runs passed**, each 10 tests, 0 failed, 0 skipped (the release project's six
+  journeys run first as the voice project's dependency, which is why each run reports
+  ten). Wall time for the sequence: 1038 s.
+- What this establishes: the voice journeys, including the two-browser screen journey
+  and its decode/stop/restart assertions, are stable across twenty fresh servers on
+  this host with a generated capture. It does not establish anything about a physical
+  microphone or display, Firefox/WebKit, or a non-loopback network.
+- The intermittent `Join voice → Leave voice` timeout seen once at HEAD
+  (`voice.spec.mjs`, the "every refusal is explained" journey, in a full-suite run
+  immediately after another voice journey) did **not** reproduce in these twenty runs
+  nor in the two full-suite runs of this tranche. The evidence available so far — the
+  client's 25-second join timer reports "Voice timed out. Check the server UDP ports or
+  enable TURN.", and the server leaves an unnamed failed `rtc.signal` with "Voice
+  negotiation failed" — does not yet distinguish a stalled ICE handshake from a
+  `createPeer` that returned early, because the harness discards the server's log tail
+  when a run fails. That is the next step: keep the server's tail on failure, then
+  reproduce and read it.
+
+
 
