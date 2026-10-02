@@ -331,7 +331,11 @@ test('a thread reply moves only the thread, and archiving closes replies until r
   await page.goto('about:blank');
   await page.goto(`/#message=${replyBody.id}`);
   const panel = page.getByRole('dialog');
-  await expect(panel.getByText('Unread and archive')).toBeVisible();
+  // Exact, because the panel also renders the root message, whose body *contains* the
+  // title ("A root line for the unread and archive journey") — a substring match
+  // resolves to both elements and fails strict mode whenever the panel's window happens
+  // to include the root (caught by the private-conversations run, 2 October).
+  await expect(panel.getByText('Unread and archive', { exact: true })).toBeVisible();
   await expect(panel.locator('article.message:has-text("the only unseen reply")')).toBeVisible();
   await panel.getByRole('button', { name: 'Close' }).click();
 
