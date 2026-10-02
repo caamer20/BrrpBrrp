@@ -6,9 +6,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
+
+// testEvent is one event the server emitted at a test peer.
+type testEvent struct {
+	kind string
+	data any
+}
 
 type testPeer struct {
 	pc *webrtc.PeerConnection
@@ -26,9 +33,19 @@ type testPeer struct {
 	videoPackets   chan []byte
 	videoSequence  uint16
 	videoTimestamp uint32
-	joins          chan JoinEvent
-	sequence       uint16
-	timestamp      uint32
+	// keyframeRequests is the RTCP a peer's own sending connection receives: the
+	// server asks for a keyframe by writing it there, and this is where a test can see
+	// whether it arrived and what it names.
+	keyframeRequests chan rtcp.Packet
+	// screenSender is the sender carrying this peer's screen track, so a test can name
+	// the SSRC the server should address a keyframe request at.
+	screenSender *webrtc.RTPSender
+	// events is every event the server emitted at this peer, so a test can assert what
+	// a client was *told* — which is a different question from what the server is doing.
+	events    chan testEvent
+	joins     chan JoinEvent
+	sequence  uint16
+	timestamp uint32
 }
 
 // handshakeBudget is how long the harness waits for a local ICE handshake, or for a
@@ -75,6 +92,7 @@ func connectPeerWithCapacity(t *testing.T, sfu *SFU, id, room string, capacity i
 		pc: pc, name: id, track: track,
 		packets: make(chan []byte, 64), joins: make(chan JoinEvent, 16),
 		videoPackets: make(chan []byte, 4096),
+		events:       make(chan testEvent, 64),
 	}
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		for {
@@ -92,6 +110,10 @@ func connectPeerWithCapacity(t *testing.T, sfu *SFU, id, room string, capacity i
 	var pending []webrtc.ICECandidateInit
 	signalingErrors := make(chan error, 10)
 	send := func(kind string, data any) {
+		select {
+		case peer.events <- testEvent{kind: kind, data: data}:
+		default:
+		}
 		if kind == "voice.user_joined" {
 			peer.joins <- data.(JoinEvent)
 			return

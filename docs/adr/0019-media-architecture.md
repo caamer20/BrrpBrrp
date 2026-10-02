@@ -933,3 +933,48 @@ became a call, once, in a full-suite run. The journeys have not reproduced it si
 twenty-nine suite executions, so the fix is not claimed as its cause. What is claimed is
 the defect the code showed, the test that fails without the fix, and the diagnostics the
 next occurrence will now leave.
+
+
+## A keyframe request is the viewer's only way to start a picture
+
+H.264 starts with a keyframe, and a stream that begins mid-GOP decodes to nothing: the
+viewer sees a black rectangle, not a degraded picture. A browser asks for one — PLI, or
+FIR — and its request is addressed to whoever is sending the media. In this architecture
+that is never the peer it is watching; it is the server. Until this change the server
+read the feedback on each viewer's line and dropped it, so the request died one hop
+short of the encoder that could answer it.
+
+Three properties make the path real, and each is testable on its own:
+
+- **The feedback is negotiated.** `nack pli` comes from Pion's NACK configuration; `ccm
+  fir` is registered explicitly. A browser sends only feedback its answer offered, so a
+  registration gap looks exactly like a client that never asks.
+- **The request is forwarded, addressed at the publisher's stream.** A PLI names the
+  media source it is about, and a browser demultiplexes feedback by that value: a request
+  that names something unknown is dropped before the publisher's encoder hears about it.
+  Both SSRC fields therefore carry the publisher's sending SSRC, which the server learns
+  from the track it receives — a request cannot be sent before the first frame arrives,
+  and the first frame of a publication is a keyframe anyway.
+- **It is rate-limited per room and kind.** A viewer that is waiting asks several times a
+  second, and forwarding each one turns one browser's impatience into an encoder
+  producing keyframes for the whole room. A request with nothing behind it — no
+  publication, a publisher that has left, a peer asking about its own stream — is dropped
+  without consuming the window, so a viewer with nothing to watch cannot delay the viewer
+  who has something.
+
+**A viewer that joins late has to be told what is already running.** The announcement was
+emitted only when a publication was registered, so a client that arrived afterwards
+negotiated nothing at all: no line of its own, no output for the server to write to, and
+a share invisible to exactly the person who joined to watch it. A joining peer is now
+told about the room's live publications through the same event the registration path
+uses, and the line it binds triggers the same keyframe request.
+
+The evidence is layered. `internal/rtc` drives real peer connections and real RTCP: a
+viewer's PLI arrives at the publisher addressed at the publisher's own SSRC; a second
+request inside the window does not; an ordinary receiver report never becomes one; a
+request after the share stops is dropped; binding a line to a live share produces a
+request with no client RTCP at all; and the answers offer `nack pli` and `ccm fir` while
+not offering feedback this build does not implement. The browser journey proves the
+outcome for a real capture: a third viewer that joins while the share is running decodes
+the 320-pixel canvas within ten seconds. Neither layer says anything about a physical
+display, a lossy network, or a browser other than Chromium.

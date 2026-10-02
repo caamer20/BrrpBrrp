@@ -471,6 +471,10 @@ test('a screen share is published to the room, and stopping it releases the trac
 // driven; everything after the capture is the product's code.
 const SHARER = { username: 'screen_sharer', password: 'a screen sharer passphrase' };
 const VIEWER = { username: 'screen_viewer', password: 'a screen viewer passphrase' };
+// A third account for the late-joining viewer: two tabs of one account cannot be in the
+// same call (each account holds one voice place), and this journey needs somebody who
+// arrives after the share is already running.
+const WATCHER = { username: 'screen_watcher', password: 'a screen watcher passphrase' };
 
 test('a shared screen reaches another browser and stops cleanly', async ({
   page,
@@ -481,6 +485,7 @@ test('a shared screen reaches another browser and stops cleanly', async ({
   await signInOverApi(request);
   await createAccount(request, SHARER);
   await createAccount(request, VIEWER);
+  await createAccount(request, WATCHER);
 
   await capturePeers(page);
   await page.addInitScript(() => {
@@ -684,6 +689,26 @@ test('a shared screen reaches another browser and stops cleanly', async ({
     await expect
       .poll(async () => (await decodedVideo(viewer)).frames, { timeout: 30000 })
       .toBeGreaterThan(afterStopDecoded.frames + 3);
+
+    // A viewer that joins *after* the share is running still sees the picture within a
+    // few seconds. Its browser is told the share exists when it joins, negotiates a
+    // line for it, asks for a keyframe as the line is bound, and the publisher answers
+    // with one — without that loop, this viewer sits in front of a black rectangle
+    // until the encoder's next natural keyframe (ENG-02).
+    const watcherContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+    const watcher = await watcherContext.newPage();
+    await capturePeers(watcher);
+    try {
+      await joinVoice(watcher, WATCHER);
+      await expect
+        .poll(async () => (await decodedVideo(watcher)).frames, { timeout: 10000 })
+        .toBeGreaterThan(1);
+      expect((await decodedVideo(watcher)).width, 'the late viewer decoded another picture').toBe(
+        320
+      );
+    } finally {
+      await watcherContext.close().catch(() => {});
+    }
   } finally {
     await viewerContext.close().catch(() => {});
     const leave = sidebarVoice(page).getByRole('button', { name: /Leave (voice|call)/ });

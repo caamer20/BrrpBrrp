@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
@@ -350,10 +351,35 @@ func (peer *testPeer) setScreenTrack(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer.videoTrack = track
-	if _, err := peer.pc.AddTransceiverFromTrack(track,
-		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+	transceiver, err := peer.pc.AddTransceiverFromTrack(track,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	if err != nil {
 		t.Fatal(err)
 	}
+	peer.screenSender = transceiver.Sender()
+	// The sender's own RTCP reader is where a keyframe request about this stream
+	// arrives: the server writes it at the SSRC this peer sends, and a test that cannot
+	// see it cannot tell a forwarded request from one that was dropped.
+	if peer.keyframeRequests == nil {
+		peer.keyframeRequests = make(chan rtcp.Packet, 16)
+	}
+	go func(sender *webrtc.RTPSender) {
+		for {
+			packets, _, err := sender.ReadRTCP()
+			if err != nil {
+				return
+			}
+			for _, packet := range packets {
+				if !wantsKeyframe(packet) {
+					continue
+				}
+				select {
+				case peer.keyframeRequests <- packet:
+				default:
+				}
+			}
+		}
+	}(transceiver.Sender())
 	peer.pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		if track.Kind() != webrtc.RTPCodecTypeVideo {
 			return

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
@@ -108,6 +109,15 @@ type Peer struct {
 	// the member deliberately selected while permission was absent.
 	requestedMuted    bool
 	requestedSpeaking bool
+	// incomingSSRC is the media source this peer is sending for each publication kind,
+	// learned from the track the server receives. A keyframe request has to name it:
+	// a browser matches the request to its own outgoing stream by SSRC, and one that
+	// names nothing is ignored. It is read and written under the SFU's lock.
+	incomingSSRC map[PublicationKind]uint32
+	// sfu is the server this peer belongs to, so an output can forward a viewer's
+	// keyframe request to the publisher. It is nil for a peer that was constructed
+	// outside Join (tests that only need a Peer value), and every use tolerates that.
+	sfu *SFU
 }
 
 // refreshState is called with SFU.mu held after client intent or a server-side
@@ -151,6 +161,12 @@ type SFU struct {
 	// changed after construction, so a peer cannot negotiate against a bound that
 	// moved underneath it.
 	limits PublicationLimits
+	// keyframes remembers when a room last asked a publisher for a keyframe, keyed by
+	// room and publication kind. A viewer that is waiting for a picture asks again and
+	// again, and forwarding each request turns one browser's impatience into an encoder
+	// producing keyframes for the whole room.
+	keyframes        map[string]time.Time
+	keyframeInterval time.Duration
 	// log records which network path actually carried each call. It may be nil.
 	log *slog.Logger
 }
@@ -200,6 +216,12 @@ func New(options Options, changed func([]State)) (*SFU, error) {
 	if err := webrtc.RegisterDefaultInterceptors(media, registry); err != nil {
 		return nil, err
 	}
+	// A viewer's keyframe request can only be sent if the answer it was negotiated in
+	// advertises the feedback that carries it. Pion's NACK configuration registers
+	// `nack` and `nack pli` for video; FIR is the other way a browser asks for a
+	// keyframe, and it is registered rather than assumed — a browser that negotiates no
+	// FIR will not send one, and the server would look correct while nothing arrived.
+	media.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccm", Parameter: "fir"}, webrtc.RTPCodecTypeVideo)
 	settings := webrtc.SettingEngine{}
 	if options.PortMin != 0 {
 		if err := settings.SetEphemeralUDPPortRange(options.PortMin, options.PortMax); err != nil {
@@ -214,7 +236,13 @@ func New(options Options, changed func([]State)) (*SFU, error) {
 		api: api, options: options, peers: make(map[string]*Peer), changed: changed,
 		publications: make(map[string]*publicationRegistry),
 		limits:       DefaultPublicationLimits(),
-		log:          options.Log,
+		keyframes:    make(map[string]time.Time),
+		// One request per room per kind per half second. A viewer waiting for a picture
+		// asks several times a second, and a keyframe is expensive; the window is short
+		// enough that a viewer recovers quickly and long enough that the publisher is
+		// not encoding keyframes instead of pictures.
+		keyframeInterval: 500 * time.Millisecond,
+		log:              options.Log,
 	}, nil
 }
 
@@ -280,7 +308,7 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 		s.mu.Unlock()
 		return err
 	}
-	peer := &Peer{owner: owner, resumeToken: uuid.NewString(), connectionID: uuid.NewString(), state: State{UserID: userID, ChannelID: channelID}, slot: slot, pc: pc, send: send}
+	peer := &Peer{owner: owner, resumeToken: uuid.NewString(), connectionID: uuid.NewString(), state: State{UserID: userID, ChannelID: channelID}, slot: slot, pc: pc, send: send, sfu: s}
 	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
 		s.mu.Unlock()
 		pc.Close()
@@ -370,6 +398,7 @@ func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(stri
 			// picture.
 			return
 		}
+		s.noteIncomingSSRC(peer, kind, uint32(track.SSRC()))
 		if kind == PublicationMicrophone && !peer.receiving.CompareAndSwap(false, true) {
 			// A second audio input on the microphone's own publication. This is the one
 			// case that is a replacement rather than a silence: a member who plugs in a
@@ -425,10 +454,33 @@ func (s *SFU) announceJoin(userID string, peer *Peer) {
 			recipients = append(recipients, destination.emit)
 		}
 	}
+	// A publication registered before this peer arrived is still live, and the only
+	// moment a client learns a screen exists is an announcement. Without this, a viewer
+	// that joins *after* a share started negotiates nothing — it has no video line, the
+	// server has no output to write to for it, and the picture is invisible to exactly
+	// the person who joined to watch it. The publications are announced through the
+	// same event the registration path uses, so the client has one path to handle
+	// rather than two.
+	live := []Publication{}
+	if registry, ok := s.publications[event.ChannelID]; ok {
+		for _, publication := range registry.list() {
+			if publication.Owner != userID {
+				live = append(live, publication)
+			}
+		}
+	}
 	s.mu.Unlock()
 	// Notify the participating tabs only, after the media connection succeeds.
 	for _, send := range recipients {
 		send("voice.user_joined", event)
+	}
+	for _, publication := range live {
+		peer.emit("screen.published", map[string]any{
+			"publication_id": string(publication.ID),
+			"owner":          publication.Owner,
+			"channel_id":     event.ChannelID,
+			"kind":           string(publication.Kind),
+		})
 	}
 }
 
@@ -707,6 +759,16 @@ func (s *SFU) leavePeerOwned(userID string, peer *Peer, owner string) {
 			recipients = append(recipients, other)
 		}
 	}
+	// The room's registries go when the room does. An empty registry is not reachable
+	// by anybody — the next join creates one through `s.room` — and one entry per room
+	// name that ever held a publication is a leak in the direction nobody looks, which
+	// is the same defect the read path was fixed for (a lookup that created a room).
+	// The keyframe windows are keyed the same way and go with them.
+	if len(recipients) == 0 {
+		delete(s.publications, channelID)
+		delete(s.keyframes, channelID+"\x00"+string(PublicationScreenVideo))
+		delete(s.keyframes, channelID+"\x00"+string(PublicationScreenAudio))
+	}
 	s.mu.Unlock()
 	// Told only when something was actually withdrawn. A member who left with nothing
 	// sharing does not make the room re-render a screen nobody was watching.
@@ -852,8 +914,19 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 				if err := peer.addScreenOutput(); err != nil {
 					return err
 				}
+				wanted = []PublicationKind{PublicationScreenVideo}
 			}
-			return s.answerViewOnly(peer)
+			if err := s.answerViewOnly(peer); err != nil {
+				return err
+			}
+			// The line is bound. If a screen is already being published, its owner is
+			// asked for a keyframe now rather than at the encoder's next natural one:
+			// that is the difference between a late-joining viewer seeing a picture
+			// within a round trip and seeing a black rectangle for seconds.
+			for _, kind := range wanted {
+				s.requestKeyframe(peer, kind)
+			}
+			return nil
 		}
 		// Not a viewer. A second offer *replaces* the first, so the publication path
 		// below re-applies this same offer and the connection is never left holding
@@ -1393,17 +1466,114 @@ func (p *Peer) addScreenOutputOfKind(kind PublicationKind) error {
 		return err
 	}
 	p.screens = append(p.screens, &screenForwarder{track: track, kind: kind})
-	// RTCP is drained rather than interpreted, as the audio outputs already do. The
-	// reason is the same: this build enforces publication at the forwarding boundary,
-	// not by answering feedback, and an unread RTCP channel blocks the sender.
+	// The RTCP a viewer sends about this output is the only way it can ask for a
+	// keyframe: its browser is waiting for a picture that starts with one, and it has
+	// no route to the publisher. Reading it and letting the request die here is what
+	// made a late-joining viewer wait for the publisher's next natural keyframe.
 	go func(sender *webrtc.RTPSender) {
 		for {
-			if _, _, err := sender.ReadRTCP(); err != nil {
+			packets, _, err := sender.ReadRTCP()
+			if err != nil {
 				return
+			}
+			for _, packet := range packets {
+				if !wantsKeyframe(packet) {
+					continue
+				}
+				if p.sfu != nil {
+					p.sfu.requestKeyframe(p, kind)
+				}
 			}
 		}
 	}(transceiver.Sender())
 	return nil
+}
+
+// wantsKeyframe reports whether an RTCP packet is a request for a fresh picture.
+// Everything else — receiver reports, transport feedback, NACKs about individual
+// packets — is about a stream that is already arriving and must not be mistaken for one.
+func wantsKeyframe(packet rtcp.Packet) bool {
+	switch packet.(type) {
+	case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+		return true
+	default:
+		return false
+	}
+}
+
+// noteIncomingSSRC records the media source a peer is sending for a publication kind,
+// which is what a forwarded keyframe request has to name.
+func (s *SFU) noteIncomingSSRC(peer *Peer, kind PublicationKind, ssrc uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peers[peer.state.UserID] != peer {
+		return
+	}
+	if peer.incomingSSRC == nil {
+		peer.incomingSSRC = make(map[PublicationKind]uint32)
+	}
+	peer.incomingSSRC[kind] = ssrc
+}
+
+// requestKeyframe forwards a viewer's request for a fresh picture to the peer publishing
+// the screen.
+//
+// This is the server's whole role in the feedback loop: the viewer's browser cannot
+// reach the publisher, and the publisher's own connection is not asked for anything
+// when a new viewer arrives — so a stream that starts mid-GOP, or one that lost its
+// last keyframe, is a black rectangle rather than a slow picture. The request is
+// addressed at the SSRC the publisher is sending: a browser matches it to its own
+// outgoing stream by that value, and one that names nothing is discarded.
+//
+// A request that has nothing behind it — no publication, a publisher that has left, a
+// peer asking about its own stream — is dropped without consuming the rate limit, so a
+// viewer with nothing to watch cannot delay the viewer who does.
+func (s *SFU) requestKeyframe(viewer *Peer, kind PublicationKind) {
+	if kind != PublicationScreenVideo {
+		// Audio has no keyframes; a request for one has nowhere to go.
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	publication, live := Publication{}, false
+	for _, candidate := range s.existingRoom(viewer.state.ChannelID).list() {
+		if candidate.Kind == kind {
+			publication, live = candidate, true
+			break
+		}
+	}
+	owner := s.peers[publication.Owner]
+	if !live || owner == nil || owner == viewer {
+		s.mu.Unlock()
+		return
+	}
+	ssrc := owner.incomingSSRC[kind]
+	if ssrc == 0 {
+		// Nothing has arrived on that stream yet, so there is no media source to
+		// reference; the first frames of a publication are a keyframe anyway. The rate
+		// limit is deliberately *not* consumed: a request that cannot be sent must not
+		// silence the one that can, which is exactly what happened when a viewer bound
+		// its line a few milliseconds before the publisher's first frame arrived.
+		s.mu.Unlock()
+		return
+	}
+	key := viewer.state.ChannelID + "\x00" + string(kind)
+	if last, asked := s.keyframes[key]; asked && now.Sub(last) < s.keyframeInterval {
+		s.mu.Unlock()
+		return
+	}
+	s.keyframes[key] = now
+	pc := owner.pc
+	s.mu.Unlock()
+	// Outside the lock: this writes to a peer's connection, and holding the SFU's lock
+	// across a network write is the pattern the authority fence exists to avoid.
+	//
+	// Both SSRC fields carry the publisher's stream: a receiver's feedback about a
+	// stream identifies its own RTCP by the same media source when it is not itself
+	// sending on that m-line, and a packet that names an unknown originator is dropped
+	// by the demultiplexer before any reader sees it — the publisher would never learn
+	// a keyframe was wanted.
+	_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{SenderSSRC: ssrc, MediaSSRC: ssrc}})
 }
 
 // screenOutputs returns a peer's video outputs. It copies the slice so a caller can

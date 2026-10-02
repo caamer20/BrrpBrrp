@@ -815,5 +815,91 @@ recorded above).
   available yet. The clone check also does not run the Go tests or the browser suites —
   those are separate gates with their own evidence above.
 
+## Tranche 8 — ENG-02: the video feedback path
+
+**Source and dirty state before the tranche.** HEAD `cbf3a54` (tranche 7 committed),
+working tree clean, application 0.4.0-alpha.8, schema 25, backup format 2. Phase B's
+media rows come first because media carries the most risk and the code was already open;
+ENG-02 is the row this tranche closes.
+
+### 8a. A viewer's keyframe request died one hop short of the publisher
+
+- **Failing behavior and reproduction.** `TestAViewersKeyframeRequestReachesThePublisher`
+  (new): a viewer's PLI, written the way a browser writes one, reached the server and was
+  discarded — the RTCP drain on every screen output read the packet and dropped it, so a
+  viewer that joined mid-stream had no way to make the publisher start a picture. The
+  first instrumented run showed the request arriving and the forward being suppressed
+  (`[rtcp-drain] peer=bo … PictureLossIndication bbf0fa03 bbf0fa03`), which produced two
+  further fixes the theory had missed: a request that cannot be *sent* — the server has
+  not yet seen the publisher's first frame, so it has no media source to name — must not
+  consume the rate-limit window, and a forwarded PLI must carry the publisher's SSRC in
+  **both** SSRC fields or the publisher's own demultiplexer drops it as unhandled.
+- **Changed files and reason.** `internal/rtc/sfu.go`: `ccm fir` is registered
+  (`RegisterFeedback`; Pion's NACK configuration already offers `nack` and `nack pli`);
+  each screen output's RTCP drain forwards PLI/FIR through `requestKeyframe`; the
+  publisher's sending SSRC is learned from the track it sends (`Peer.incomingSSRC`); the
+  forward is rate-limited per room and kind (`keyframeInterval`, 500 ms) and a request
+  with nothing behind it is dropped *without* consuming the window. `internal/rtc/keyframe_test.go`
+  is new; `internal/rtc/sfu_test.go` and `video_load_test.go` gain the harness to observe
+  it (a client-side RTCP channel per peer, and an event channel that records what a client
+  was told).
+- **Commands and results.** `go test ./internal/rtc -count=1` → ok (17.0 s);
+  `-race` → ok (34.2 s). Eight new tests, each with a permitted control beside it: a
+  request reaches the publisher addressed at its own SSRC; a second request inside the
+  window does not; an ordinary receiver report never becomes one (and a real request
+  after it still does); a request for a stopped share is dropped; binding a line to a
+  live share produces a request with no client RTCP at all; the answers offer `nack pli`
+  and `ccm fir` and do not offer feedback this build does not implement.
+
+### 8b. A viewer that joined after the share started was never told
+
+- **Failing behavior.** The announcement existed only at registration. A client that
+  joined afterwards negotiated nothing, so the server had no output to write to for it:
+  the criterion "a viewer who joins after a share started decodes within a few seconds"
+  was unreachable regardless of the feedback path, because there was nothing to bind and
+  therefore nothing to request a keyframe for.
+- **Changed files and reason.** `announceJoin` now emits `screen.published` for the
+  room's *live* publications to the peer that just joined (not to their owner), through
+  the same event the registration path uses, so the client keeps one code path.
+- **Tests.** `TestAViewerJoiningAfterAShareStartedIsToldAboutIt` (the announcement names
+  the screen and its owner) and its control `TestAStoppedShareIsNotAnnouncedToAJoiner`.
+
+### 8c. The browser proof, and what it is not
+
+- The two-browser journey gains a **third viewer** (a new account, since one account
+  holds one voice place) that joins *while the share is running* and must decode the
+  320-pixel canvas within ten seconds. Journey time went from ~12 s to ~16–21 s.
+- What this does not establish: a browser cannot distinguish a keyframe produced because
+  the request was forwarded from the encoder's next natural keyframe, so the forwarding
+  itself is proven at the RTCP level in Go and the browser test proves the late-join path
+  end to end. Neither layer says anything about a physical display, a lossy network, or a
+  browser other than Chromium.
+
+### 8d. One leak doubled, and closed
+
+- The keyframe windows are keyed by room and kind, like the publication registry — which
+  is itself never removed when a room empties. `leavePeerOwned` now deletes both when the
+  last peer of a room leaves, so the new map does not double an existing leak and the
+  existing one is closed. `TestAnEmptyRoomLeavesNoRegistriesBehind` pins it, with the
+  control that the room is usable again afterwards.
+- Kept deliberately: the rate-limit window survives a stopped-and-restarted share for at
+  most 500 ms. A restart inside that window may miss one request; the publisher's first
+  frames are a keyframe, so the cost is bounded and the alternative is an extra
+  bookkeeping key per publication.
+
+### 8e. Both browser modes, and the whole rtc package
+
+- `go test ./internal/rtc -count=1` → ok; `-race` → ok.
+- Full default-mode suite (`BRRP_E2E_PRIVATE_CONVERSATIONS=0`) → **25 passed, 0 failed,
+  0 skipped**. Full private-conversations suite (`=1`) → **39 passed, 0 failed, 0
+  skipped**. Both re-run against the final artifact
+  (`dist/brrpbrrp-e2e` sha256 `9ee80c9c5ebc0762d1afd946cd081a64d4a7ff1a3a7a686b6979654edce40da4`)
+  after the last code change.
+- One intermediate voice-project run failed in a release-project journey
+  (`getByLabel('Your preferences')` not found) and did not reproduce in the release
+  project alone or in two subsequent full runs; the harness's new failure diagnostics
+  printed the server log, which showed nothing but startup. It is recorded here as an
+  unexplained single occurrence rather than as a fixed defect.
+
 
 
