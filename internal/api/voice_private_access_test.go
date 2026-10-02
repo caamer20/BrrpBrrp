@@ -338,8 +338,8 @@ func TestAListenOnlyMemberStaysInTheCallAndIsSilenced(t *testing.T) {
 	}
 	group := readJSON[groupSummary](t, created)
 	for inviteeID, invitee := range map[string]*http.Cookie{
-		memberIDOf(t, s, "listen_only"):     listening,
-		memberIDOf(t, s, "listen_third"):    waiting,
+		memberIDOf(t, s, "listen_only"):  listening,
+		memberIDOf(t, s, "listen_third"): waiting,
 	} {
 		if w := request(t, handler, "POST", "/api/groups/"+group.ID+"/invite",
 			map[string]string{"user_id": inviteeID}, speaking); w.Code != 201 {

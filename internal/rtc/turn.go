@@ -2,9 +2,9 @@ package rtc
 
 import (
 	"crypto/hmac"
-	"crypto/tls"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,18 +19,18 @@ import (
 )
 
 type TURN struct {
-	mu            sync.Mutex
-	server        *turn.Server
-	secret        []byte
-	host          string
-	port          int
+	mu     sync.Mutex
+	server *turn.Server
+	secret []byte
+	host   string
+	port   int
 	// tcpPort and tlsPort are the fallback listeners. UDP alone leaves a client behind
 	// a network that blocks it with no path at all, which is the ordinary case on
 	// corporate and some mobile networks (ADR 0019, §7). A zero port means the
 	// fallback is not offered for that transport.
-	tcpPort       int
-	tlsPort       int
-	tlsCert       tls.Certificate
+	tcpPort int
+	tlsPort int
+	tlsCert tls.Certificate
 	// advertised is the host clients are told to relay through. It is configurable
 	// because a host or container behind NAT that advertises its private address
 	// produces a call that connects locally and fails for everybody else.

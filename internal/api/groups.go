@@ -1036,15 +1036,15 @@ type groupConversation struct {
 	OwnerID       string `json:"owner_id"`
 	OwnerName     string `json:"owner_name"`
 	Members       int    `json:"members"`
-	CanWrite      bool    `json:"can_write"`
-	CanRead       bool    `json:"can_read"`
-	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
-	CanInvite     bool    `json:"can_invite"`
-	CanTransfer   bool    `json:"can_transfer"`
-	PendingInvite int     `json:"pending_invitations"`
-	BlockedByMe   bool    `json:"blocked_by_me"`
-	Hidden        bool    `json:"hidden"`
+	CanWrite      bool   `json:"can_write"`
+	CanRead       bool   `json:"can_read"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+	CanInvite     bool   `json:"can_invite"`
+	CanTransfer   bool   `json:"can_transfer"`
+	PendingInvite int    `json:"pending_invitations"`
+	BlockedByMe   bool   `json:"blocked_by_me"`
+	Hidden        bool   `json:"hidden"`
 }
 
 // groupConversations returns the active groups this account has been accepted into.

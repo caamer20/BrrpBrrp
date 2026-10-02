@@ -13,7 +13,6 @@ import (
 	"github.com/pion/turn/v4"
 )
 
-
 func TestTURNRelayAndRevocation(t *testing.T) {
 	probe, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {

@@ -405,9 +405,9 @@ type requestReceipt struct {
 	// EvidenceExpiresAt is the evidence's own availability, which is the promise
 	// made to the reporter and is unaffected by how long the receipt lives.
 	EvidenceExpiresAt string
-	CreatedAt    string
-	ExpiresAt    string
-	IntentDigest string
+	CreatedAt         string
+	ExpiresAt         string
+	IntentDigest      string
 }
 
 // requestOperationReceipt is the minimal outcome. It says what happened, and never

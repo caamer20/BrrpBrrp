@@ -47,20 +47,20 @@ type VideoLoadSpec struct {
 // VideoLoadResult is what was measured. The fields are deliberately the ones a
 // capacity decision needs and the ones this harness can honestly produce.
 type VideoLoadResult struct {
-	Spec              VideoLoadSpec `json:"spec"`
-	Publishers        int           `json:"publishers"`
-	Viewers           int           `json:"viewers"`
-	DurationSeconds   float64       `json:"duration_seconds"`
-	PacketsForwarded  uint64        `json:"packets_forwarded"`
-	BytesForwarded    uint64        `json:"bytes_forwarded"`
-	MeanEgressMbit    float64       `json:"mean_egress_mbit_per_second"`
-	PeakEgressMbit    float64       `json:"peak_egress_mbit_per_second"`
+	Spec             VideoLoadSpec `json:"spec"`
+	Publishers       int           `json:"publishers"`
+	Viewers          int           `json:"viewers"`
+	DurationSeconds  float64       `json:"duration_seconds"`
+	PacketsForwarded uint64        `json:"packets_forwarded"`
+	BytesForwarded   uint64        `json:"bytes_forwarded"`
+	MeanEgressMbit   float64       `json:"mean_egress_mbit_per_second"`
+	PeakEgressMbit   float64       `json:"peak_egress_mbit_per_second"`
 	// ExpectedEgressMbit is the master plan's arithmetic for the same combination.
 	// It is recorded beside the measurement so a reader can see how far the real
 	// figure is from the estimate — and it is never presented as the measurement.
-	ExpectedEgressMbit float64 `json:"plan_arithmetic_mbit_per_second"`
-	PeakHeapBytes      uint64  `json:"peak_server_heap_bytes"`
-	MeanGoroutines     int     `json:"mean_goroutines"`
+	ExpectedEgressMbit float64  `json:"plan_arithmetic_mbit_per_second"`
+	PeakHeapBytes      uint64   `json:"peak_server_heap_bytes"`
+	MeanGoroutines     int      `json:"mean_goroutines"`
 	NotEstablished     []string `json:"not_established"`
 }
 
@@ -191,7 +191,6 @@ func runVideoForwardingLoad(t *testing.T, spec VideoLoadSpec) VideoLoadResult {
 			t.Fatalf("screen %d could not be announced: %v", index, err)
 		}
 	}
-
 
 	viewers := peers[spec.ScreenPublishers:]
 	// The forwarder state each viewer's output was last seen at, so a pass measures the
@@ -398,11 +397,11 @@ func (peer *testPeer) sendVideo(payload []byte) error {
 func writeVideoLoadReport(t *testing.T, path string, result VideoLoadResult) {
 	t.Helper()
 	encoded, err := json.MarshalIndent(struct {
-		MeasuredAt    string           `json:"measured_at"`
-		GoVersion     string           `json:"go_version"`
-		NumCPU        int              `json:"host_num_cpu"`
-		Concurrency   int              `json:"host_gomaxprocs"`
-		Result        VideoLoadResult  `json:"result"`
+		MeasuredAt  string          `json:"measured_at"`
+		GoVersion   string          `json:"go_version"`
+		NumCPU      int             `json:"host_num_cpu"`
+		Concurrency int             `json:"host_gomaxprocs"`
+		Result      VideoLoadResult `json:"result"`
 	}{time.Now().UTC().Format(time.RFC3339), runtime.Version(), runtime.NumCPU(), runtime.GOMAXPROCS(0), result}, "", "  ")
 	if err != nil {
 		t.Fatal(err)

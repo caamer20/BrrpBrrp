@@ -2,10 +2,10 @@ package api
 
 import (
 	"encoding/json"
-	"strings"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )

@@ -520,8 +520,6 @@ func TestUnacknowledgedActivityIsBoundedWithoutLosingUnseenRows(t *testing.T) {
 	}
 }
 
-
-
 // The typed destination exists because of one specific bypass: the previous shape
 // read an empty channel id as "no check needed", and a direct conversation has no
 // channel, so a private notice would have been dispatched with no authorization

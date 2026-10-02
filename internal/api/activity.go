@@ -583,9 +583,9 @@ func (s *Server) setPrivateNotificationPreference(w http.ResponseWriter, r *http
 		return
 	}
 	var input struct {
-		Kind        string `json:"kind"`
-		Muted       *bool  `json:"muted"`
-		ShowSender  *bool  `json:"show_sender"`
+		Kind       string `json:"kind"`
+		Muted      *bool  `json:"muted"`
+		ShowSender *bool  `json:"show_sender"`
 	}
 	if !decode(w, r, &input) {
 		return
@@ -660,9 +660,9 @@ func (s *Server) setPrivateNotificationPreference(w http.ResponseWriter, r *http
 		return
 	}
 	respond(w, http.StatusOK, map[string]any{
-		"kind":         input.Kind,
-		"muted":        muted == 1,
-		"show_sender":  showSender == 1,
+		"kind":        input.Kind,
+		"muted":       muted == 1,
+		"show_sender": showSender == 1,
 	})
 }
 
@@ -815,9 +815,9 @@ func (s *Server) payloadForJob(job pushJob) map[string]string {
 		// which no route matched, so a notification click navigated the app somewhere it
 		// did not recognise and the activity it announced was never opened. Authority is
 		// still checked when the destination is opened.
-		"url": "#messages",
-		"title":  "BrrpBrrp",
-		"body":   "You have new activity",
+		"url":   "#messages",
+		"title": "BrrpBrrp",
+		"body":  "You have new activity",
 		// The tag is the client-side de-duplication key and it travels in the push
 		// body, so it is built from the source kind and the sender's identity rather
 		// than from the conversation: a lock screen can read this string, and a

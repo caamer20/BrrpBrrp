@@ -82,10 +82,10 @@ type alertRecord struct {
 // server with a broken webhook would grow on its own, which is the one thing an
 // alerting system must not do.
 type alertState struct {
-	mu    sync.Mutex
+	mu sync.Mutex
 	// once guards the map's initialisation, because the health check and the delivery
 	// attempt can both be the first caller.
-	once       sync.Once
+	once sync.Once
 	// history is newest-first and bounded.
 	history []alertRecord
 	// lastRaised keys a condition to its last alert, so a condition that persists does
@@ -237,9 +237,9 @@ type alertStatus struct {
 	// because it looks like coverage.
 	Delivered string `json:"delivered"`
 	// Destination is the host, not the full URL: the path may carry a token.
-	Destination string `json:"destination"`
-	History    []alertRecord `json:"history"`
-	Conditions []alertCondition `json:"conditions"`
+	Destination string           `json:"destination"`
+	History     []alertRecord    `json:"history"`
+	Conditions  []alertCondition `json:"conditions"`
 }
 
 // alertCondition is a *current* health reading, separate from the history. A receiver

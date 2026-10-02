@@ -16,9 +16,9 @@ type testPeer struct {
 	// peer for it. The two are different types, and a test that needs both has to be
 	// able to cross between them by something the SFU stores rather than by reaching
 	// into its fields.
-	name      string
-	track     *webrtc.TrackLocalStaticRTP
-	packets   chan []byte
+	name    string
+	track   *webrtc.TrackLocalStaticRTP
+	packets chan []byte
 	// The screen publication a load harness gives this peer, and the frames that come
 	// back on it. Kept here rather than in the harness so the peer owns its own tracks,
 	// which is what the production peer does too.
@@ -26,9 +26,9 @@ type testPeer struct {
 	videoPackets   chan []byte
 	videoSequence  uint16
 	videoTimestamp uint32
-	joins     chan JoinEvent
-	sequence  uint16
-	timestamp uint32
+	joins          chan JoinEvent
+	sequence       uint16
+	timestamp      uint32
 }
 
 // handshakeBudget is how long the harness waits for a local ICE handshake, or for a

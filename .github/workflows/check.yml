@@ -33,6 +33,20 @@ jobs:
       - run: npm run build
         working-directory: web
       - run: go vet ./...
+      # Formatting and module drift are the two gates that used to be nobody's: the
+      # tree carried fifteen files `gofmt` would rewrite and a `go mod tidy` that
+      # moved `pion/stun/v3` to a direct requirement, and both were found by a manual
+      # sweep rather than by CI (v1 roadmap ENG/HRD, phase A3).
+      - name: Go formatting is canonical
+        run: |
+          unformatted="$(gofmt -l internal cmd scripts)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would rewrite these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: The module file is tidy
+        run: go mod tidy -diff
       # The API package alone takes about 40 minutes under -race in a parallel
       # package sweep, so the budget is 60 minutes: it was raised from 20 for a
       # timeout that raced the runtime, and a first measured sweep at schema 25 hit
@@ -61,13 +75,17 @@ jobs:
       # never seen this repository is told where to go next, and a link to a renamed
       # document sends them nowhere.
       - name: Documentation links resolve
-        run: node scripts/check-doc-links.mjs
+        run: |
+          node scripts/check-doc-links.mjs --self-test
+          node scripts/check-doc-links.mjs
       # The schema number is read from the migration registry rather than trusted from
       # prose. Three documents tell an operator what schema the release writes, and all
       # three were stale — an operator reading one to decide whether a backup can be
       # restored afterwards is reading something that has already gone wrong.
       - name: Documentation states the schema this binary writes
-        run: node scripts/check-schema-docs.mjs
+        run: |
+          node scripts/check-schema-docs.mjs --self-test
+          node scripts/check-schema-docs.mjs
       - name: Every shipped script parses
         run: |
           status=0

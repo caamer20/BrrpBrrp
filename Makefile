@@ -1,4 +1,8 @@
 GO ?= go
+# gofmt comes from the same toolchain as $(GO) when $(GO) is a path, and from PATH
+# otherwise: a formatting gate that silently checks nothing because the binary was not
+# found is worse than no gate at all.
+GOFMT ?= $(or $(wildcard $(dir $(GO))gofmt),gofmt)
 .PHONY: build web test check browser-check browser-steps dev release format docker docker-check notices rehearsal rollback-rehearsal docker-inputs source-package
 web:
 	cd web && npm ci && npm run build
@@ -14,8 +18,19 @@ test: web
 	$(GO) test -race -count=1 -timeout 60m ./...
 check: web
 	$(GO) vet ./...
+	@unformatted="$$($(GOFMT) -l internal cmd scripts)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "these files are not gofmt-canonical:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+	$(GO) mod tidy -diff
 	cd web && npm run check && npm run format:check
 	BRRP_GO='$(GO)' node scripts/licenses.mjs --check
+	node scripts/check-doc-links.mjs --self-test
+	node scripts/check-doc-links.mjs
+	node scripts/check-schema-docs.mjs --self-test
+	node scripts/check-schema-docs.mjs
 	node scripts/check-docker-inputs.mjs --self-test
 	node scripts/check-docker-inputs.mjs
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs

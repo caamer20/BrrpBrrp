@@ -32,8 +32,8 @@ type messageReport struct {
 	ExpiresAt    string `json:"expires_at"`
 	// Assignment is a claim about who is expected to look at this, not a grant: the
 	// review still requires the reviewer's own current capability (ADR 0018).
-	AssignedTo   string `json:"assigned_to"`
-	AssignedAt   string `json:"assigned_at"`
+	AssignedTo string `json:"assigned_to"`
+	AssignedAt string `json:"assigned_at"`
 }
 
 const reportColumns = `id,message_id,channel_id,COALESCE(reporter_id,''),COALESCE(author_id,''),reason,snapshot_text,status,review_note,COALESCE(reviewed_by,''),created_at,updated_at,expires_at,COALESCE(assigned_to,''),assigned_at`

@@ -23,7 +23,7 @@ type pushJob struct {
 	// which is exactly how a private notice would be dispatched with no
 	// authorization check at all (ADR 0015, "Push destinations are typed").
 	destination pushDestination
-	payload      map[string]string
+	payload     map[string]string
 }
 
 // pushDestination is where a queued notice points. It is never optional: there is

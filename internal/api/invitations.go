@@ -168,16 +168,16 @@ func (s *Server) invitations(w http.ResponseWriter, r *http.Request, user db.Use
 	}
 	defer rows.Close()
 	type summary struct {
-		ID        string   `json:"id"`
-		CreatedAt string   `json:"created_at"`
-		ExpiresAt string   `json:"expires_at"`
+		ID        string `json:"id"`
+		CreatedAt string `json:"created_at"`
+		ExpiresAt string `json:"expires_at"`
 		// The admission bounds are part of what the invitation *is*, so they are
 		// returned rather than hidden: an operator deciding whether to reissue needs to
 		// see how much of it is left.
-		MaxUses   int      `json:"max_uses"`
-		Uses      int      `json:"uses"`
-		Roles     []string `json:"roles"`
-		RoleIDs   []string `json:"role_ids"`
+		MaxUses int      `json:"max_uses"`
+		Uses    int      `json:"uses"`
+		Roles   []string `json:"roles"`
+		RoleIDs []string `json:"role_ids"`
 	}
 	// The rows are collected before the role lookup runs, because the store holds
 	// one connection and a second query inside an open cursor would wait on it.
