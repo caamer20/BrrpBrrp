@@ -1,0 +1,28 @@
+{
+  "tool": "upgrade-schema13-private",
+  "status": "pass",
+  "schema_before": 13,
+  "schema_after": null,
+  "baseline": {
+    "platform": "darwin-x64",
+    "sha256": "fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f",
+    "revision": "2869db55394b2b2a004424672517b38d6908586b",
+    "schema": 13
+  },
+  "fixture": "/tmp/brrpbrrp-schema13-seed",
+  "candidate_binary": {
+    "path": "dist/brrpbrrp",
+    "sha256": "a69c7980f225405fe5d12b6c84e0001fa0fece74d36a9d0605b40364272a02d9"
+  },
+  "started_at": "2026-10-02T02:09:20.826Z",
+  "finished_at": "2026-10-02T02:09:23.509Z",
+  "exit_status": 0,
+  "failures": 0,
+  "checks": [
+    {
+      "check": "the baseline executable matches its recorded identity",
+      "ok": true,
+      "detail": "darwin-x64 fddd1e3f3ef3… revision 2869db55394b…"
+    }
+  ]
+}

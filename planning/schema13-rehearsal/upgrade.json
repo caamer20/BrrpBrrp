@@ -1,0 +1,165 @@
+{
+  "tool": "upgrade-schema13-private",
+  "status": "pass",
+  "schema_before": 13,
+  "schema_after": 25,
+  "baseline": {
+    "binary": "dist/brrpbrrp-p9-checkpoint",
+    "sha256": "fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f",
+    "revision": "2869db55394b2b2a004424672517b38d6908586b",
+    "schema": 13,
+    "recorded": "2026-10-01",
+    "source": "preserved local checkpoint from the p9 private-reporting line; hash re-verified in review 17"
+  },
+  "fixture": "/tmp/brrpbrrp-schema13-seed",
+  "candidate_binary": {
+    "path": "dist/brrpbrrp",
+    "sha256": "a69c7980f225405fe5d12b6c84e0001fa0fece74d36a9d0605b40364272a02d9"
+  },
+  "started_at": "2026-10-02T02:09:23.594Z",
+  "finished_at": "2026-10-02T02:09:24.350Z",
+  "exit_status": 0,
+  "failures": 0,
+  "checks": [
+    {
+      "check": "a recorded schema-13 baseline identity exists for this platform",
+      "ok": true,
+      "detail": "fddd1e3f3ef3… revision 2869db55394b…"
+    },
+    {
+      "check": "the seed has 13 applied migrations",
+      "ok": true,
+      "detail": "highest is 13"
+    },
+    {
+      "check": "the seed is still the schema-13 snapshot",
+      "ok": true,
+      "detail": "highest is 13"
+    },
+    {
+      "check": "the request table has no attempt identity yet",
+      "ok": true,
+      "detail": "conversation_id,requester_id,recipient_id,state,introduction,requested_at,updated_at,retry_after"
+    },
+    {
+      "check": "the seed really holds private evidence",
+      "ok": true,
+      "detail": "1 row(s)"
+    },
+    {
+      "check": "the seed really holds a pending request",
+      "ok": true,
+      "detail": "2 request row(s)"
+    },
+    {
+      "check": "every migration this build carries has been applied",
+      "ok": true,
+      "detail": "expected 14,15,16,17,18,19,20,21,22,23,24,25 beyond 13"
+    },
+    {
+      "check": "no migration was skipped",
+      "ok": true,
+      "detail": "13 -> 25"
+    },
+    {
+      "check": "no earlier migration was re-applied or reordered",
+      "ok": true,
+      "detail": "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25"
+    },
+    {
+      "check": "evidence survived byte for byte",
+      "ok": true,
+      "detail": "1 row(s)"
+    },
+    {
+      "check": "requests survived byte for byte",
+      "ok": true,
+      "detail": "2 row(s)"
+    },
+    {
+      "check": "messages survived byte for byte",
+      "ok": true,
+      "detail": "2 row(s)"
+    },
+    {
+      "check": "blocks survived byte for byte",
+      "ok": true,
+      "detail": "0 row(s)"
+    },
+    {
+      "check": "the seed records the identities it created",
+      "ok": true,
+      "detail": "/tmp/brrpbrrp-schema13-seed/seed-manifest.json"
+    },
+    {
+      "check": "the fixture was seeded by the recorded baseline",
+      "ok": true,
+      "detail": "seed fddd1e3f3ef3… vs recorded fddd1e3f3ef3…"
+    },
+    {
+      "check": "the accepted conversation id still resolves",
+      "ok": true,
+      "detail": "count 1, want 1"
+    },
+    {
+      "check": "the private message id still resolves",
+      "ok": true,
+      "detail": "count 1, want 1"
+    },
+    {
+      "check": "the evidence id still resolves",
+      "ok": true,
+      "detail": "count 1, want 1"
+    },
+    {
+      "check": "the pending request still resolves",
+      "ok": true,
+      "detail": "count 1, want 1"
+    },
+    {
+      "check": "the channel message id still resolves",
+      "ok": true,
+      "detail": "count 1, want 1"
+    },
+    {
+      "check": "the accounts still resolve by id",
+      "ok": true,
+      "detail": "count 3, want 3"
+    },
+    {
+      "check": "every request has an attempt identity",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "attempt identities are distinct per row",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "the pending request has one",
+      "ok": true,
+      "detail": "legacy-01a0fa5f-9311-7595-937f-f02c6bd1c54d"
+    },
+    {
+      "check": "the new evidence tables exist",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "an archive taken after the upgrade verifies",
+      "ok": true,
+      "detail": "Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks."
+    },
+    {
+      "check": "the format did not change",
+      "ok": true,
+      "detail": "a changed format would break the old executable's own restore path"
+    },
+    {
+      "check": "deleting asserted rows is reported as a mismatch",
+      "ok": true,
+      "detail": "evidence,messages"
+    }
+  ]
+}
