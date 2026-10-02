@@ -680,5 +680,48 @@ runs, SHA-256 `ff9738e92a7f34732e9f90fbe53d7e7bae08377b2a40a545efe5462ba3c239ee`
   What is different now is that the next occurrence leaves the server's own reason in
   the log instead of a screenshot of a wait.
 
+### 6h. Both browser modes, and the second intermittent the private mode caught
+
+- Full default-mode suite (`BRRP_E2E_PRIVATE_CONVERSATIONS=0`) × 5: **5/5, 25 journeys
+  each, 0 failed, 0 skipped** (125 journeys).
+- Full private-conversations suite (`BRRP_E2E_PRIVATE_CONVERSATIONS=1`): the first run
+  failed one journey — `threads.spec.mjs`, "a thread reply moves only the thread…", a
+  strict-mode violation where `getByText('Unread and archive')` matched both the thread
+  title and the root message body ("A root line for the unread and archive journey").
+  It passed in five default-mode suites because the panel's loaded window decides whether
+  the root is rendered; two more projects run before it in private mode. The assertion
+  now names the title exactly; the rerun is **39 passed, 0 failed, 0 skipped**, and the
+  `threads` project alone was green before the whole suite was repeated.
+- What this establishes: both feature modes are green with the screen-view change, the
+  voice-place change and the diagnostics, on this host, in headless Chromium, with
+  generated media. It establishes nothing about Firefox, WebKit, physical devices or a
+  non-loopback network.
+
+## Owner decisions — 2 October 2026
+
+Recorded from the kickoff prompt's single ask, so each Phase A–C item is closed or
+descoped by a decision rather than by silence.
+
+- **Off-machine copy: not now.** No remote is configured and none is to be created.
+  Phase A.1 stays open, blocked on the owner, and nothing else in A–C depends on it.
+  The consequence is stated plainly: the repository exists on one disk.
+- **External TURN and IPv6: documented limit.** ENG-07 is descoped to "embedded relay
+  only; IPv4 media", to be recorded in the compatibility statement and the roadmap's
+  boundaries.
+- **Message formatting: emphasis and block quotes only.** ENG-08 keeps lists out of v1;
+  the tokenizer change is bounded to what it already parses.
+- **VP8 fallback: acceptable.** ENG-05 registers VP8 as a fallback behind the H.264
+  preference and amends ADR 0019.
+- **Feature gates default-on: before the beta, after review entry.** Both
+  `BRRP_ENABLE_PRIVATE_CONVERSATIONS` and `BRRP_ENABLE_RESTRICTED_CHANNELS` stay off
+  until the independent reviews are entered and their P1s are fixed; the beta then runs
+  the configuration that will ship (Phase C, item 8).
+- **Account limit: 100 for v1.** The 250-account profile is not a v1 requirement; the
+  capacity tooling stays and the larger profile is documented as future work.
+- **Long-lead items: none available yet.** No code-signing certificate, reviewer,
+  accessibility tester, pilot community, Windows or Docker host, phone/UDP-blocked
+  network, off-host storage or second releaser is available today. The gate documents
+  and evidence templates stay ready for whoever can run them (Phases D–I).
+
 
 
