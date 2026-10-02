@@ -129,6 +129,16 @@ try {
 } catch (error) {
   console.error(error);
 } finally {
+  // A failed journey is the one moment the server's own log matters, and this harness
+  // used to discard it: the tail was kept for a readiness failure and thrown away for
+  // everything else, which is exactly backwards. An intermittent join that the browser
+  // reports as a timeout is a *server* event — a refusal, a stalled handshake, a
+  // detached peer — and none of those can be told apart from the screenshot alone.
+  if (exitCode !== 0 && serverOutput.trim()) {
+    console.error(
+      '\n--- server log (tail) ---\n' + serverOutput.trim() + '\n--- end server log ---'
+    );
+  }
   if (server && server.exitCode === null && server.signalCode === null) {
     server.kill('SIGTERM');
     await Promise.race([

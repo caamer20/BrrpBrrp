@@ -36,6 +36,50 @@ func TestTransferKeepsConnectionAndEnforcesRoomIsolation(t *testing.T) {
 	awaitPacket(t, bob, alice, []byte{0xf8, 0xff, 0xfe, 5}, false)
 }
 
+// A person who closes or reloads the tab during a call and comes straight back can
+// rejoin. The old connection's peer is detached — nobody can reach it without its
+// resume token — but it held the account's voice place for the whole 30-second drain,
+// and the new join was answered "you are already in voice, possibly in another tab":
+// false, unactionable, and exactly the state a reload produces (found while chasing
+// the browser journeys' intermittent join, review 17 handoff).
+func TestADetachedPeerDoesNotHoldTheVoicePlace(t *testing.T) {
+	sfu, err := New(Options{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sfu.Close)
+	if err := sfu.Join("alice", "first-tab", "room", 2, func(string, any) {}); err != nil {
+		t.Fatal(err)
+	}
+	detachedToken := sfu.ResumeToken("alice", "first-tab")
+	if detachedToken == "" {
+		t.Fatal("the peer has no resume token")
+	}
+	// The tab goes away without a leave, and the transport cleanup detaches the peer.
+	sfu.Detach("alice", "first-tab")
+
+	// The same account joins again: admitted, in the same room, once.
+	if err := sfu.Join("alice", "second-tab", "room", 2, func(string, any) {}); err != nil {
+		t.Fatalf("a detached peer refused the account's next join: %v", err)
+	}
+	states := sfu.States()
+	if len(states) != 1 || states[0].UserID != "alice" || states[0].ChannelID != "room" {
+		t.Fatalf("the rejoin left %+v", states)
+	}
+	// And the replaced peer is gone rather than parked: the token it held cannot bring
+	// back a second voice place for the same account.
+	if _, err := sfu.Resume("alice", detachedToken, "third-tab", func(string, any) {}); err == nil {
+		t.Fatal("the replaced peer was resumed as a second place")
+	}
+
+	// The control: a peer that still has its signaling connection is still refused,
+	// because two live tabs sharing one account's voice place is the confusion the
+	// refusal exists for.
+	if err := sfu.Join("alice", "fourth-tab", "room", 2, func(string, any) {}); err == nil {
+		t.Fatal("a second live connection took a voice place that was already held")
+	}
+}
+
 func TestResumeOwnershipTokenRotationAndStaleSignaling(t *testing.T) {
 	sfu, err := New(Options{}, nil)
 	if err != nil {

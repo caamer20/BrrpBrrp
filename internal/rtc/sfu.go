@@ -127,6 +127,15 @@ func (p *Peer) emit(kind string, data any) {
 	}
 }
 
+// attached reports whether this peer still has a signaling connection. A detached peer
+// (Detach, when its websocket goes away and its session is still valid) keeps its media
+// connection and its resume token but has no sink, so nothing can be delivered to it.
+func (p *Peer) attached() bool {
+	p.sendMu.RLock()
+	defer p.sendMu.RUnlock()
+	return p.send != nil
+}
+
 type SFU struct {
 	mu             sync.Mutex
 	api            *webrtc.API
@@ -211,9 +220,30 @@ func New(options Options, changed func([]State)) (*SFU, error) {
 
 func (s *SFU) Join(userID, owner, channelID string, capacity int, send func(string, any)) error {
 	s.mu.Lock()
-	if _, exists := s.peers[userID]; exists {
+	// A peer whose signaling connection has gone is *detached*: its sink is nil, its
+	// client is gone, and its resume token is the only way back to it. It must not hold
+	// the account's voice place. Refusing the new connection because of one told a
+	// person who reloaded the page or closed the tab and came straight back "you are
+	// already in voice, possibly in another tab" — false, unactionable, and lasting
+	// exactly as long as the drain window (review 17 handoff; the browser journeys hit
+	// it intermittently as a join that never became a call).
+	//
+	// The loop is written this way because releasing the peer takes the lock that this
+	// decision needs, so it is released, the old peer is torn down, and the decision is
+	// made again on the state that is left: another join racing this one lands here too,
+	// and whichever arrives second sees a peer that now exists and is attached.
+	for {
+		existing := s.peers[userID]
+		if existing == nil {
+			break
+		}
+		if existing.attached() {
+			s.mu.Unlock()
+			return errors.New("you are already in voice, possibly in another tab")
+		}
 		s.mu.Unlock()
-		return errors.New("you are already in voice, possibly in another tab")
+		s.leavePeerOwned(userID, existing, existing.owner)
+		s.mu.Lock()
 	}
 	if len(s.peers) >= MaxServerParticipants {
 		s.mu.Unlock()

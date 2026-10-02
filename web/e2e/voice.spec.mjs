@@ -186,6 +186,28 @@ async function openRoom(page) {
   return panel;
 }
 
+// A failed voice journey is diagnosed from the panel, and the panel used to be thrown
+// away: the store's error text, the screen share's message and the control state are all
+// rendered there, and the failure screenshot only shows the last moment of a long wait.
+// Printing it turns the next intermittent into something with a named cause in the log.
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === 'passed' || testInfo.status === 'skipped') return;
+  const parts = [];
+  for (const [name, locator] of [
+    ['sidebar', page.locator('aside.channel-sidebar .voice-controls')],
+    ['dialog', page.getByRole('dialog')]
+  ]) {
+    const text = await locator
+      .first()
+      .innerText({ timeout: 2000 })
+      .catch(() => '');
+    if (text.trim()) parts.push(`[${name}] ${text.replace(/\s+/g, ' ').trim()}`);
+  }
+  console.log(
+    `VOICE-STATE ${testInfo.title}: ${parts.join(' | ') || '(no voice surface rendered)'}`
+  );
+});
+
 test('withdrawing voice.speak stops the forwarded audio, and returning it resumes', async ({
   page,
   request,

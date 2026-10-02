@@ -901,3 +901,35 @@ browser. The two-browser journey proves the browser half: the viewer's inbound
 decoding stops when the share stops, and decoding resumes on a restart while the sharer
 stays in the call. Neither replaces the other, and neither says anything about a physical
 capture device or a real network path.
+
+
+## A voice place belongs to a live connection, not to a closed tab
+
+`Detach` exists so a short signaling interruption does not cost a call: when a voice
+client's WebSocket goes away and its session is still valid, its peer keeps its media
+connection and its resume token for a thirty-second drain. That part is right. What was
+wrong is what the *next* join was told in the meantime.
+
+`Join` refused any second connection for the same account — "you are already in voice,
+possibly in another tab" — which was written when the only thing that could hold a place
+was a live connection. A detached peer is not that: it has no sink, so nothing can be
+delivered to it; it is unreachable except through a token its own client never persisted;
+and it held the account's place for the whole drain. The reachable case is ordinary:
+reload the page during a call, or close the tab and come straight back, and the rejoin was
+refused for up to thirty seconds with a message naming a tab that no longer exists.
+
+A detached peer is now released when a new join arrives for the same account, and the new
+connection takes the place: `Join` tears the old peer down — closing its media connection,
+withdrawing its publications and telling the room — and admits the newcomer. An *attached*
+peer is still refused, which is the case the refusal was written for: two live tabs
+sharing one account's voice place. The detached peer's resume token dies with it, so a
+client that reconnects its socket after a new tab has joined falls back to a fresh join
+and is refused by whoever arrived second. That ordering is stated rather than preferred,
+and `TestADetachedPeerDoesNotHoldTheVoicePlace` pins both halves: the rejoin that must be
+admitted and the second live tab that must not.
+
+This was found while chasing an intermittent browser-journey failure — a join that never
+became a call, once, in a full-suite run. The journeys have not reproduced it since, in
+twenty-nine suite executions, so the fix is not claimed as its cause. What is claimed is
+the defect the code showed, the test that fails without the fix, and the diagnostics the
+next occurrence will now leave.

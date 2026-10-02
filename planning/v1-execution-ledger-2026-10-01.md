@@ -648,5 +648,37 @@ runs, SHA-256 `ff9738e92a7f34732e9f90fbe53d7e7bae08377b2a40a545efe5462ba3c239ee`
   when a run fails. That is the next step: keep the server's tail on failure, then
   reproduce and read it.
 
+### 6g. A detached peer no longer holds the account's voice place
+
+- **Failing behavior and reproduction.** `TestADetachedPeerDoesNotHoldTheVoicePlace`
+  (new in `internal/rtc/rooms_test.go`): join, `Detach` — what the transport cleanup
+  does when a page's socket goes away and the session is still valid — then join again
+  from a new connection. Before the fix it failed with `a detached peer refused the
+  account's next join: you are already in voice, possibly in another tab`: the place was
+  held for the full 30-second drain, which is exactly what reloading the page during a
+  call produces.
+- **Changed files and reason.** `internal/rtc/sfu.go` — `Join` releases a peer whose
+  signaling connection is gone (`attached()` reports whether a delivery sink exists) and
+  admits the new connection; an attached peer is still refused, and the replaced peer's
+  resume token cannot resurrect a second place for the same account.
+- **Diagnostics added for the next occurrence of the intermittent.** `web/e2e/run.mjs`
+  prints the server's log tail when a suite fails — it kept that tail for readiness
+  failures only, which is backwards, because a join that times out is a server event (a
+  refusal, a stalled handshake, a detached peer) and none of those is visible in a
+  screenshot. `web/e2e/voice.spec.mjs` prints the voice panel's own text for a failed
+  voice journey: the store's error, the screen share's message and the control state.
+- **Commands and results.** `go test ./internal/rtc -count=1` → ok with the fix, and the
+  new test fails without it (message above). After the fix and the diagnostics:
+  `--project=voice` × 20 → **20/20**; the full default-mode suite × 5 → **5/5, 25
+  journeys each, 125 journeys, 0 failed, 0 skipped**; no failure dump was produced in
+  any run, so the intermittent join did **not** reproduce in these 29 suite executions.
+- **What the evidence proves, and what it does not.** It proves a real defect in the
+  join path — a page reloaded during a call cannot rejoin for 30 seconds, and is told a
+  tab that does not exist is holding the call — and that the suites are green with the
+  fix. It does **not** prove this defect caused the single intermittent join seen at
+  HEAD: that mechanism was never reproduced, and the fix is not claimed as its cause.
+  What is different now is that the next occurrence leaves the server's own reason in
+  the log instead of a screenshot of a wait.
+
 
 
