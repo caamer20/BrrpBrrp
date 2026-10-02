@@ -3,9 +3,9 @@
 **Plan date:** 23 September 2026  
 **Planning baseline:** 0.4.0-alpha.3; database schema 2  
 **Status:** Proposed implementation and release contract; owner decisions remain open  
-**Scope of this task:** Documentation only. No application, schema, configuration, dependency, infrastructure or release changes are authorized by this document.
+**Scope of this task:** Documentation only. No application, schema, configuration, dependency, infrastructure or release changes are authorized by this document. *(This constraint governed producing the plan itself. The implementation assignment that followed it, and the tranches recorded in the ledger above, are authorized by their own handoffs: review the ledger and the release record for what exists.)*
 
-> **Current implementation: 0.4.0-alpha.7, schema 25, backup format 2.**
+> **Current implementation: 0.4.0-alpha.8, schema 25, backup format 2.**
 > Roles, migration/recovery, send recovery, account removal, community reporting,
 > slow mode, channel notification muting and opt-in consented DMs/blocking have
 > local implementations. Alpha.5 remains the packaged checkpoint. See the

@@ -51,9 +51,16 @@ func viewerScreens(sfu *SFU, userID string) []*screenForwarder {
 
 // waitFor polls briefly rather than sleeping a fixed time. A fixed sleep makes the
 // test either slow or flaky, and a flaky media test is worse than no media test.
+//
+// The budget is 20 seconds because `go test -race ./...` runs packages in parallel and
+// a local ICE handshake that takes well under a second on an idle machine was seen to
+// miss a 5-second window under that load (review 17 handoff sweep, 0.4.0-alpha.8: one
+// `peer failed to connect` in a run where the same tests pass 6/6 and in the full
+// non-race sweep). The wait is a poll, so a healthy handshake is not delayed by this;
+// only a genuinely stuck one reports later.
 func waitFor(t *testing.T, what string, ready func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if ready() {
 			return

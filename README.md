@@ -14,20 +14,23 @@ Windows host, no Docker, no PowerShell and no Tailscale peer.
 
 The packaged **0.4.0-alpha.5** checkpoint adds message reporting, channel slow mode, per-channel notification muting, explicit recovery for failed sends, and account removal that keeps conversation history under “Deleted member.” It includes focused reply discussions, a keyboard channel picker, roles and channel access controls. See the [community guide](docs/community-guide.md), [alpha.5 release record](docs/releases/0.4.0-alpha.5.md) and [verification](docs/acceptance.md).
 
-The current source candidate **0.4.0-alpha.7** is at **schema 21**. It adds, on top of
+The current source candidate **0.4.0-alpha.8** is at **schema 25**. It adds, on top of
 opt-in consented direct messaging, groups and group chat, an activity inbox with
 notification preferences, named community threads, private calls and screen sharing,
 member moderation (report assignment and expiring timeouts), a member's own data
 export, and operator alerts that report whether they were *delivered* rather than
-merely configured.
+merely configured. On top of alpha.7 it carries per-operation retry identity for
+uncertain replies, export delivery that is re-authorized per request, a thread's own
+reading position and bounded window, and a screen path whose audio is a publication of
+its own.
 
-**Read [the alpha.7 record](docs/releases/0.4.0-alpha.7.md) first, and its "Known
+**Read [the alpha.8 record](docs/releases/0.4.0-alpha.8.md) first, and its "Known
 issues" section above all.** It is the shortest honest account of what this candidate
 is: what has been verified, and what has not. In summary — the private features remain
 **default-off and have never been qualified on either required deployment**, no
 capacity or soak measurement exists, no physical microphone or blocked-UDP call has
-been exercised, and no independent review or beta has happened. Nothing here has been
-published.
+been exercised, no browser viewer decodes a shared screen yet, and no independent
+review or beta has happened. Nothing here has been published.
 
 Policies worth reading before changing any of it: the [private conversation
 policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md), the

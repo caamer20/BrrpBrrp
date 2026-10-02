@@ -33,11 +33,13 @@ jobs:
       - run: npm run build
         working-directory: web
       - run: go vet ./...
-      # The API package alone takes just over 20 minutes under -race on this
-      # suite, so a 20m budget failed intermittently with "test timed out" rather
-      # than reporting a real failure. The margin here is deliberate: a timeout
-      # that races the runtime hides the signal it exists to provide.
-      - run: go test -race -timeout 40m ./...
+      # The API package alone takes about 40 minutes under -race in a parallel
+      # package sweep, so the budget is 60 minutes: it was raised from 20 for a
+      # timeout that raced the runtime, and a first measured sweep at schema 25 hit
+      # 2402s against a 40m budget while reporting no failure of its own
+      # (0.4.0-alpha.8). The margin is deliberate: a timeout that races the runtime
+      # hides the signal it exists to provide.
+      - run: go test -race -timeout 60m ./...
       - run: go build ./cmd/brrpbrrp
       # The released binary redistributes these dependencies, so the notices must
       # match them: a stale file or an unreadable license fails here.

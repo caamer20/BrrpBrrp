@@ -1,11 +1,12 @@
 # v1 implementation progress and evidence ledger
 
-**Last updated:** 28 September 2026 (P10 tranche; review 11)
+**Last updated:** 1 October 2026 (review-17 handoff, first tranche)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.7** (schema **21**, backup format **2**)
+**Candidate:** **0.4.0-alpha.8** (schema **25**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
-**Current evidence:** [alpha.7 release record](releases/0.4.0-alpha.7.md)
-**Prior packaged checkpoint:** [alpha.6](releases/0.4.0-alpha.6.md)
+**Current evidence:** [alpha.8 release record](releases/0.4.0-alpha.8.md)
+**Prior candidate:** [alpha.7](releases/0.4.0-alpha.7.md)
+**Execution ledger:** [planning/v1-execution-ledger-2026-10-01.md](../planning/v1-execution-ledger-2026-10-01.md)
 **Historical finding record:** [completion-remediation-2026-09-24.md](completion-remediation-2026-09-24.md)
 **Assessment:** substantial local implementation progress; no G0–G8 release gate has passed. Earlier dated reviews describe their inspected snapshot. They do not override this candidate's implementation or supply missing host/independent acceptance.
 

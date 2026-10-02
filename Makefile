@@ -7,7 +7,11 @@ build: web
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags='-s -w' -o dist/brrpbrrp ./cmd/brrpbrrp
 test: web
 	cd web && npm test
-	$(GO) test -race -count=1 -timeout 40m ./...
+	# 60 minutes, not 40: `go test -race ./...` runs the packages in parallel, and the
+	# API package alone took 2402s (just past a 40m budget) on this tree's first
+	# measured sweep — a timeout that reports nothing about the code
+	# (0.4.0-alpha.8, review 17 handoff).
+	$(GO) test -race -count=1 -timeout 60m ./...
 check: web
 	$(GO) vet ./...
 	cd web && npm run check && npm run format:check
