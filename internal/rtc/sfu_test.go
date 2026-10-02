@@ -31,6 +31,15 @@ type testPeer struct {
 	timestamp uint32
 }
 
+// handshakeBudget is how long the harness waits for a local ICE handshake, or for a
+// notification that follows one. It is 20 seconds because `go test -race ./...` runs
+// packages in parallel: a handshake that completes in well under a second on an idle
+// machine was seen to miss a 5-second window under that load, and a "peer failed to
+// connect" that is really "the machine was busy" is a flake that teaches nothing
+// (0.4.0-alpha.8, review 17 handoff). Every use is a poll, so a healthy handshake is
+// not delayed; only a genuinely stuck one reports later.
+const handshakeBudget = 20 * time.Second
+
 func connectPeer(t *testing.T, sfu *SFU, id, room string) *testPeer {
 	return connectPeerWithCapacity(t, sfu, id, room, 2)
 }
@@ -126,13 +135,13 @@ func connectPeerWithCapacity(t *testing.T, sfu *SFU, id, room string, capacity i
 	}
 	select {
 	case <-gathered:
-	case <-time.After(5 * time.Second):
+	case <-time.After(handshakeBudget):
 		t.Fatal("ICE gathering timed out")
 	}
 	if err := sfu.Signal(id, id, Signal{SDP: pc.LocalDescription()}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.NewTimer(5 * time.Second)
+	deadline := time.NewTimer(handshakeBudget)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -155,7 +164,7 @@ func awaitJoin(t *testing.T, peer *testPeer, userID, channelID string) {
 		if event.UserID != userID || event.ChannelID != channelID {
 			t.Fatalf("unexpected join: %+v", event)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(handshakeBudget):
 		t.Fatal("join notification was not delivered")
 	}
 }

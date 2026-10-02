@@ -33,8 +33,37 @@ func newTestSFU(t *testing.T) *SFU {
 		for _, peer := range peers {
 			_ = peer.pc.Close()
 		}
+		// Closing a connection removes its peer from Pion's own goroutine, and a
+		// callback belonging to this finished test deleted from the map while the next
+		// test was reading it (race sweep, 0.4.0-alpha.8). Waiting for the removals
+		// makes teardown deterministic instead of hopeful.
+		deadline := time.Now().Add(handshakeBudget)
+		for time.Now().Before(deadline) {
+			sfu.mu.Lock()
+			remaining := len(sfu.peers)
+			sfu.mu.Unlock()
+			if remaining == 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	})
 	return sfu
+}
+
+// sfuPeer returns the SFU's peer for an id under the SFU's own lock. Tests that read
+// the map directly raced with the deletion `leavePeerOwned` performs from Pion's
+// connection-state goroutine — a read the race detector flagged (0.4.0-alpha.8).
+// Callers must not already hold sfu.mu.
+func sfuPeer(t *testing.T, sfu *SFU, id string) *Peer {
+	t.Helper()
+	sfu.mu.Lock()
+	defer sfu.mu.Unlock()
+	found, ok := sfu.peers[id]
+	if !ok {
+		t.Fatalf("the SFU has no peer %q", id)
+	}
+	return found
 }
 
 // viewerScreens copies a peer's video outputs under the SFU lock, so a test never
@@ -50,17 +79,12 @@ func viewerScreens(sfu *SFU, userID string) []*screenForwarder {
 }
 
 // waitFor polls briefly rather than sleeping a fixed time. A fixed sleep makes the
-// test either slow or flaky, and a flaky media test is worse than no media test.
-//
-// The budget is 20 seconds because `go test -race ./...` runs packages in parallel and
-// a local ICE handshake that takes well under a second on an idle machine was seen to
-// miss a 5-second window under that load (review 17 handoff sweep, 0.4.0-alpha.8: one
-// `peer failed to connect` in a run where the same tests pass 6/6 and in the full
-// non-race sweep). The wait is a poll, so a healthy handshake is not delayed by this;
-// only a genuinely stuck one reports later.
+// test either slow or flaky, and a flaky media test is worse than no media test. The
+// budget is the harness's `handshakeBudget` (see sfu_test.go): the wait is a poll, so
+// a healthy result is not delayed by it, and only a genuinely stuck one reports later.
 func waitFor(t *testing.T, what string, ready func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(handshakeBudget)
 	for time.Now().Before(deadline) {
 		if ready() {
 			return
@@ -142,7 +166,7 @@ func TestASecondScreenInOneRoomIsRefusedWithAReason(t *testing.T) {
 	})
 	sfu.mu.Unlock()
 
-	err := sfu.renegotiate(sfu.peers["ana"], Signal{
+	err := sfu.renegotiate(sfuPeer(t, sfu, "ana"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationScreenVideo,
 	})
 	if err == nil {
@@ -159,7 +183,7 @@ func TestASecondScreenInOneRoomIsRefusedWithAReason(t *testing.T) {
 	waitFor(t, "bo to connect", func() bool {
 		return sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
 	})
-	boError := sfu.renegotiate(sfu.peers["bo"], Signal{
+	boError := sfu.renegotiate(sfuPeer(t, sfu, "bo"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationScreenVideo,
 	})
 	if boError == nil {
@@ -175,7 +199,7 @@ func TestASecondScreenInOneRoomIsRefusedWithAReason(t *testing.T) {
 	waitFor(t, "cy to connect", func() bool {
 		return sfu.connectionStateOf("cy") == webrtc.PeerConnectionStateConnected
 	})
-	third := sfu.renegotiate(sfu.peers["cy"], Signal{
+	third := sfu.renegotiate(sfuPeer(t, sfu, "cy"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationScreenVideo,
 	})
 	if third == nil {
@@ -209,13 +233,13 @@ func TestAMutedMicrophoneDoesNotFreezeTheScreen(t *testing.T) {
 		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
 	})
 	sfu.mu.Unlock()
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatalf("the viewer could not create a screen output: %v", err)
 	}
 
 	// A frame before the microphone is muted.
 	before := sfu.publishedScreenFrames()
-	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(1))
+	sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, screenFrame(1))
 
 	// Ana mutes her microphone, as she would when someone talks over her. `SetState`
 	// is what the client calls; the third argument is deafened, which stays false.
@@ -229,7 +253,7 @@ func TestAMutedMicrophoneDoesNotFreezeTheScreen(t *testing.T) {
 
 	// A frame after. The screen is still the same screen, still live, and still
 	// published - a member's own push-to-mute cannot stop what everyone is watching.
-	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(2))
+	sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, screenFrame(2))
 
 	if got := sfu.publishedScreenFrames(); got != before+2 {
 		t.Fatalf("the viewer received %d screen frames across the mute, want %d", got, before+2)
@@ -252,19 +276,19 @@ func TestAWithdrawnPermissionStopsALiveScreen(t *testing.T) {
 		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
 	})
 	sfu.mu.Unlock()
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatalf("the viewer could not create a screen output: %v", err)
 	}
 
 	before := sfu.publishedScreenFrames()
-	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(1))
+	sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, screenFrame(1))
 	if got := sfu.publishedScreenFrames(); got != before+1 {
 		t.Fatalf("the viewer received %d frames before the withdrawal, want %d", got, before+1)
 	}
 
 	// A moderator withdraws the permission while the share is live.
 	sfu.SetSpeakAllowed("ana", "ana", false)
-	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, screenFrame(2))
+	sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, screenFrame(2))
 
 	if got := sfu.publishedScreenFrames(); got != before+1 {
 		t.Fatalf("the viewer received %d frames after the permission was withdrawn, want the share stopped at %d", got, before+1)
@@ -281,7 +305,7 @@ func TestSpeakPermissionGatesAScreenToo(t *testing.T) {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
 	})
 	sfu.SetSpeakAllowed("ana", "ana", false)
-	if err := sfu.renegotiate(sfu.peers["ana"], Signal{
+	if err := sfu.renegotiate(sfuPeer(t, sfu, "ana"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationScreenVideo,
 	}); err == nil {
 		t.Fatal("a member who may not speak published a screen")
@@ -290,7 +314,7 @@ func TestSpeakPermissionGatesAScreenToo(t *testing.T) {
 	sfu.SetSpeakAllowed("ana", "ana", true)
 	// The remaining failure now is the SDP exchange, not the permission — which is
 	// what proves the permission is no longer the blocker.
-	err := sfu.renegotiate(sfu.peers["ana"], Signal{
+	err := sfu.renegotiate(sfuPeer(t, sfu, "ana"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationScreenVideo,
 	})
 	if err != nil && err.Error() == "you may listen but not share in this channel" {
@@ -416,7 +440,7 @@ func TestAMemberWhoReplacesTheirMicrophoneCanRenegotiateAndBeHeard(t *testing.T)
 	})
 	connectionID := sfu.connectionIDFor("ana")
 	// The server's own view of the peer, which is what the offer must release.
-	ana := sfu.peers["ana"]
+	ana := sfuPeer(t, sfu, "ana")
 
 	// A live microphone is claimed by the connection.
 	ana.receiving.Store(true)
@@ -470,12 +494,12 @@ func TestASecondOfferMustSayWhatItIsAdding(t *testing.T) {
 	waitFor(t, "ana to connect", func() bool {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
 	})
-	if err := sfu.renegotiate(sfu.peers["ana"], Signal{
+	if err := sfu.renegotiate(sfuPeer(t, sfu, "ana"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""},
 	}); err == nil {
 		t.Fatal("a second offer with no publication was admitted")
 	}
-	if err := sfu.renegotiate(sfu.peers["ana"], Signal{
+	if err := sfu.renegotiate(sfuPeer(t, sfu, "ana"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationKind("hologram"),
 	}); err == nil {
 		t.Fatal("an unknown publication kind was admitted")
@@ -489,7 +513,7 @@ func TestScreenAudioRequiresAScreen(t *testing.T) {
 	waitFor(t, "ana to connect", func() bool {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
 	})
-	if err := sfu.renegotiate(sfu.peers["ana"], Signal{
+	if err := sfu.renegotiate(sfuPeer(t, sfu, "ana"), Signal{
 		SDP: &webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: ""}, Publication: PublicationScreenAudio,
 	}); err == nil {
 		t.Fatal("screen audio was published with no screen")
@@ -578,12 +602,12 @@ func TestScreenPacketsReachAnotherParticipant(t *testing.T) {
 	if viewerOutputs != 0 {
 		t.Fatalf("the viewer has %d screen outputs before asking for one", viewerOutputs)
 	}
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatalf("the viewer could not create a screen output: %v", err)
 	}
 
 	// Feed real video RTP through the forwarder.
-	output := sfu.peers["bo"].screens[0]
+	output := sfuPeer(t, sfu, "bo").screens[0]
 	for index := range 30 {
 		output.write("ana", &rtp.Packet{
 			Header:  rtp.Header{Version: 2, SequenceNumber: uint16(index), Timestamp: uint32(index) * 3000, Marker: index%30 == 0},
@@ -608,10 +632,10 @@ func TestScreenPacketsReachAnotherParticipant(t *testing.T) {
 func TestARestartedScreenDoesNotInheritThePreviousTimeline(t *testing.T) {
 	sfu := newTestSFU(t)
 	connectPeer(t, sfu, "bo", "room")
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatal(err)
 	}
-	output := sfu.peers["bo"].screens[0]
+	output := sfuPeer(t, sfu, "bo").screens[0]
 	// A first source running for a long time: its timeline is deliberately far from
 	// zero, so a restart that wrongly continued from it would be obvious.
 	output.write("ana", &rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 900000}})
@@ -639,7 +663,7 @@ func TestAStoppedScreenForwardsNothing(t *testing.T) {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
 			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
 	})
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatal(err)
 	}
 	sfu.mu.Lock()
@@ -647,7 +671,7 @@ func TestAStoppedScreenForwardsNothing(t *testing.T) {
 		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
 	})
 	sfu.mu.Unlock()
-	sharer := sfu.peers["ana"]
+	sharer := sfuPeer(t, sfu, "ana")
 
 	// While live, the packet reaches the viewer's forwarder.
 	sfu.forwardPublication(sharer, PublicationScreenVideo, &rtp.Packet{
@@ -684,7 +708,7 @@ func TestAVideoPacketNeverReachesTheAudioForwarder(t *testing.T) {
 		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected &&
 			sfu.connectionStateOf("bo") == webrtc.PeerConnectionStateConnected
 	})
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatal(err)
 	}
 	sfu.mu.Lock()
@@ -692,7 +716,7 @@ func TestAVideoPacketNeverReachesTheAudioForwarder(t *testing.T) {
 		ID: "s1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
 	})
 	sfu.mu.Unlock()
-	sfu.forwardPublication(sfu.peers["ana"], PublicationScreenVideo, &rtp.Packet{
+	sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, &rtp.Packet{
 		Header: rtp.Header{Version: 2, SequenceNumber: 1, Timestamp: 0},
 	})
 	// The audio outputs are untouched by a video packet. The peer list is read under
@@ -1451,7 +1475,7 @@ func TestAViewerReceivesOnlyThePublicationTheirOutputIsFor(t *testing.T) {
 		ID: "v1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC(),
 	})
 	sfu.mu.Unlock()
-	if err := sfu.peers["bo"].addScreenOutput(); err != nil {
+	if err := sfuPeer(t, sfu, "bo").addScreenOutput(); err != nil {
 		t.Fatalf("the viewer could not create a screen output: %v", err)
 	}
 
@@ -1598,7 +1622,7 @@ func TestAPublicationThatCannotBeNegotiatedIsNotLeftRegistered(t *testing.T) {
 	})
 
 	before := len(sfu.Publications("room"))
-	viewer := sfu.peers["bo"]
+	viewer := sfuPeer(t, sfu, "bo")
 	// An offer with no SDP cannot be answered. The room must hold no more publications
 	// than it did, and the one-screen allowance must still be available to somebody else.
 	// A structurally invalid offer: Pion applies it and refuses. This is the failure
@@ -1622,7 +1646,7 @@ func TestAPublicationThatCannotBeNegotiatedIsNotLeftRegistered(t *testing.T) {
 	// The permitted control: the allowance is still available, so a refusal above did
 	// not merely avoid registering — it left the room in a state where somebody else can
 	// actually share. A fix that refused everything would pass the assertion above.
-	owner := sfu.peers["ana"]
+	owner := sfuPeer(t, sfu, "ana")
 	if err := owner.addScreenOutputOfKind(PublicationScreenVideo); err != nil {
 		t.Fatal(err)
 	}
