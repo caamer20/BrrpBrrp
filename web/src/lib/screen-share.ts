@@ -33,6 +33,96 @@ export function canShareScreen(): boolean {
 }
 
 /**
+ * The two capture profiles the product offers, as data rather than as code paths.
+ *
+ * A screen showing movement and a screen showing text are different pictures with
+ * different costs, and one profile cannot serve both: a film at 5 fps is a slideshow,
+ * and a document at 15 fps spends four times the bandwidth on a still image. The
+ * motion preset therefore asks for 720p at 15 fps and lets the encoder drop resolution
+ * under pressure, and the text preset asks for 1080p at 5 fps and tells the encoder to
+ * keep the resolution and drop frames instead — a blurred frame of text is unreadable,
+ * a late one is merely late.
+ *
+ * `parameters.maxBitrate` is the sender's own ceiling and sits below the server's
+ * per-publication ceiling (`ScreenBitrateCeiling`, 2.5 Mbit/s): a client that obeys its
+ * cap never meets the server's enforcement, which is what makes that enforcement a
+ * bound on a misbehaving publisher rather than on everybody.
+ */
+export type ScreenPreset = 'motion' | 'text';
+
+export interface ScreenPresetSpec {
+  id: ScreenPreset;
+  label: string;
+  /** What the picker is asked for. Ideals, not requirements: a screen of another size
+   * is shared at its own size rather than refused. */
+  constraints: MediaTrackConstraints;
+  /** The encoding's ceiling and rate, applied to the live sender. */
+  encoding: RTCRtpEncodingParameters;
+  /** How the encoder degrades when it cannot keep up. It belongs to the send
+   * parameters rather than to an encoding, and it is what separates "keep the
+   * resolution, drop frames" from "keep the frame rate, blur the text". */
+  degradationPreference: RTCDegradationPreference;
+  /** Advisory, for the encoder: what the pixels are for. */
+  contentHint: 'motion' | 'text';
+}
+
+export const SCREEN_PRESETS: Record<ScreenPreset, ScreenPresetSpec> = {
+  motion: {
+    id: 'motion',
+    label: 'Motion — 720p at 15 fps',
+    constraints: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15 } },
+    encoding: { maxBitrate: 2_000_000, maxFramerate: 15 },
+    degradationPreference: 'balanced',
+    contentHint: 'motion'
+  },
+  text: {
+    id: 'text',
+    label: 'Text — 1080p at 5 fps',
+    constraints: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 5 } },
+    encoding: { maxBitrate: 2_000_000, maxFramerate: 5 },
+    degradationPreference: 'maintain-resolution',
+    contentHint: 'text'
+  }
+};
+
+/**
+ * Reads a preset out of stored text, falling back to motion.
+ *
+ * A preference is a string in storage, and storage is editable: a value this build does
+ * not know must not produce a share with no profile at all.
+ */
+export function screenPresetFromValue(value: string | null | undefined): ScreenPreset {
+  return Object.prototype.hasOwnProperty.call(SCREEN_PRESETS, value ?? '')
+    ? (value as ScreenPreset)
+    : 'motion';
+}
+
+/**
+ * Applies a preset to a sender that already exists, which is what makes the choice
+ * effective *during* a share rather than only at the next one.
+ *
+ * Best-effort by construction: a browser that refuses one of the parameters still
+ * shares the screen, and the caller is told whether the full preset took hold so the
+ * interface can say what is actually happening instead of what was asked for.
+ */
+export async function applyScreenPreset(
+  sender: RTCRtpSender,
+  preset: ScreenPreset
+): Promise<boolean> {
+  const spec = SCREEN_PRESETS[preset];
+  try {
+    const parameters = sender.getParameters();
+    if (!parameters.encodings || parameters.encodings.length === 0) return false;
+    parameters.encodings[0] = { ...parameters.encodings[0], ...spec.encoding };
+    parameters.degradationPreference = spec.degradationPreference;
+    await sender.setParameters(parameters);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Why a refusal happened, as far as the browser will say.
  *
  * `NotAllowedError` covers both "the user said no" and "the user dismissed the
@@ -80,8 +170,16 @@ export function classifyCaptureFailure(error: unknown): ScreenShareResult {
  * wrong. `systemAudio` is requested but not required — plenty of platforms and
  * browsers do not provide it, and asking for it as a requirement would make screen
  * sharing fail outright for people whose only path to it is the video.
+ *
+ * The preset shapes the request: a share meant to show movement is asked for at a
+ * lower resolution and a human frame rate, and one meant to show text at a higher
+ * resolution and a lower one, because those are different pictures with different
+ * costs (see `SCREEN_PRESETS`).
  */
-export async function requestScreen(includeSystemAudio = false): Promise<ScreenShareResult> {
+export async function requestScreen(
+  includeSystemAudio = false,
+  preset: ScreenPreset = 'motion'
+): Promise<ScreenShareResult> {
   if (!canShareScreen()) {
     return {
       state: 'unsupported',
@@ -89,10 +187,11 @@ export async function requestScreen(includeSystemAudio = false): Promise<ScreenS
         'This browser cannot share a screen. Screen sharing works in current Chrome, Edge and Firefox on a secure connection.'
     };
   }
+  const spec = SCREEN_PRESETS[preset];
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
+      video: spec.constraints,
       // Requested, not required. A browser that cannot provide system audio still
       // returns a video-only stream rather than failing the whole call.
       ...(includeSystemAudio ? { audio: true } : {})
@@ -104,6 +203,15 @@ export async function requestScreen(includeSystemAudio = false): Promise<ScreenS
   if (!video) {
     stream.getTracks().forEach((track) => track.stop());
     return { state: 'failed', error: 'The browser returned a stream with no screen in it.' };
+  }
+  // The content hint tells the encoder what the picture is *for*. It is advisory and
+  // some browsers ignore it, which is why it is not the only thing that distinguishes
+  // the presets — the resolution, the frame rate and the sender's ceiling are all
+  // applied regardless.
+  try {
+    video.contentHint = spec.contentHint;
+  } catch {
+    /* A browser that does not take a hint shares anyway. */
   }
   return { state: 'sharing', stream, label: video.label };
 }

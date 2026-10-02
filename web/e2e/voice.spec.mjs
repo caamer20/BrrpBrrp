@@ -339,6 +339,7 @@ test('a screen share is offered, and every refusal is explained', async ({ page 
   });
 
   // The share control belongs to a joined call, so the journey joins one first.
+  await capturePeers(page);
   await joinVoice(page, OWNER);
   const share = sidebarVoice(page).getByRole('button', { name: 'Share screen' });
   await expect(share).toBeVisible();
@@ -363,6 +364,37 @@ test('a screen share is offered, and every refusal is explained', async ({ page 
   await expect(
     sidebarVoice(page).getByText(/Everyone in the conversation can see it/)
   ).toBeVisible();
+
+  // The quality preset is applied to the live sender, not merely remembered: the
+  // ceiling and the degradation preference are what make "text" a different stream on
+  // the wire, and a choice that never left the interface would look identical here.
+  const senderCeiling = () =>
+    page.evaluate(() => {
+      for (const peer of window.__brrpPeers ?? []) {
+        for (const sender of peer.getSenders()) {
+          if (sender.track?.kind !== 'video') continue;
+          return sender.getParameters().encodings?.[0]?.maxBitrate ?? 0;
+        }
+      }
+      return 0;
+    });
+  await expect.poll(senderCeiling).toBe(2_000_000);
+  // And switching presets reaches that same sender while the share is running.
+  await sidebarVoice(page).getByLabel('Screen share quality').selectOption('text');
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        for (const peer of window.__brrpPeers ?? []) {
+          for (const sender of peer.getSenders()) {
+            if (sender.track?.kind !== 'video') continue;
+            return sender.getParameters().encodings?.[0]?.maxFramerate ?? 0;
+          }
+        }
+        return 0;
+      })
+    )
+    .toBe(5);
+
   const stop = sidebarVoice(page).getByRole('button', { name: 'Stop sharing screen' });
   await expect(stop).toBeVisible();
   await stop.click();

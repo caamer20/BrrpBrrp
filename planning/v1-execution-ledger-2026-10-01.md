@@ -901,5 +901,84 @@ ENG-02 is the row this tranche closes.
   printed the server log, which showed nothing but startup. It is recorded here as an
   unexplained single occurrence rather than as a fixed defect.
 
+## Tranche 9 — ENG-03: screen presets and the server-side ceiling
+
+**Source and dirty state before the tranche.** HEAD `2331fe4` (ENG-02 committed),
+working tree clean, application 0.4.0-alpha.8, schema 25, backup format 2. The owner's
+decisions from 2 October apply: emphasis-only formatting (lists deferred), a VP8
+fallback is acceptable, the gates open before the beta after review entry, 100 accounts
+for v1, external TURN/IPv6 documented as a limit.
+
+### 9a. Two capture profiles, as data
+
+- **What and why.** A plan-required profile: 720p at 15 fps for movement, 1080p at 5 fps
+  for text, a sender bitrate cap, and a server-side per-publisher ceiling so a share
+  cannot starve voice. One profile cannot serve both pictures: a film at 5 fps is a
+  slideshow, a document at 15 fps spends four times the bandwidth on a still image, and
+  the text preset therefore keeps resolution and drops frames while the motion preset
+  does the opposite.
+- **Changed files and reason.** `web/src/lib/screen-share.ts` — `SCREEN_PRESETS` (capture
+  constraints, encoding cap and rate, degradation preference, content hint),
+  `requestScreen(…, preset)`, `applyScreenPreset(sender, preset)`,
+  `screenPresetFromValue`. `web/src/lib/voice.svelte.ts` — the choice is state, is
+  passed to the capture, is applied to the sender once it exists, and can be changed
+  *during* a share (the live sender is re-parameterized and the capture re-asked).
+  `web/src/lib/components/VoiceControls.svelte` — a native select beside the share
+  control, so keyboard, screen-reader and phone behaviour come with it.
+  `web/tests/voice-state.test.mjs` — its prelude stubs the module seam the store touches
+  in a class-field initializer, because that runs before any test.
+- **Commands and results.** `npm --prefix web test` → **310/310** (was 304; six preset
+  tests added); `npm --prefix web run check` → 0 errors, 0 warnings (it caught
+  `degradationPreference`, which belongs to the send parameters rather than to an
+  encoding, before the browser did); `format:check` clean.
+- **What the unit tests assert, and their controls.** The table's numbers are the
+  plan's; every sender ceiling sits below the server's 2.5 Mbit/s, so a client that
+  obeys its cap never meets the enforcement; `requestScreen` asks for the preset's
+  constraints and *not* for audio unless it was requested; applying a preset writes the
+  ceiling and the degradation preference and leaves a field it does not speak about
+  (`rid`) alone; a sender that refuses the parameters, or has no encodings, is reported
+  as `false` rather than thrown; an unknown stored preference falls back to motion
+  (including `constructor`, because storage is editable).
+
+### 9b. The ceiling is enforced where every packet passes once
+
+- **Changed files and reason.** `internal/rtc/bitrate.go` — `bitrateMeter` (a token
+  bucket over payload bytes, one second of credit for the burst a keyframe arrives as,
+  policing rather than shaping so an over-budget stream cannot queue without bound),
+  `ScreenBitrateCeiling` (2.5 Mbit/s) and `ScreenAudioBitrateCeiling` (64 kbit/s) from
+  the plan's initial profile, `Peer.admit`, and `SFU.bitrateDrops` for the count an
+  operator surface will read (ENG-14). `internal/rtc/sfu.go` — `forwardPublication`
+  polices screen video and screen audio **before** the packet is copied to any viewer,
+  which is the only point every packet passes exactly once; the microphone is not
+  metered at all, because it is the call and is bounded by the slot forwarder and by
+  `voice.speak`.
+- **Commands and results.** `go test ./internal/rtc -count=1` → ok (12.6 s); `-race` →
+  ok (29.8 s); `go vet ./...` clean; `go test ./... -count=1` → all packages ok.
+- **Tests and controls.** The meter's refill, burst cap and drop arithmetic on an
+  injected clock; a publisher 480 kB into a 312 kB burst is bounded with drops > 0; the
+  permitted control — 60 kB in one burst is forwarded in full with zero drops, so
+  "refuse everything" does not pass; screen audio's ceiling is separate and does not
+  drop video packets; the microphone has no meter.
+- **What it does not prove.** The packets are synthetic RTP in one process: nothing here
+  pushed a real encoder past 2.5 Mbit/s, and no browser was observed reacting to a
+  dropped frame. The plan's qualification for the viewer/bitrate profile still needs the
+  reference hardware and a lossy network.
+
+### 9c. The choice reaches the wire, in a browser
+
+- The screen-offer journey now reads the live sender's parameters after sharing
+  (2 000 000 bps) and after switching to the text preset (5 fps), and gains
+  `capturePeers(page)` so it can read the connection it is asserting about. Journey time
+  ~2.7 s.
+- The screen-audio sender is capped at 64 kbit/s from the client as well, so a browser
+  that can carry the sound is also told not to exceed what the server will forward.
+- Both browser modes against the final artifact (`dist/brrpbrrp-e2e` sha256
+  `340befd7b16ec0c427dc2b88202ccb4fc43f9a4254afcc3d988466799285b454`): default mode
+  **25 passed**, private mode **39 passed**, 0 failed and 0 skipped in either.
+- What this does not prove: the capture is a canvas stub, so the *resolution* the preset
+  asks for is visible only in the constraints the stub received (asserted in the unit
+  test), not in an encoded frame; and the ceiling is proven at the RTP boundary, not
+  against a real encoder's output.
+
 
 

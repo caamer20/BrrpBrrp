@@ -23,8 +23,19 @@ const document = {addEventListener:()=>{}};
 const errorMessage = error => String(error);
 class VoiceChime {stop(){}}
 export const workspace = {state:{channels:[{id:'old',type:'voice',max_voice_users:10},{id:'new',type:'voice',max_voice_users:10}],voice_states:[]},connection:'connected',user:{id:'me'},events:[],sendEvent(type,data){this.events.push({type,data});}};
+// The screen-share module is stubbed at the seam the store uses at construction time.
+// A class field initializer runs before any test, so an undefined name here fails the
+// whole file rather than the one test that would have reached it.
+export const SCREEN_PRESETS = {
+  motion: {id:'motion', label:'Motion — 720p at 15 fps', constraints:{}, parameters:{}},
+  text: {id:'text', label:'Text — 1080p at 5 fps', constraints:{}, parameters:{}}
+};
+export const screenPresetFromValue = value => (value === 'text' ? 'text' : 'motion');
+export const presetApplications = [];
+export const applyScreenPreset = async (sender, preset) => { presetApplications.push(preset); return true; };
+export const storedValues = {};
 `;
-const { Voice, workspace, setCapture } = await import(
+const { Voice, workspace, setCapture, presetApplications } = await import(
   'data:text/javascript;base64,' + Buffer.from(prelude + compiled).toString('base64')
 );
 
@@ -302,4 +313,28 @@ test('the element going away does not leave the model pointing at a detached nod
   const replacement = videoElement();
   voice.bindScreenElement(replacement);
   assert.equal(replacement.srcObject, stream);
+});
+
+// Choosing a capture profile applies it where it matters. A preference that is only
+// remembered would change the *next* share, which is the wrong answer for the person
+// who switches because they cannot read the text in front of them now (ENG-03).
+test('choosing a preset applies it to the share that is running', async () => {
+  const { voice } = connected();
+  presetApplications.length = 0;
+  voice.screenState = 'sharing';
+  voice.screenSender = {
+    getParameters: () => ({ encodings: [{}] }),
+    setParameters: async () => {}
+  };
+  voice.screenStream = { getVideoTracks: () => [{ applyConstraints: async () => {} }] };
+  await voice.setScreenPreset('text');
+  assert.equal(voice.screenPreset, 'text');
+  assert.deepEqual(presetApplications, ['text'], 'the live sender was not re-parameterized');
+
+  // The control: with no share in progress the choice is remembered for the next one
+  // and nothing is applied to a sender that is not there.
+  voice.screenState = 'idle';
+  await voice.setScreenPreset('motion');
+  assert.equal(voice.screenPreset, 'motion');
+  assert.deepEqual(presetApplications, ['text']);
 });

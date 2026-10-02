@@ -7,13 +7,17 @@ import { VoiceChime } from './voice-chime';
 import { describePath } from './connection-path';
 import { VIEW_STREAM_ID, isViewOnlyTrack } from './screen-receive';
 import {
+  applyScreenPreset,
   canShareScreen,
   onCaptureEnded,
+  SCREEN_PRESETS,
   screenAudioMessage,
   screenAudioOutcome,
   requestScreen,
+  screenPresetFromValue,
   screenShareMessage,
   stopScreen,
+  type ScreenPreset,
   type ScreenShareState,
   captureStillWanted,
   type CaptureAudience
@@ -63,6 +67,11 @@ class Voice {
   private publishedScreenAudio = false;
   /** Whether the operator asked for system audio with the screen. */
   wantSystemAudio = $state(false);
+  /**
+   * Which capture profile the next share uses, remembered across calls because it is a
+   * property of what somebody shares (a document, or a video) rather than of the call.
+   */
+  screenPreset = $state<ScreenPreset>(screenPresetFromValue(storage.getItem('brrp.screen-preset')));
   // Bound by the workspace. Reading it is a deliberate function rather than a plain
   // `bind:this`, because binding an element is also the moment the element becomes
   // available to render into — and a share that arrived first has nothing to attach to
@@ -1054,7 +1063,7 @@ class Voice {
     // System audio is asked for, never required. A browser or platform that cannot
     // provide it returns video-only rather than failing the whole share, and the
     // user is told what they got rather than what they asked for.
-    const result = await requestScreen(this.wantSystemAudio);
+    const result = await requestScreen(this.wantSystemAudio, this.screenPreset);
     if (result.state === 'sharing' && result.stream) {
       // The words describe what was delivered, not what was asked for. Asking for
       // audio and not getting it is an ordinary outcome, and the person sharing is the
@@ -1141,6 +1150,11 @@ class Voice {
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       if (peer !== this.peer) return false;
+      // The preset is applied to the sender that now exists: the ceiling and the
+      // degradation preference are properties of the negotiated encoding, so they can
+      // only be set once there is one. Best-effort — a browser that refuses still
+      // shares, and the capture constraints already asked for the resolution and rate.
+      await applyScreenPreset(this.screenSender, this.screenPreset);
       workspace.sendEvent('rtc.signal', {
         sdp: peer.localDescription?.toJSON(),
         connection_id: this.connectionId,
@@ -1181,7 +1195,22 @@ class Voice {
       return;
     }
     try {
-      this.screenAudioSender = peer.addTransceiver(track, { direction: 'sendonly' }).sender;
+      const sender = peer.addTransceiver(track, { direction: 'sendonly' }).sender;
+      // The screen-audio cap, applied here rather than left to the codec's default: the
+      // server refuses anything past 64 kbit/s (ScreenAudioBitrateCeiling) and a client
+      // that never approaches its own ceiling is a client that never meets the refusal.
+      // Best-effort, like the video preset: a browser that refuses still shares the
+      // sound, and the server's ceiling bounds it either way.
+      try {
+        const parameters = sender.getParameters();
+        if (parameters.encodings.length > 0) {
+          parameters.encodings[0] = { ...parameters.encodings[0], maxBitrate: 64_000 };
+          void sender.setParameters(parameters).catch(() => {});
+        }
+      } catch {
+        /* Same reasoning: the ceiling is the server's job, and it holds. */
+      }
+      this.screenAudioSender = sender;
       this.publishedScreenAudio = true;
     } catch {
       // The video is already publishing by this point. Losing the audio is a
@@ -1250,6 +1279,31 @@ class Voice {
   /** Whether this browser can share at all — decides whether the control is offered. */
   screenShareAvailable(): boolean {
     return canShareScreen();
+  }
+
+  /**
+   * Chooses the capture profile, and applies it to a share that is already running.
+   *
+   * Waiting for the next share would be the wrong answer for the person who switches
+   * because they cannot read the text in front of them now: the live sender's ceiling
+   * and frame rate change immediately, and the capture is re-asked for the resolution
+   * and rate the new preset wants. Both are best-effort, and the capture keeps running
+   * if a browser refuses either.
+   */
+  async setScreenPreset(preset: ScreenPreset): Promise<void> {
+    this.screenPreset = preset;
+    storage.setItem('brrp.screen-preset', preset);
+    if (this.screenState !== 'sharing' || !this.screenSender) return;
+    await applyScreenPreset(this.screenSender, preset);
+    const track = this.screenStream?.getVideoTracks()[0];
+    if (track) {
+      try {
+        await track.applyConstraints(SCREEN_PRESETS[preset].constraints);
+      } catch {
+        // A display capture that will not take new constraints keeps the old size; the
+        // sender's ceiling still changed, which is the part that bounds the cost.
+      }
+    }
   }
 }
 

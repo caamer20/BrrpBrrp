@@ -1,6 +1,7 @@
 <script lang="ts">
   import { voice } from '../voice.svelte';
   import { workspace } from '../workspace.svelte';
+  import { SCREEN_PRESETS, type ScreenPreset } from '../screen-share';
   import Icon from './Icon.svelte';
 </script>
 
@@ -83,6 +84,21 @@
           role="status">{voice.screenMessage}</small
         >
       {/if}
+      {#if workspace.can('voice.share_screen') && voice.channelId}
+        <select
+          class="screen-preset"
+          aria-label="Screen share quality"
+          title="What the share is for: movement, or readable text"
+          disabled={voice.screenState === 'asking'}
+          value={voice.screenPreset}
+          onchange={(event) =>
+            void voice.setScreenPreset(event.currentTarget.value as ScreenPreset)}
+        >
+          {#each Object.values(SCREEN_PRESETS) as preset (preset.id)}
+            <option value={preset.id}>{preset.label}</option>
+          {/each}
+        </select>
+      {/if}
       {#if voice.quality}<small class="voice-quality">{voice.quality}</small>{/if}
       {#if voice.connectionPath}<small class="voice-quality" title={voice.connectionPath}
           >{voice.connectionPath}</small
@@ -133,5 +149,20 @@
      status, because the person is looking for why nothing changed. */
   .screen-error {
     color: var(--danger);
+  }
+
+  /* The sidebar is narrow, so the choice is one line and truncates rather than
+     widening the column. It is a native select: keyboard, screen reader and phone
+     behaviour come with it, and a custom control would have to rebuild all three. */
+  .screen-preset {
+    margin-top: 0.25rem;
+    max-width: 100%;
+    font: inherit;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.25rem;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
   }
 </style>

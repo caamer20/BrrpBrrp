@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  screenShareMessage,
-  classifyCaptureFailure,
+  applyScreenPreset,
   canShareScreen,
+  captureStillWanted,
+  classifyCaptureFailure,
   onCaptureEnded,
-  screenAudioOutcome,
+  requestScreen,
+  SCREEN_PRESETS,
   screenAudioMessage,
-  captureStillWanted
+  screenAudioOutcome,
+  screenPresetFromValue,
+  screenShareMessage
 } from '../src/lib/screen-share.ts';
 
 // A screen share is a user gesture with three ordinary failure modes, and the two
@@ -205,4 +209,102 @@ test('an account switch is named as such even when the generation also moved', (
   const verdict = captureStillWanted(started, { ...started, userId: 'u2', generation: 8 });
   assert.equal(verdict.ok, false);
   assert.match(verdict.reason, /account/i);
+});
+
+// The capture profiles (ENG-03). A screen showing movement and a screen showing text
+// are different pictures with different costs, and the presets are the product's
+// statement about what each one is: a resolution, a frame rate, a sender ceiling and a
+// way of degrading. They are data, so these assertions can read the same table the
+// application applies.
+test('the presets ask for the profiles the plan names', () => {
+  assert.equal(SCREEN_PRESETS.motion.constraints.width.ideal, 1280);
+  assert.equal(SCREEN_PRESETS.motion.constraints.height.ideal, 720);
+  assert.equal(SCREEN_PRESETS.motion.constraints.frameRate.ideal, 15);
+  assert.equal(SCREEN_PRESETS.text.constraints.width.ideal, 1920);
+  assert.equal(SCREEN_PRESETS.text.constraints.height.ideal, 1080);
+  assert.equal(SCREEN_PRESETS.text.constraints.frameRate.ideal, 5);
+  // Legibility is the reason the text preset exists, so it keeps resolution and drops
+  // frames; the motion preset does the opposite.
+  assert.equal(SCREEN_PRESETS.text.degradationPreference, 'maintain-resolution');
+  assert.equal(SCREEN_PRESETS.motion.degradationPreference, 'balanced');
+});
+
+test('every sender ceiling sits below the server ceiling', () => {
+  // 2.5 Mbit/s is the server's per-publication bound (ScreenBitrateCeiling). A client
+  // that respects its own cap must never meet the server's enforcement, or the bound
+  // would be a surprise rather than a backstop.
+  for (const preset of Object.values(SCREEN_PRESETS)) {
+    assert.ok(
+      preset.encoding.maxBitrate <= 2_500_000,
+      `${preset.id} caps at ${preset.encoding.maxBitrate}, above the server's ceiling`
+    );
+  }
+});
+
+test('the capture request asks for the chosen preset and nothing else', async () => {
+  const original = globalThis.navigator;
+  const seen = [];
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        mediaDevices: {
+          getDisplayMedia: async (constraints) => {
+            seen.push(constraints);
+            const track = { label: 'stub screen', contentHint: '', stop() {} };
+            return {
+              getVideoTracks: () => [track],
+              getTracks: () => [track]
+            };
+          }
+        }
+      },
+      configurable: true
+    });
+    const result = await requestScreen(false, 'text');
+    assert.equal(result.state, 'sharing');
+    assert.equal(seen[0].video.width.ideal, 1920);
+    assert.equal(seen[0].video.frameRate.ideal, 5);
+    // The permitted control: system audio is asked for only when it was requested.
+    assert.equal('audio' in seen[0], false);
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', { value: original, configurable: true });
+  }
+});
+
+test('applying a preset writes the ceiling and changes nothing else', async () => {
+  let written = null;
+  const sender = {
+    getParameters: () => ({ encodings: [{ maxBitrate: 123, rid: 'keep-me' }] }),
+    setParameters: async (parameters) => {
+      written = parameters;
+    }
+  };
+  assert.equal(await applyScreenPreset(sender, 'text'), true);
+  assert.equal(written.encodings[0].maxBitrate, SCREEN_PRESETS.text.encoding.maxBitrate);
+  assert.equal(written.encodings[0].maxFramerate, 5);
+  assert.equal(written.degradationPreference, 'maintain-resolution');
+  assert.equal(written.encodings[0].rid, 'keep-me');
+});
+
+test('a sender that refuses the parameters is reported rather than thrown', async () => {
+  const sender = {
+    getParameters: () => ({ encodings: [{}] }),
+    setParameters: async () => {
+      throw new Error('InvalidModificationError');
+    }
+  };
+  assert.equal(await applyScreenPreset(sender, 'motion'), false);
+  // And a sender with no encodings at all is not an exception either.
+  const empty = { getParameters: () => ({ encodings: [] }), setParameters: async () => {} };
+  assert.equal(await applyScreenPreset(empty, 'motion'), false);
+});
+
+test('an unknown stored preference falls back to motion rather than to nothing', () => {
+  assert.equal(screenPresetFromValue('text'), 'text');
+  assert.equal(screenPresetFromValue('motion'), 'motion');
+  assert.equal(screenPresetFromValue('cinema'), 'motion');
+  assert.equal(screenPresetFromValue(null), 'motion');
+  // Not a prototype key: storage is editable, and `constructor` is a string somebody
+  // could have written there.
+  assert.equal(screenPresetFromValue('constructor'), 'motion');
 });

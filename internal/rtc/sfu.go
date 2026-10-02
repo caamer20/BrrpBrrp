@@ -118,6 +118,10 @@ type Peer struct {
 	// keyframe request to the publisher. It is nil for a peer that was constructed
 	// outside Join (tests that only need a Peer value), and every use tolerates that.
 	sfu *SFU
+	// police holds one token bucket per screen kind this peer publishes, created with
+	// the first packet of a publication. It is read and written under the SFU's lock;
+	// the meters themselves lock only their own credit.
+	police map[PublicationKind]*bitrateMeter
 }
 
 // refreshState is called with SFU.mu held after client intent or a server-side
@@ -1304,6 +1308,15 @@ func (s *SFU) forwardPublication(source *Peer, kind PublicationKind, packet *rtp
 	if !s.existingRoom(source.state.ChannelID).ownedBy(source.state.UserID, kind) {
 		s.mu.Unlock()
 		return
+	}
+	// The publication's ceiling, applied before the packet is copied anywhere. A share
+	// that is over budget must not be able to starve the voice in the same call, and the
+	// only place that can be decided once per packet is here.
+	if kind == PublicationScreenVideo || kind == PublicationScreenAudio {
+		if !source.admit(kind, len(packet.Payload), time.Now()) {
+			s.mu.Unlock()
+			return
+		}
 	}
 	s.mu.Unlock()
 	s.forwardScreen(source, kind, packet)
