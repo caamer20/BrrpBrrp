@@ -1,6 +1,6 @@
 # Toward a self-hosted community platform
 
-BrrpBrrp aims to become an open-source alternative for communities that want to run their own chat and voice server. The current implementation is an alpha for small groups. This roadmap distinguishes working features from future work; it does not promise delivery dates. The state column below is dated **2 October 2026**, application **0.4.0-alpha.8** at schema **25**; the record for that build is [docs/releases/0.4.0-alpha.8.md](releases/0.4.0-alpha.8.md) and the evidence behind it is [planning/v1-execution-ledger-2026-10-01.md](../planning/v1-execution-ledger-2026-10-01.md).
+BrrpBrrp aims to become an open-source alternative for communities that want to run their own chat and voice server. The current implementation is an alpha for small groups. This roadmap distinguishes working features from future work; it does not promise delivery dates. The state column below is dated **2 October 2026**, application **0.4.0-alpha.8** at schema **25**; the record for that build is [docs/releases/0.4.0-alpha.8.md](releases/0.4.0-alpha.8.md), and the evidence behind it is the execution ledger under `planning/` in the repository (the packaged source does not carry the development record, so it is named rather than linked).
 
 ## Principles
 
