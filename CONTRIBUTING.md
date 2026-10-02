@@ -33,9 +33,16 @@ npm --prefix web run check
 npm --prefix web run format:check
 npm --prefix web run build
 go vet ./...
-go test -race -timeout 20m ./...
+go test -race -timeout 60m ./...
 make notices
 ```
+
+`go test -race` is the long gate: the API package alone takes about 43 minutes under
+the race detector on a sixteen-core machine, because it drives real WebSocket, HTTP and
+media loops. The 60-minute budget is what `make test` uses and it is deliberate — a
+budget that races the runtime reports a timeout where the suite would have passed.
+Run focused packages (`go test ./internal/rtc -race`) while working and the whole sweep
+at a checkpoint.
 
 For browser flows, install Chromium once from `web` with `npx playwright install chromium`, then run `make browser-check` from the source root. Browser tests start a temporary server, include accessibility checks and remove their test data afterward. Go integration tests need local TCP and UDP sockets.
 

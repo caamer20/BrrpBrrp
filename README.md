@@ -124,7 +124,20 @@ Press **Ctrl/Cmd + K** to jump to a text channel by name, topic or category. Unr
 
 ## Scope and limits
 
-One workspace, text and voice channels, capability-based roles, and focused reply discussions. Alpha.6 source includes consented direct messages behind a default-off feature gate; alpha.5 packages do not include them. Groups, private calls, named or archived threads, friends, multi-server guilds and public read receipts are not available yet. Live and reversibly deactivated accounts are limited to 100 (permanently removed history identities do not consume a slot), channels to 100, pins to 100 per channel and voice to 10 simultaneous participants across the server. Uploads have a hard 12 MB cap. Messages are kept indefinitely unless an administrator enables retention or deletes them. The app does not provide end-to-end encryption; the server operator controls the database and media relay.
+One workspace, text and voice channels, capability-based roles and delegation, reply
+threads with their own reading positions and archive state, consented direct
+conversations and groups with blocking and private evidence reporting, named threads,
+member data export, community voice with private calls, and screen sharing with its own
+screen audio. Direct conversations and groups are behind the default-off
+`BRRP_ENABLE_PRIVATE_CONVERSATIONS` gate, and restricted channels behind
+`BRRP_ENABLE_RESTRICTED_CHANNELS`, until their independent reviews are done; every
+feature they gate is implemented and locally tested. Friends, multi-server guilds,
+public read receipts, camera video and federation are not available. Live and reversibly
+deactivated accounts are limited to 100 (permanently removed history identities do not
+consume a slot), channels to 100, pins to 100 per channel and voice to 10 simultaneous
+participants across the server. Uploads have a hard 12 MB cap. Messages are kept
+indefinitely unless an administrator enables retention or deletes them. The app does not
+provide end-to-end encryption; the server operator controls…
 
 ## Troubleshooting
 
