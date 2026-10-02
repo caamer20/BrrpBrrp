@@ -1663,3 +1663,50 @@ func TestStoppingAShareReleasesItsScreenAudioToo(t *testing.T) {
 		t.Fatal("screen audio was accepted with no screen published")
 	}
 }
+
+// Naming the screen's audio without a fresh description.
+//
+// The audio track travels inside the screen's own offer — one m-line among several —
+// and the client then names the publication so the room's forwarder routes it. The
+// client used to re-send the same offer with the audio announcement, which produced a
+// second answer for a description that was already applied; the browser's
+// setRemoteDescription refuses that, and the catch path took the whole call down. So
+// the server accepts the naming on its own, and still refuses an offerless *video*
+// announcement, which would be a publication with nothing negotiated to carry it
+// (review 17, two-browser screen journey).
+func TestScreenAudioIsNamedWithoutResendingTheOffer(t *testing.T) {
+	sfu := newTestSFU(t)
+	connectPeer(t, sfu, "ana", "room")
+	waitFor(t, "ana to connect", func() bool {
+		return sfu.connectionStateOf("ana") == webrtc.PeerConnectionStateConnected
+	})
+	sfu.mu.Lock()
+	peer := sfu.peers["ana"]
+	sfu.announcePublication(peer, Publication{ID: "v1", Owner: "ana", Kind: PublicationScreenVideo, Started: time.Now().UTC()})
+	sfu.mu.Unlock()
+
+	events := []string{}
+	sfu.setEmitter("ana", func(kind string, data any) { events = append(events, kind) })
+	if err := sfu.Signal("ana", "ana", Signal{ConnectionID: peer.connectionID, Publication: PublicationScreenAudio}); err != nil {
+		t.Fatalf("naming the screen's audio without an offer: %v", err)
+	}
+	found := false
+	for _, publication := range sfu.Publications("room") {
+		if publication.Kind == PublicationScreenAudio {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the screen's audio was not registered: %v", sfu.Publications("room"))
+	}
+	for _, kind := range events {
+		if kind == "rtc.signal" {
+			t.Fatal("the audio naming produced a second answer for an applied description")
+		}
+	}
+	// The control: a video publication cannot be named without an offer, because
+	// nothing would have negotiated an m-line to carry it.
+	if err := sfu.Signal("ana", "ana", Signal{ConnectionID: peer.connectionID, Publication: PublicationScreenVideo}); err == nil {
+		t.Fatal("an offerless screen announcement was accepted")
+	}
+}

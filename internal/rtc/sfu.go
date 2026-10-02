@@ -447,6 +447,18 @@ func (s *SFU) Signal(userID, owner string, signal Signal) error {
 	}
 	peer.signalMu.Lock()
 	defer peer.signalMu.Unlock()
+	// A publication can be named without a description when its media is already
+	// negotiated: the screen's audio track travelled inside the screen's own offer, and
+	// naming it is what makes the room's forwarder route it. Admission and registration
+	// live in the renegotiation path, so the naming is routed there rather than
+	// dropped here. Any other publication without an offer is refused: there would be
+	// no m-line carrying it (review 17, two-browser screen journey).
+	if signal.SDP == nil && signal.Publication != "" {
+		if signal.Publication != PublicationScreenAudio {
+			return errors.New("a renegotiation needs an offer")
+		}
+		return s.renegotiate(peer, signal)
+	}
 	if signal.SDP != nil {
 		if signal.SDP.Type != webrtc.SDPTypeOffer || len(signal.SDP.SDP) > 50000 {
 			return errors.New("invalid voice offer")
@@ -846,10 +858,43 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 	}
 
 	if signal.SDP == nil || signal.SDP.SDP == "" {
-		// A nil description would reach Pion and panic, taking the process with it. The
-		// path is reachable from a malformed client, so it is guarded here rather than
-		// assumed away.
-		return errors.New("a renegotiation needs an offer")
+		// A publication can be named without a fresh description when its media is
+		// already negotiated. The screen's audio track arrives inside the screen's own
+		// offer — one m-line among several — and the client then names it so the
+		// forwarder routes it. Re-sending the same offer produced a second answer for a
+		// description that was already applied, and the browser's `setRemoteDescription`
+		// refuses that: the whole call was torn down by publishing screen audio
+		// (review 17, two-browser screen journey).
+		//
+		// Only a *missing* description counts as already-negotiated media. An
+		// empty-string description is a malformed client, and screen audio is the one
+		// kind that maps to an existing m-line; every other publication must bring its
+		// offer.
+		if signal.Publication != PublicationScreenAudio || signal.SDP != nil {
+			return errors.New("a renegotiation needs an offer")
+		}
+		s.mu.Lock()
+		if s.room(room).ownedBy(peer.state.UserID, PublicationScreenAudio) {
+			// Already named — a re-announcement after a restart that did not stop.
+			// There is nothing to add, and a second registry entry would leave the room
+			// counting one track twice.
+			s.mu.Unlock()
+			return nil
+		}
+		if err := peer.addScreenOutputOfKind(PublicationScreenAudio); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		publicationID := signal.PublicationID
+		if publicationID == "" {
+			publicationID = PublicationID(uuid.NewString())
+		}
+		s.announcePublication(peer, Publication{
+			ID: publicationID, Owner: peer.state.UserID, Kind: PublicationScreenAudio,
+			Started: time.Now().UTC(),
+		})
+		s.mu.Unlock()
+		return nil
 	}
 
 	publicationID := signal.PublicationID
@@ -984,6 +1029,11 @@ func (s *SFU) announcePublication(peer *Peer, publication Publication) {
 			"publication_id": string(publication.ID),
 			"owner":          publication.Owner,
 			"channel_id":     room,
+			// The kind is what lets a viewer renegotiate for the piece it does not
+			// hold yet: the video arrives on the view offer it already made, and the
+			// screen's audio is announced afterwards as its own publication, so a
+			// client that kept them indistinguishable could never hear a share.
+			"kind": string(publication.Kind),
 		})
 	}
 	s.mu.Lock()
