@@ -18,6 +18,7 @@ import (
 	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/metrics"
 	"brrpbrrp/internal/rtc"
 	"brrpbrrp/internal/scraper"
 	"brrpbrrp/internal/ws"
@@ -41,6 +42,10 @@ type Server struct {
 	// lazily by alerts(), so a server that never raises an alert never allocates it.
 	alertMu    sync.Mutex
 	alertState *alertState
+	// metrics is the per-route recorder read by /api/admin/metrics and by an external
+	// probe. It is created by New like the rest of the server's state: a nil recorder on
+	// the request path would be a crash on the first request rather than a missing number.
+	metrics *metrics.Recorder
 	// voiceGate serializes voice admission against access enforcement.
 	voiceGate sync.Mutex
 	// authority is the delivery fence. Its write lock is held across the moment an
@@ -217,6 +222,7 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 		return nil, err
 	}
 	s.voice = voice
+	s.metrics = metrics.NewRecorder()
 	s.turn, err = rtc.NewTURN()
 	if err != nil {
 		cancel()
@@ -421,6 +427,7 @@ func (s *Server) routes() []route {
 		{http.MethodGet, "/api/admin/audit-logs", routePolicy{Capability: authz.AuditRead}, s.auditLogs},
 		{http.MethodGet, "/api/admin/health", routePolicy{Capability: authz.SettingsManage}, s.health},
 		{http.MethodGet, "/api/admin/diagnostics", routePolicy{Capability: authz.SettingsManage}, s.diagnostics},
+		{http.MethodGet, "/api/admin/metrics", routePolicy{Capability: authz.SettingsManage, Note: "counters and latencies for an operator or an external probe; no message content, no member names"}, s.metricsReport},
 		{http.MethodPost, "/api/admin/backup", routePolicy{Capability: authz.OperatorBackup, FreshAuth: true, Note: "a full archive can defeat every private boundary, against this server's own administrators too"}, s.createBackup},
 		{http.MethodGet, "/api/admin/backups/{id}", routePolicy{Capability: authz.OperatorBackup, FreshAuth: true, Note: "a full archive can defeat every private boundary, against this server's own administrators too"}, s.downloadBackup},
 	}
@@ -438,7 +445,10 @@ var publicRoutes = map[string]string{
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	for _, registered := range s.routes() {
-		mux.HandleFunc(registered.Method+" "+registered.Path, s.protect(registered.Policy, registered.Handler))
+		// The label is the route's *pattern*, never the request path: a per-id label is how
+		// one busy channel turns a metrics map into a memory leak.
+		pattern := registered.Method + " " + registered.Path
+		mux.HandleFunc(pattern, s.measure(pattern, s.protect(registered.Policy, registered.Handler)))
 	}
 	mux.HandleFunc("GET /api/setup/status", s.setupStatus)
 	mux.HandleFunc("POST /api/setup", s.setup)

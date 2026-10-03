@@ -117,6 +117,27 @@ The `production-check --config PATH` command is safe while the service is runnin
 | `BRRP_VOICE_PORT_MIN` / `BRRP_VOICE_PORT_MAX` | UDP 50000–50100 |
 | `BRRP_BACKUP_COPY_DIR` | Optional absolute destination for extra copies; grant the service account write access |
 
+## Watching a running server
+
+Two things answer "is this installation healthy", and they answer different questions.
+
+`GET /api/admin/metrics` (operator authority) is the machine-readable view: per-route
+request counts, status classes and latency buckets — labelled by route *pattern*, never by
+path — the process's resident memory, CPU time and goroutine count beside Go's own heap
+figures, what the media path has forwarded and dropped, the connection count, storage
+sizes and the backup job's status. It deliberately does not count messages: a metrics
+endpoint that runs a table count every fifteen seconds costs more than it reports. Nothing
+in it is message content, a member name or a conversation identifier.
+
+`make probe BASE=https://chat.example.com` (add `COOKIE='brrp_session=…'` for the
+authenticated checks) asks the deployment from outside, over the network, the way a
+member's browser does: setup status, the shell, one of the assets the shell names, the
+security headers, the session and the metrics endpoint, and the websocket handshake. It
+distinguishes the two ways a websocket fails — refused, which is a proxy doing its job on
+an unauthenticated request; upgraded but silent, which is the application not speaking; and
+never answered, which is a proxy eating the upgrade — because they are fixed in different
+places. Run it from outside the network on a schedule and alert on a nonzero exit.
+
 Resource/UI/retention/TURN settings are stored in SQLite and managed through the admin UI. Do not edit that table while the app is running. Keep the TURN relay range 49152–49999 separate from a customized WebRTC range.
 
 **What this release's media does and does not do (owner's decision, 2 October 2026).** The

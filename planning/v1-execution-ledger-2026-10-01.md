@@ -1428,6 +1428,59 @@ owner's decisions have already fixed and the ones with no external dependency.
   measured on localhost, where the socket comes back in milliseconds — a hostile network is
   Phase D; and the media-failure path is unmeasured, as above.
 
+### 11l. ENG-14 — what an operator can see, and a probe that asks from outside
+
+- **`internal/metrics`** is a dependency-free recorder: per route *pattern*, the request
+  count, status classes and a ten-bucket latency histogram with the p95 reported as the
+  bucket it falls in (named `p95_bucket_ms`, because a percentile needs every sample and a
+  bucket costs one counter), plus the process's resident memory and CPU time read from the
+  operating system rather than inferred from the Go heap — the gap between the two is where
+  a leak or a page-cache-heavy upload lives, and the media subsystem runs in this process,
+  so there is no separate media worker to measure. Platform files follow the existing
+  `space_unix.go`/`space_windows.go` convention; Windows reports `reported: false` rather
+  than inventing zeroes, and Darwin's `Maxrss` is bytes where Linux's is kilobytes.
+- **The label is the pattern, never the path.** Routes are registered in a table, so the
+  wrapper is applied at registration and the label is `GET /api/channels/{id}/messages`. A
+  per-id label is how one busy channel turns a metrics map into a memory leak, and the
+  endpoint's own test walks every label looking for identifier-shaped segments.
+- **`GET /api/admin/metrics`** (SettingsManage) reports routes, process, runtime, media,
+  connections, storage and jobs. The media section carries the SFU's own counters — packets
+  and bytes forwarded per destination, and packets dropped at the authorization boundary —
+  which the forwarding path increments with one atomic add. Nothing in the report is
+  message content, a member name or a conversation identifier, and it deliberately does not
+  count messages: a scrape that runs a table count every fifteen seconds costs more than it
+  reports.
+- **The wrapper has to let a websocket through.** The measuring middleware records the
+  status and hijacks for the upgrade; a `ResponseWriter` wrapper that also intercepts the
+  body is a wrapper that breaks the one route which stops being an HTTP request at all.
+- **`scripts/probe.mjs`** asks the deployment from outside: setup status, the shell, an
+  asset the shell names, the security headers, the session and the metrics endpoint when a
+  cookie is supplied, and the websocket handshake. It tells apart the three ways a
+  websocket fails — refused cleanly (a proxy doing its job on an unauthenticated request),
+  upgraded but silent (the application not speaking), and never answered (a proxy eating
+  the upgrade) — because an operator fixes them in different places. `make probe BASE=…`
+  runs it; `docs/deployment.md` says when to schedule it.
+- **Tests.** `internal/metrics`: the label is the caller's (so the caller passes the
+  pattern), the histogram holds every request exactly once and the p95 bucket is one of the
+  reported buckets, an in-flight request is visible while it runs, two reads serialize
+  identically, and 400 concurrent requests across two routes record exactly 400 — under
+  `-race`. Process usage is asserted to be real or explicitly unavailable. `internal/api`:
+  unauthenticated is 401, an ordinary member is 403, the operator's report has every
+  section, the metrics route counts itself, and the counters move — including for a
+  *refused* request, because an endpoint that answers 401 for everybody is a fact an
+  operator needs. `web/tests/probe.test.mjs` runs the probe against real local servers:
+  a healthy one passes every check and completes a websocket conversation, and four
+  seeded faults (swallowed upgrade, silent upgrade, stale asset, no asset link) each fail
+  the check that names them.
+- **Commands and results.** 340/340 frontend unit tests; `svelte-check` 0/0; formatting
+  clean; `go vet` and `gofmt` clean; `go test ./... -count=1` green across 13 packages;
+  default mode **28 passed**, private mode **42 passed**.
+- **What it does not prove.** The probe was exercised against local servers, not against a
+  real reverse proxy on a hostname with a certificate (Phase D); the latency histogram is
+  in-process, so it says nothing about a proxy's own latency; and there is no long-term
+  storage of these numbers — the endpoint answers "is it healthy now", and trending needs a
+  scraper the operator supplies.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
@@ -1437,7 +1490,8 @@ limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), 
 (the storage quota, the disk guard and the single-sourced limits), **ENG-08**
 (emphasis and block quotes), **ENG-09** (the member profile surface), **ENG-10**
 (Back and Forward between conversations), **ENG-04** (viewer controls and the phone
-layout) and **ENG-06** (output selection and the measured rejoin budget).
+layout), **ENG-06** (output selection and the measured rejoin budget) and **ENG-14**
+(operator metrics and the external probe).
 
 Still open, in the order they are worth taking:
 

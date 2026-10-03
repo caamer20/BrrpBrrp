@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"net"
 	"net/http"
 	"net/netip"
@@ -168,6 +169,53 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// measure records one request's outcome against its route pattern.
+//
+// It sits inside the authentication wrapper so a refused request is still counted: a route
+// that answers 401 for everybody is a fact an operator needs, and it is invisible if only
+// admitted requests are measured.
+func (s *Server) measure(pattern string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		done := s.metrics.Begin(pattern)
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next(recorder, r)
+		done(recorder.status)
+	}
+}
+
+// statusRecorder remembers the status the handler wrote. Nothing else is wrapped: a
+// ResponseWriter that also intercepts the body is a ResponseWriter that breaks streaming
+// and hijacking, which is what the websocket route needs.
+type statusRecorder struct {
+	http.ResponseWriter
+	status  int
+	written bool
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if !w.written {
+		w.status = status
+		w.written = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(body []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(body)
+}
+
+// Hijack lets the websocket upgrade through. Without it the one route that needs to stop
+// being an HTTP request at all would fail, and the failure would look like a broken socket
+// rather than a broken metrics wrapper.
+func (w *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return hijacker.Hijack()
 }
 
 func (s *Server) clientIP(r *http.Request) string {

@@ -162,6 +162,12 @@ type SFU struct {
 	peers          map[string]*Peer
 	changed        func([]State)
 	routingVersion uint64
+	// Media counters, read by the metrics endpoint rather than by anything on the media
+	// path itself: an atomic add per forwarded packet is the one piece of bookkeeping the
+	// packet path can afford.
+	forwardedPackets atomic.Uint64
+	forwardedBytes   atomic.Uint64
+	droppedPackets   atomic.Uint64
 	// publications is keyed by room. A room is a channel for a community call and a
 	// conversation for a private one (ADR 0019, §5), so the key is an opaque room
 	// string and nothing here assumes a channel row exists.
@@ -514,6 +520,7 @@ func (s *SFU) forward(source *Peer, packet *rtp.Packet) {
 	// A listen-only member's audio is dropped here rather than trusted to the
 	// client: forwarding is the boundary, not the state the client reported.
 	if s.peers[source.state.UserID] != source || source.speakDenied || source.state.Muted || source.state.Deafened || source.state.AdminMuted || source.state.AdminDeafened {
+		s.droppedPackets.Add(1)
 		s.mu.Unlock()
 		return
 	}
@@ -532,6 +539,11 @@ func (s *SFU) forward(source *Peer, packet *rtp.Packet) {
 	for _, output := range outputs {
 		output.write(sourceID, packet)
 	}
+	// Counted per destination, because that is what was actually sent: one packet to four
+	// listeners is four packets on four transports, which is the figure an operator sizing
+	// a relay needs.
+	s.forwardedPackets.Add(uint64(len(outputs)))
+	s.forwardedBytes.Add(uint64(len(packet.Payload)) * uint64(len(outputs)))
 	s.mu.Unlock()
 }
 
@@ -813,6 +825,15 @@ func (s *SFU) CloseChannel(channelID string) {
 			s.Leave(state.UserID, "")
 		}
 	}
+}
+
+// MediaCounters reports what the media path has done since the process started.
+//
+// There is no separate media process to measure — the SFU runs in this binary — so these
+// are the media figures an operator gets, beside the process's own resident memory and CPU
+// time in the metrics endpoint.
+func (s *SFU) MediaCounters() (forwardedPackets, forwardedBytes, droppedPackets uint64) {
+	return s.forwardedPackets.Load(), s.forwardedBytes.Load(), s.droppedPackets.Load()
 }
 
 func (s *SFU) States() []State {

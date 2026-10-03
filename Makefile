@@ -71,6 +71,11 @@ capacity-load:
 	node scripts/capacity-load.mjs --base '$(CAPACITY_BASE)' --cookie '$(COOKIE)' \
 		--clients $(or $(CLIENTS),100) --duration $(or $(DURATION),7200) \
 		--report '$(or $(REPORT),planning/m5-checkpoint/load.json)' --label '$(or $(LABEL),make)' 
+# An external probe for a deployment this repository does not control. Point it at the
+# hostname a member uses, not at localhost: what it checks is the edge — the proxy, the
+# certificate, the asset cache, the websocket upgrade.
+probe:
+	node scripts/probe.mjs --base '$(BASE)' $(if $(COOKIE),--cookie '$(COOKIE)',)
 browser-check: build
 	$(GO) build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
 	cd web && npm run test:e2e
