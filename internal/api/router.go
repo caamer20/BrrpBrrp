@@ -25,6 +25,10 @@ import (
 )
 
 type Server struct {
+	// freeSpace is the platform's free-space call. It is a field rather than a direct
+	// call so the disk guard can be tested without filling a volume: a refusal proven by
+	// consuming a real disk is a test nobody can run.
+	freeSpace        func(string) (uint64, error)
 	connectionsMu    sync.Mutex
 	connections      sync.WaitGroup
 	closing          bool
@@ -156,6 +160,7 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	pushClient := scraper.HTTPClient(5 * time.Second)
 	pushClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	s := &Server{
+		freeSpace:      app.FreeSpace,
 		pushJobs:       make(chan pushJob, 128),
 		pushHTTP:       pushClient,
 		scraper:        scraper.New(),

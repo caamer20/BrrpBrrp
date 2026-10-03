@@ -1,10 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/limits"
 	"github.com/google/uuid"
 )
 
@@ -70,7 +72,7 @@ func (s *Server) pins(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !ok {
 		return
 	}
-	messages, err := s.store.Messages(r.Context(), user.ID, "WHERE conversation_id=? AND id IN (SELECT message_id FROM message_pins) ORDER BY id DESC LIMIT 100", scope.ID)
+	messages, err := s.store.Messages(r.Context(), user.ID, fmt.Sprintf("WHERE conversation_id=? AND id IN (SELECT message_id FROM message_pins) ORDER BY id DESC LIMIT %d", limits.PinsPerChannel), scope.ID)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -105,7 +107,7 @@ func (s *Server) pinMessage(w http.ResponseWriter, r *http.Request, user db.User
 		return
 	}
 	if input.Pinned {
-		result, err := tx.ExecContext(r.Context(), `INSERT OR IGNORE INTO message_pins(message_id,pinned_by,created_at) SELECT ?,?,? WHERE (SELECT count(*) FROM message_pins WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?))<100`, message.ID, user.ID, db.Now(), scope.ID)
+		result, err := tx.ExecContext(r.Context(), fmt.Sprintf(`INSERT OR IGNORE INTO message_pins(message_id,pinned_by,created_at) SELECT ?,?,? WHERE (SELECT count(*) FROM message_pins WHERE message_id IN (SELECT id FROM messages WHERE conversation_id=?))<%d`, limits.PinsPerChannel), message.ID, user.ID, db.Now(), scope.ID)
 		if err != nil {
 			s.failed(w, err)
 			return

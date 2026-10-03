@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/limits"
 )
 
 // channelColumns and scanChannel are the full channel shape, kept in the storage
@@ -86,8 +88,8 @@ func (s *Server) createChannel(w http.ResponseWriter, r *http.Request, user db.U
 		s.failed(w, err)
 		return
 	}
-	if count >= 100 {
-		problem(w, 409, "This workspace has reached its 100-channel limit.")
+	if count >= limits.Channels {
+		problem(w, 409, fmt.Sprintf("This workspace has reached its %d-channel limit.", limits.Channels))
 		return
 	}
 	channel.ID = db.ID()
@@ -97,8 +99,8 @@ func (s *Server) createChannel(w http.ResponseWriter, r *http.Request, user db.U
 		if err := tx.QueryRow(`SELECT count(*) FROM channels`).Scan(&count); err != nil {
 			return err
 		}
-		if count >= 100 {
-			return refuse(409, "This workspace has reached its 100-channel limit.")
+		if count >= limits.Channels {
+			return refuse(409, fmt.Sprintf("This workspace has reached its %d-channel limit.", limits.Channels))
 		}
 		if _, err := tx.Exec(`INSERT INTO channels(id,name,type,category,position,topic,max_voice_users,visibility,posting,slow_mode_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, channel.ID, strings.TrimSpace(channel.Name), channel.Type, channel.Category, channel.Position, channel.Topic, channel.MaxVoiceUsers, channel.Visibility, channel.Posting, channel.SlowModeSeconds, now, now); err != nil {
 			return err

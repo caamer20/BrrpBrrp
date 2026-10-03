@@ -1,6 +1,7 @@
 package db
 
 import (
+	"brrpbrrp/internal/limits"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -33,7 +34,7 @@ func (s *Store) CreateAdministrator(ctx context.Context, username, password stri
 	if err = tx.QueryRow(`SELECT (SELECT count(*) FROM users WHERE is_deleted=0),(SELECT count(*) FROM users)`).Scan(&count, &identities); err != nil {
 		return err
 	}
-	if count >= 100 {
+	if count >= limits.Accounts {
 		return errors.New("account limit reached")
 	}
 	id, now := ID(), Now()

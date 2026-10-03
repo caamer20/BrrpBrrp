@@ -1173,28 +1173,66 @@ owner's decisions have already fixed and the ones with no external dependency.
   intermittently red on this host, not a claim that it is stable; the Chromium modes have
   not shown it, and the media assertions themselves have never been the failing step.
 
+### 11f. ENG-13 — a storage quota, a disk guard, and limits stated once
+
+- **What it is for.** Two failures this closes. A full volume took the *server* down: the
+  upload path wrote until the filesystem said no, and the refusal was a 500 that named
+  nothing an operator could act on — while an installation that fills its disk can no
+  longer write the backup that would recover it. And the product's own bounds were
+  literals: the account ceiling `100` appeared in `internal/api/admin.go`,
+  `internal/api/invitations.go` and `internal/db/accounts.go`, the channel ceiling twice in
+  one handler, and the pin ceiling inside two SQL strings. A check and a message that read
+  different numbers is how an installation comes to advertise one bound and apply another.
+- **Changed files and reason.** `internal/limits/limits.go` is new: `Accounts`,
+  `Channels`, `OutstandingInvitations`, `PinsPerChannel`, each with why the number belongs
+  to the release rather than to configuration. Every check and every message now reads the
+  constant — the two channel refusals, the account refusal in two packages, the invitation
+  ceiling, and the two pin statements (interpolated, because they are SQL). `internal/app`
+  gains `FreeSpace` with a `Statfs`/`Bavail` implementation on unix and
+  `GetDiskFreeSpaceEx` on Windows (both cross-compiled in this tranche), and the config
+  gains `BRRP_STORAGE_QUOTA_BYTES` and `BRRP_STORAGE_RESERVE_BYTES` (512 MiB default).
+  `internal/api/uploads.go` gains `diskGuard` — asked *before* the write, sized for the
+  largest upload the installation accepts, so the reserve is a floor for recovery work
+  rather than a budget spent to the byte — and `quotaRefusal`, asked *after* the bytes are
+  counted and before any row promises them, so a refusal is one removal away from leaving
+  nothing behind. A write that finds the volume full anyway is answered 507 with its own
+  message instead of a server fault. `docs/deployment.md` documents both settings.
+- **Tests.** Four: an upload past the quota is refused with the bytes used and the limit
+  in the message, and the *control* is the file that fits — with a check that nothing was
+  written either time; an upload inside the reserve is refused and the same upload is
+  accepted once there is room (with the free-space call injected, because a refusal proven
+  by filling a real volume is a test nobody can run); an unreadable quota refuses rather
+  than guessing; and the channel ceiling is walked through the route to the boundary, with
+  the refusal naming the constant and the last allowed channel created beside it.
+- **Commands and results.** `go test ./internal/api -count=1` → ok (192 s);
+  `./internal/db` → ok; `./internal/app` → ok; `go vet ./...` clean; the app package
+  cross-compiles for darwin, linux and windows; default browser mode **26 passed** against
+  the rebuilt binary.
+- **What it does not prove.** No real full disk was induced, so the ENOSPC mapping is code
+  read rather than exercised; the reserve's arithmetic is asserted with an injected
+  free-space call; and the quota's `SUM(file_size)` is a scan per upload, which is fine at
+  this product's upload rate (ten per minute per account) and is recorded here as the
+  reason it has not been turned into a counter.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
 tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **ENG-05**
 (the codec policy and the Firefox project, tranche 10), **ENG-07** (the documented media
-limit), **ENG-11** (the reconnect policy) and **ENG-12** (the protocol handshake).
+limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake) and **ENG-13**
+(the storage quota, the disk guard and the single-sourced limits).
 
 Still open, in the order they are worth taking:
 
-1. **ENG-13** — a storage quota and a disk guard on writes, and the literal account and
-   channel `100`s gathered into single-source constants (`internal/api/uploads.go`,
-   `admin.go`, `channels.go`, `invitations.go`, `db/accounts.go`). Server-side, testable
-   with a small filesystem budget.
-2. **ENG-08** — emphasis and block quotes in `message-tokens.ts`, lists deliberately out
+1. **ENG-08** — emphasis and block quotes in `message-tokens.ts`, lists deliberately out
    by the owner's decision; the malicious-markup tests must stay inert.
-3. **ENG-09** and **ENG-10** — a member profile surface reachable by keyboard, and
+2. **ENG-09** and **ENG-10** — a member profile surface reachable by keyboard, and
    Back/Forward between conversations (today only `replaceState`).
-4. **ENG-14** — bounded, redacted metrics behind operator authority, plus the external
+3. **ENG-14** — bounded, redacted metrics behind operator authority, plus the external
    HTTPS/WebSocket probe script; nothing user-supplied may reach a label.
-5. **ENG-15** — the encrypted off-host backup procedure, with key custody and key-loss
+4. **ENG-15** — the encrypted off-host backup procedure, with key custody and key-loss
    handling rehearsed locally into a second directory.
-6. **ENG-04** and **ENG-06** — viewer controls (fullscreen/pin, audio-only, phone layout)
+5. **ENG-04** and **ENG-06** — viewer controls (fullscreen/pin, audio-only, phone layout)
    and output-device selection plus the resume-token rejoin measurement.
 
 Then Phase C: the generated outsider matrix, the acceptance matrix file, the rendered

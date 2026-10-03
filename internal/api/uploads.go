@@ -1,6 +1,10 @@
 package api
 
 import (
+	"brrpbrrp/internal/app"
+	"brrpbrrp/internal/authz"
+	"brrpbrrp/internal/db"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,11 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
-
-	"brrpbrrp/internal/app"
-	"brrpbrrp/internal/authz"
-	"brrpbrrp/internal/db"
 )
 
 // Upload failures that are the caller's fault rather than the server's.
@@ -22,6 +23,60 @@ var (
 	errUploadEmpty    = errors.New("the uploaded file is empty")
 	errUploadNotOne   = errors.New("more than one part in the upload")
 )
+
+// diskGuard reports why an upload could not be accepted for want of free space, or ""
+// when there is room.
+//
+// The size it plans for is the largest upload this installation accepts rather than the
+// file's own size, because the file's size is not known until it has been read. That
+// makes the guard conservative by design: the reserve is room for the work that keeps an
+// installation recoverable — a database vacuum, a backup archive, the writes of the next
+// minute — not a budget to spend to the last byte.
+func (s *Server) diskGuard(size int64) string {
+	reserve := s.config.StorageReserveBytes
+	if reserve <= 0 {
+		return ""
+	}
+	free, err := s.freeSpace(s.config.UploadDir)
+	if err != nil {
+		// A path that cannot be measured is a path that cannot be written either, and the
+		// write below will say so with the real error.
+		return ""
+	}
+	if free < uint64(reserve)+uint64(size) {
+		return fmt.Sprintf(
+			"The server is low on disk space (it keeps %d bytes free for backups and recovery). Ask the operator to free space or move the data directory to a larger volume.",
+			reserve)
+	}
+	return ""
+}
+
+// quotaRefusal reports why this many stored bytes would exceed the installation's storage
+// quota, or "" when they fit.
+//
+// It is asked *after* the file exists and with the real size, and the caller removes the
+// file when it refuses: the alternative is deciding before the bytes are counted, which
+// either refuses files that would fit or accepts files that will not. A read that fails is
+// reported rather than ignored, because a guard that silently stops guarding is worse than
+// one that refuses and says why.
+func (s *Server) quotaRefusal(ctx context.Context, size int64) (string, error) {
+	quota := s.config.StorageQuotaBytes
+	if quota <= 0 {
+		return "", nil
+	}
+	var used int64
+	// Every row counts, staged or attached: a staged upload is bytes on the volume just as
+	// much as a sent one, and maintenance is what reclaims the ones nobody claims.
+	if err := s.store.QueryRowContext(ctx, `SELECT COALESCE(SUM(file_size),0) FROM attachments`).Scan(&used); err != nil {
+		return "", err
+	}
+	if used+size > quota {
+		return fmt.Sprintf(
+			"The server's upload storage is full (%d of %d bytes used). Ask the operator for more, or remove files that are no longer needed.",
+			used, quota), nil
+	}
+	return "", nil
+}
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 	if !s.limiter.allow("upload:"+user.ID, 10, time.Minute) {
@@ -35,6 +90,15 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 		}
 	}
 	limit := min(s.config.MaxUploadBytes, s.Settings().MaxUploadBytes)
+	// The disk guard is answered before a byte is written: the reason it exists is that an
+	// installation which fills its volume can no longer back itself up, and a refusal
+	// after the file exists is a cleanup problem. It is deliberately conservative — the
+	// size it plans for is the largest upload this installation accepts — because the
+	// reserve is room for recovery work rather than a budget to spend to the byte.
+	if refused := s.diskGuard(limit); refused != "" {
+		problem(w, http.StatusInsufficientStorage, refused)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit+(64<<10))
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -99,8 +163,26 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 	case errors.Is(err, errUploadNotOne):
 		problem(w, 400, "Upload one file at a time.")
 		return
+	case errors.Is(err, syscall.ENOSPC):
+		// The pre-check is a moment old by the time it is acted on, and the disk can fill
+		// from anything else on the host. The write that finds the volume full is refused
+		// as a storage problem rather than reported as a server fault.
+		problem(w, http.StatusInsufficientStorage, "The server is out of disk space. Free space or raise the volume, then try again.")
+		return
 	case err != nil:
 		s.failed(w, err)
+		return
+	}
+	// The quota is asked with the real size, now that the bytes are counted and before any
+	// row promises them: a refusal here is one removal away from leaving nothing behind,
+	// which is why it is not decided from the configured ceiling like the disk guard.
+	if refused, err := s.quotaRefusal(r.Context(), size); err != nil {
+		_ = os.Remove(published)
+		s.failed(w, err)
+		return
+	} else if refused != "" {
+		_ = os.Remove(published)
+		problem(w, http.StatusInsufficientStorage, refused)
 		return
 	}
 	tx, err := s.store.BeginTx(r.Context(), nil)

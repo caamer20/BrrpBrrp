@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/limits"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -154,8 +156,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor db.Use
 		s.failed(w, err)
 		return
 	}
-	if count >= 100 {
-		problem(w, 409, "This server supports up to 100 accounts and is intended for 10–20 concurrent users.")
+	if count >= limits.Accounts {
+		problem(w, 409, fmt.Sprintf("This server supports up to %d accounts and is intended for 10–20 concurrent users.", limits.Accounts))
 		return
 	}
 	role := db.MemberRoleID

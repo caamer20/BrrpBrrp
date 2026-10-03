@@ -9,6 +9,7 @@ import (
 
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/limits"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -285,7 +286,7 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		s.failed(w, err)
 		return
 	}
-	if count >= 100 {
+	if count >= limits.Accounts {
 		problem(w, 409, "This server has reached its account limit.")
 		return
 	}
@@ -389,5 +390,6 @@ func boundedUses(requested int) int {
 
 // maxOutstandingInvitations bounds how many unused invitations one installation may
 // hold at once. It is a ceiling on standing links, enforced where the invitation is
-// created rather than by a later sweep.
-const maxOutstandingInvitations = 100
+// created rather than by a later sweep, and it reads the installation's own limit so a
+// refusal cannot name a number the check does not apply.
+const maxOutstandingInvitations = limits.OutstandingInvitations

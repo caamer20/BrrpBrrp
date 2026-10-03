@@ -25,6 +25,12 @@ const MaxUpload = 12 * 1024 * 1024
 // is not supported below one attempt.
 const LoginAttemptsDefault = 20
 
+// StorageReserveDefault is the free space a server keeps in hand when nothing else is
+// configured: enough for a database vacuum, a backup archive and the writes of the next
+// minute, because an installation that fills its volume stops being able to recover
+// itself — the backup that would save it needs room to be written.
+const StorageReserveDefault = 512 << 20
+
 type Config struct {
 	DataDir, Addr, BaseURL, TLSMode, Domain, ACMEEmail                      string
 	CertFile, KeyFile, DBFile, UploadDir, SetupTokenFile, LogFile, LogLevel string
@@ -37,6 +43,12 @@ type Config struct {
 	TrustedProxies       []netip.Prefix
 	MaxUploadBytes       int64
 	LoginAttempts        int
+	// StorageQuotaBytes caps the total bytes of stored attachments; zero means the disk
+	// guard below is the only bound. StorageReserveBytes is the free space the server
+	// keeps in hand: an upload that would leave less than this is refused before it is
+	// written, so the installation can still serve, back up and vacuum.
+	StorageQuotaBytes   int64
+	StorageReserveBytes int64
 	// SQLiteSynchronous is the durability level for committed transactions. The
 	// production baseline is FULL: a commit survives an operating-system crash or
 	// power loss on honest storage. NORMAL is available for disposable or
@@ -89,6 +101,16 @@ func LoadConfig() (Config, error) {
 		return c, err
 	}
 	c.MaxUploadBytes = int64(n)
+	quota, err := number("BRRP_STORAGE_QUOTA_BYTES", 0, 0, 1<<40)
+	if err != nil {
+		return c, err
+	}
+	c.StorageQuotaBytes = int64(quota)
+	reserve, err := number("BRRP_STORAGE_RESERVE_BYTES", StorageReserveDefault, 0, 1<<40)
+	if err != nil {
+		return c, err
+	}
+	c.StorageReserveBytes = int64(reserve)
 	if c.LoginAttempts, err = number("BRRP_LOGIN_ATTEMPTS", LoginAttemptsDefault, 1, 100000); err != nil {
 		return c, err
 	}
