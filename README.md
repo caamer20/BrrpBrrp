@@ -132,7 +132,10 @@ screen audio. Direct conversations and groups are behind the default-off
 `BRRP_ENABLE_PRIVATE_CONVERSATIONS` gate, and restricted channels behind
 `BRRP_ENABLE_RESTRICTED_CHANNELS`, until their independent reviews are done; every
 feature they gate is implemented and locally tested. Friends, multi-server guilds,
-public read receipts, camera video and federation are not available. Live and reversibly
+public read receipts, camera video and federation are not available. Media is carried
+over IPv4 and uses the embedded TURN relay only — no external relay is supported — so a
+network that blocks UDP and cannot reach that relay over TCP/TLS is a documented,
+unsupported case. Live and reversibly
 deactivated accounts are limited to 100 (permanently removed history identities do not
 consume a slot), channels to 100, pins to 100 per channel and voice to 10 simultaneous
 participants across the server. Uploads have a hard 12 MB cap. Messages are kept

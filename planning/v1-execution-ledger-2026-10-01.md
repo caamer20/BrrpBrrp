@@ -1077,5 +1077,31 @@ ships.
   Firefox **10 passed** — 0 failed, 0 skipped anywhere. The browser-step audit now covers
   three steps and checks each one's positive control.
 
+## Tranche 11 — Phase B: the interior rows
+
+**Source and dirty state before the tranche.** HEAD `310b32f` (ENG-05 committed), working
+tree clean, application 0.4.0-alpha.8, schema 25, backup format 2. Media first was
+completed in tranches 8–10 (ENG-02, ENG-03, ENG-05); this tranche takes the rows the
+owner's decisions have already fixed and the ones with no external dependency.
+
+### 11a. ENG-07 — external TURN and IPv6, as a recorded limit
+
+- **Decision.** The owner chose "document as a limit" on 2 October: no external TURN
+  server in v1, and media is IPv4. The row's alternative — an operator-supplied relay and
+  an IPv6-reachable host — would have needed media qualification on hardware this
+  workspace does not have.
+- **Changed files and reason.** `docs/deployment.md` gains "What this release's media does
+  and does not do": the embedded relay (UDP/TCP/TLS) is the only one supported, IPv6 is
+  not a media transport, the TURN and forced-relay admin settings are what an operator can
+  use, and `voice path established … relayed: true` is the evidence that a call was
+  relayed. `docs/production-readiness.md` records the same limit beside the host-
+  qualification row it belongs to, so the row now says **which** networks must be measured
+  rather than whether the feature exists. `docs/roadmap.md`'s boundaries and the README's
+  scope paragraph state it for a reader who never opens an operator guide.
+- **What it proves, and what it does not.** It records a decision and makes the limit
+  discoverable from the surface a member or operator actually reads. It does not measure
+  any network: which restrictive networks the embedded relay traverses is a G5 item and
+  still needs hosts and devices.
+
 
 

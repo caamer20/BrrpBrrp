@@ -34,12 +34,21 @@ Enable scheduled backups with uploads in the admin UI, protect and replicate the
 
 Record date, candidate checksum, host OS, browser/device versions, pass/fail, and a short evidence link for each row. Repeat the network rows for both deployments.
 
+**Media limits v1 ships with (owner's decision, 2 October 2026).** Media is carried over
+IPv4 only, and the only relay is the embedded TURN server this binary runs: no external
+TURN service is configured, and none is supported by the compatibility statement for
+1.0.0. An operator whose members are behind a network that blocks UDP must therefore
+qualify the embedded relay on that network — the per-call log line `voice path
+established … relayed: true` says which path a call took — and a network the embedded
+relay cannot traverse is a documented, unsupported case rather than a defect. IPv6
+transport and external relays are candidates for a later release, not commitments.
+
 | Gate | Windows | Docker |
 | --- | --- | --- |
 | Native service or container restarts after reboot; stop is graceful; permissions and log rotation checked | Pending | Pending |
 | Exact browser origin has trusted HTTPS, working login/WebSocket reconnect and no accidental plain-HTTP exposure from a second device | Pending | Pending |
 | Two physical browsers on different networks have two-way voice, moderation and a call over 30 minutes | Pending | Pending |
-| Restrictive NAT routes through TURN; document any UDP-blocked network that remains unsupported | Pending | Pending |
+| Restrictive NAT routes through TURN; document any UDP-blocked network that remains unsupported (**embedded relay only, IPv4 media** — record which networks it traverses) | Pending | Pending |
 | Push mention arrives and opens the right message after app close; iOS Home Screen, denial, disable and shared-device sign-out checked | Pending | Pending |
 | PWA installs, opens a reconnect screen offline, recovers online and handles an app update without losing a draft | Pending | Pending |
 | A 10–20-user session with up to 10 voice users stays stable; record server RSS, CPU, UDP bandwidth, database growth, free disk and user-visible latency | Pending | Pending |

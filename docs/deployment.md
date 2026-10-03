@@ -117,6 +117,18 @@ The `production-check --config PATH` command is safe while the service is runnin
 
 Resource/UI/retention/TURN settings are stored in SQLite and managed through the admin UI. Do not edit that table while the app is running. Keep the TURN relay range 49152–49999 separate from a customized WebRTC range.
 
+**What this release's media does and does not do (owner's decision, 2 October 2026).** The
+relay is the embedded TURN server this binary runs — it serves UDP, TCP and TLS — and it is
+the only relay 1.0.0 supports: there is no external TURN setting, and pointing clients at
+somebody else's relay is not a supported configuration. Media is carried over IPv4; IPv6
+is not offered as a media transport. A network that blocks UDP *and* cannot reach the
+embedded relay over TCP/TLS is therefore unsupported, and host qualification records which
+restrictive networks the embedded relay does traverse. The TURN setting and the forced-relay
+setting in the admin UI are how an operator makes such a network work as far as this release
+can — forcing the relay only asks clients to prefer it, and the embedded relay still has to
+be reachable — and the per-call log line `voice path established … relayed: true` is the
+evidence that it did.
+
 ## Reverse proxy
 
 Set an HTTPS public base URL, proxy mode and trusted proxy CIDRs. For a same-host proxy, listen on `127.0.0.1:8082` and trust `127.0.0.1/32,::1/128`. Preserve the original host, set `X-Forwarded-For`, forward `/ws` with the WebSocket Upgrade/Connection headers, disable WebSocket buffering and use a sufficiently long proxy read timeout. Set the proxy upload limit above the selected file cap plus multipart overhead.
