@@ -1173,6 +1173,35 @@ owner's decisions have already fixed and the ones with no external dependency.
   intermittently red on this host, not a claim that it is stable; the Chromium modes have
   not shown it, and the media assertions themselves have never been the failing step.
 
+### 11e. Where the next session starts
+
+Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
+tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **ENG-05**
+(the codec policy and the Firefox project, tranche 10), **ENG-07** (the documented media
+limit), **ENG-11** (the reconnect policy) and **ENG-12** (the protocol handshake).
+
+Still open, in the order they are worth taking:
+
+1. **ENG-13** — a storage quota and a disk guard on writes, and the literal account and
+   channel `100`s gathered into single-source constants (`internal/api/uploads.go`,
+   `admin.go`, `channels.go`, `invitations.go`, `db/accounts.go`). Server-side, testable
+   with a small filesystem budget.
+2. **ENG-08** — emphasis and block quotes in `message-tokens.ts`, lists deliberately out
+   by the owner's decision; the malicious-markup tests must stay inert.
+3. **ENG-09** and **ENG-10** — a member profile surface reachable by keyboard, and
+   Back/Forward between conversations (today only `replaceState`).
+4. **ENG-14** — bounded, redacted metrics behind operator authority, plus the external
+   HTTPS/WebSocket probe script; nothing user-supplied may reach a label.
+5. **ENG-15** — the encrypted off-host backup procedure, with key custody and key-loss
+   handling rehearsed locally into a second directory.
+6. **ENG-04** and **ENG-06** — viewer controls (fullscreen/pin, audio-only, phone layout)
+   and output-device selection plus the resume-token rejoin measurement.
+
+Then Phase C: the generated outsider matrix, the acceptance matrix file, the rendered
+proofs still owed, Firefox/WebKit projects for the core journeys, the sharded race job,
+convergence passes, the first hosted CI run, flipping the feature gates with the owner's
+approval, and cutting `1.0.0-beta.1`.
+
 ### 11d. ENG-11 — a reconnect policy that meets the budget
 
 - **What it was.** The socket's backoff doubled to a thirty-second ceiling, and nothing
