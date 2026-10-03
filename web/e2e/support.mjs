@@ -7,6 +7,16 @@ import { expect } from '@playwright/test';
 export const OWNER = { username: 'release_admin', password: 'release check passphrase' };
 
 // signIn drives the real form, which is what an account does.
+//
+// The form is submitted once, and the wait afterwards is for the workspace to render —
+// not for the sign-in to be accepted, which the browser has already been told by then
+// (the POST returns 200 and the session cookie is set; measured while chasing this). The
+// budget is generous because a third browser context in a run renders that workspace more
+// slowly: five seconds was enough for every journey on an idle machine and not enough for
+// Firefox's third page under load, which failed on a form with empty fields and no error
+// anywhere (2 October). It is deliberately *not* a retry: once the sign-in has succeeded
+// the form is gone, so a retry loop can only re-fill an element that no longer exists and
+// time out telling you nothing.
 export async function signIn(page, account) {
   await page.goto('/');
   if (
@@ -19,7 +29,7 @@ export async function signIn(page, account) {
     await page.locator('input[autocomplete="current-password"]').fill(account.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
   }
-  await expect(page.getByLabel('Your preferences')).toBeVisible();
+  await expect(page.getByLabel('Your preferences')).toBeVisible({ timeout: 20000 });
 }
 
 // signInOverApi uses its own cookie jar, so a journey can act as the owner while a

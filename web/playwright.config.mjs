@@ -51,6 +51,28 @@ export default defineConfig({
     // channel, and it must precede the ownership ceremony, which cannot be undone.
     { name: 'threads', testMatch: 'threads.spec.mjs', dependencies: ['release'] },
     { name: 'voice', testMatch: 'voice.spec.mjs', dependencies: ['release'] },
+    // The media journeys under a second engine, in their own invocation:
+    //
+    //   BRRP_E2E_FIREFOX=1 BRRP_E2E_BINARY=… npm run test:e2e -- --project=voice-firefox
+    //
+    // The codec policy (the client's own order decides, VP8 as well as H264) and the
+    // screen path are only real if a browser other than Chromium exercises them, and
+    // Firefox offers a different codec set and a different encoder. It is gated because
+    // this spec *creates the accounts and roles it uses*: one installation serves one
+    // pass of it, and running the Chromium and Firefox passes against the same server
+    // makes the second collide with the first (measured: 403 on the role the first pass
+    // created). Each invocation gets its own server and its own data directory, so the
+    // engine pass is a separate run rather than a second project in the same one.
+    ...(process.env.BRRP_E2E_FIREFOX === '1'
+      ? [
+          {
+            name: 'voice-firefox',
+            testMatch: 'voice.spec.mjs',
+            dependencies: ['release'],
+            use: { ...devices['Desktop Firefox'] }
+          }
+        ]
+      : []),
     { name: 'account-switch', testMatch: 'account-switch.spec.mjs', dependencies: ['release'] },
     {
       name: 'ownership',

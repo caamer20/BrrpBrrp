@@ -202,7 +202,7 @@ function npmStub(workspace, exitCode) {
   const stub = join(bin, 'npm');
   writeFileSync(
     stub,
-    `#!/bin/sh\nprintf '%s\\n' '> brrpbrrp@0.0.0 test:e2e' 'Running 1 test using 1 worker' '[directs] > example.spec.mjs:10:1 passed (1.2s)'\nexit ${exitCode}\n`
+    `#!/bin/sh\nprintf '%s\\n' '> brrpbrrp@0.0.0 test:e2e' 'Running 1 test using 1 worker' '[directs] > example.spec.mjs:10:1 passed (1.2s)' '[voice-firefox] > example.spec.mjs:10:1 passed (1.2s)'\nexit ${exitCode}\n`
   );
   chmodSync(stub, 0o755);
   return bin;
@@ -225,9 +225,11 @@ function runStep(entry, exitCode) {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }
     });
     if (result.error) return { status: 1, output: String(result.error), log: '' };
-    const logName = ['browser-default.log', 'browser-private.log'].find((name) =>
-      step.run.includes(name)
-    );
+    // The log the step writes is read from the step's own body rather than from a list
+    // kept here: a second engine's step writes its own file, and an audit that only knew
+    // about the two logs it was written beside would report the new step as one that
+    // never ran anything.
+    const logName = /tee\s+(\S+\.log)/.exec(step.run)?.[1];
     const log = logName ? readFileSync(join(working, logName), 'utf8') : '';
     return { status: result.status, output: (result.stdout || '') + (result.stderr || ''), log };
   } finally {

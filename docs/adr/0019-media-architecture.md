@@ -978,3 +978,39 @@ not offering feedback this build does not implement. The browser journey proves 
 outcome for a real capture: a third viewer that joins while the share is running decodes
 the 320-pixel canvas within ten seconds. Neither layer says anything about a physical
 display, a lossy network, or a browser other than Chromium.
+
+
+## The codec a screen is carried in is the client's own choice
+
+A screen share travels end to end as one codec: the server rewrites sequence numbers,
+timestamps and payload types on the way out, but it does not transcode, so whatever the
+publisher's encoder produced is what every viewer's decoder receives. Two rules follow,
+and the second only became visible on a second engine.
+
+**A publication is carried in the first video codec the publisher's own offer listed.**
+The output track is created from the offer *before* it is applied — that ordering is what
+makes the answer's section the one the screen travels on — so the choice has to be made
+from the description's own text. H264 and VP8 are both registered, and the answer names
+the first of those the offer listed. The rule used to be "H264 whenever the offer mentions
+it", on the reasoning that H264 is what a capture produces most reliably. On Firefox that
+produced a share which negotiated, encrypted, arrived in full — the byte counts at both
+ends matched exactly — and decoded to nothing, because the publisher encoded H264 and the
+viewer's decoder produced no frame from any of it. Firefox lists VP8 first for exactly
+that reason; the server was overruling it.
+
+**A viewer's output carries what the publication carries**, when the viewer offers it: an
+output negotiated for a codec other than the payloads it will carry delivers bytes the
+receiver cannot decode, which is the same failure from the other side. A viewer that does
+not offer the publication's codec is answered with its own first preference instead. The
+negotiation then succeeds and the picture may not — but the alternative is a failed
+negotiation, which is a worse answer for a member who cannot change what the publisher
+chose.
+
+The evidence is a Go test per half (a VP8-only viewer is answered VP8 and receives frames;
+a viewer that lists both gets the one it listed first, with the publication carried the
+same way) and Firefox's project, where the two-browser journey decodes the shared picture,
+stops when the share stops and resumes on restart under the same assertions Chromium runs.
+It does not establish anything about a codec neither engine offers, a viewer whose codec
+the publisher cannot produce, or the quality of either codec: the presets bound the
+bitrate, and legibility at the text preset is still a qualification item that needs the
+reference hardware.

@@ -980,5 +980,102 @@ for v1, external TURN/IPv6 documented as a limit.
   test), not in an encoded frame; and the ceiling is proven at the RTP boundary, not
   against a real encoder's output.
 
+## Tranche 10 — ENG-05: the codec policy, and a second engine
+
+**Source and dirty state before the tranche.** HEAD `2b1be12` (the contrast fix, committed
+after ENG-03), working tree clean, application 0.4.0-alpha.8, schema 25, backup format 2.
+The owner approved a VP8 fallback on 2 October, which is what made this row's second half
+possible instead of a browser-matrix proof that would have needed codecs no engine here
+ships.
+
+### 10a. A screen that arrived in full and decoded to nothing
+
+- **Failing behavior and reproduction.** With a Firefox project added (10b), the
+  two-browser journey failed at the viewer's decode assertion: `framesDecoded: 0` for
+  thirty seconds. The failure-time counters — instrumented around the assertion, then
+  removed — were decisive: the publisher had encoded **86 frames / 162 252 bytes**, and
+  the viewer had received **176 packets / exactly the same 162 252 bytes**. The stream was
+  complete and undecodable: the server answered **H264** while both Firefox peers had
+  listed **VP8 first**, so the publisher encoded H264 and the viewer's decoder produced no
+  frame from any of it.
+- **Root cause.** `screenTrackCodec` returned H264 whenever the offer mentioned it,
+  ignoring the order the client wrote down. A screen is carried end to end without
+  transcoding — the server rewrites sequence numbers, timestamps and payload types, never
+  payloads — so the answer decides what the publisher encodes and what every viewer must
+  decode. Overruling a client's own preference is a decision about somebody else's
+  decoder.
+- **Changed files and reason.** `internal/rtc/sfu.go` — `videoCodecsInOffer` (the offer's
+  video codecs in the order it listed them), `screenTrackCodec` (the first of those this
+  build carries; H264 only as a default when the offer names neither), and
+  `screenPublicationCodec` (the codec a live publication is carried in), used for a
+  viewer's output when that viewer offers it, so payloads and outputs cannot disagree.
+  `internal/rtc/codec_test.go` — the VP8-only test still passes unchanged; the control is
+  rewritten around the rule (a viewer that lists both gets the one it listed first, and the
+  publication is carried the same way), and the parser test pins the order in both
+  directions. `docs/adr/0019-media-architecture.md` gains "The codec a screen is carried
+  in is the client's own choice", as the ENG-05 row requires.
+- **Commands and results.** `go test ./internal/rtc -count=1` → ok (14.6 s); `-race` → ok
+  (30.0 s, and three further runs clean); `go vet` clean; 311/311 frontend unit tests;
+  `svelte-check` 0/0; `format:check` clean.
+- **What it does not prove.** Nothing about a codec neither engine offers, or about
+  quality: the presets bound the bitrate, and legibility at the text preset is WP-18's
+  qualification on the reference hardware.
+
+### 10b. A second engine runs the media journeys
+
+- `web/playwright.config.mjs` gains `voice-firefox`: the whole voice spec under Firefox,
+  with the release journeys as its dependency. **10/10 passed** — six release journeys and
+  all four voice journeys, including the screen-offer journey's preset assertions and the
+  two-browser journey's decode, stop, restart and late-join assertions.
+- The engine was installed with the pinned Playwright (`npx playwright install firefox`,
+  revision 1543). That command pruned the Chromium installs in the shared browser
+  directory; they were reinstalled with the same pinned binary
+  (`./node_modules/.bin/playwright install chromium`, revision 1243). Both engines are now
+  required by the harness.
+- **What it does not establish.** WebKit (not installed), a physical display, a lossy
+  network, or behaviour under a slow link — the Firefox project runs on this host, in a
+  headless engine, with the same generated capture the Chromium project uses.
+
+### 10c. Diagnostics the harness keeps
+
+- `capturePeers` prints a page's console errors and warnings and any uncaught page error.
+  The trace did not carry Firefox's page console, and a browser's own complaint is the one
+  diagnostic a screenshot cannot show. It is what turned "the picture never appeared" into
+  a named cause in this tranche.
+
+### 10d. One occurrence that is not yet explained
+
+- A single `-race` run of `internal/rtc` failed at 60.5 s without a data race being
+  reported; four subsequent runs (including three captured) passed, and the failure's own
+  output was not kept. It is recorded here as an unexplained single occurrence rather than
+  as fixed: the next failure keeps its log, and the tranche's tests all use polling
+  budgets rather than fixed sleeps.
+
+### 10e. The sign-in helper's budget, and one wrong fix kept in the record
+
+- **What failed.** The Firefox project's journeys failed intermittently at `signIn`, on a
+  form with empty fields and no error anywhere.
+- **What the evidence said.** Instrumented, the sign-in POST returned **200 and set the
+  session cookie**, and the page had already routed to a channel — the app was signed in.
+  The helper's five-second budget was for the *workspace render* after that, and five
+  seconds was enough on an idle machine but not for Firefox's third context in a run under
+  load.
+- **The first fix was wrong, and it is recorded because it is instructive.** A retry loop
+  around fill/click/wait turned a 5-second failure into a 30-second one: once the sign-in
+  succeeded the form was gone, so every retry re-filled an element that no longer existed
+  and the loop could never succeed. It was replaced by what the evidence supports — submit
+  once, then wait for the workspace with a 20-second budget — and the helper now says why
+  a retry is not the answer.
+- **A second cause was environmental.** Killing the shell that drove a batch of runs left
+  its Playwright children alive, so several suites ran against their own servers at once
+  and the failures looked like product regressions. Killing the test browsers by their own
+  path (`brrpbrrp-playwright-browsers`, never the operator's own Firefox) is what clear
+  looks like; a batch runner has to take the whole process group down.
+- **Final verification against the artifact** (`dist/brrpbrrp-e2e` sha256
+  `507c547904f98808e1a2dde33b1add85d1bfa6cd5da486d042dd6eef5d9ee2ea`), each in its own
+  invocation with its own server: default mode **25 passed**, private mode **39 passed**,
+  Firefox **10 passed** — 0 failed, 0 skipped anywhere. The browser-step audit now covers
+  three steps and checks each one's positive control.
+
 
 

@@ -122,6 +122,11 @@ type Peer struct {
 	// the first packet of a publication. It is read and written under the SFU's lock;
 	// the meters themselves lock only their own credit.
 	police map[PublicationKind]*bitrateMeter
+	// screenCodec is the video codec this peer's own offer listed, so an output created
+	// from that offer is a codec the client can actually decode. It is set and read on
+	// the signaling path (peer.signalMu) and is empty until an offer has been read,
+	// which is when the H264 default applies.
+	screenCodec webrtc.RTPCodecCapability
 }
 
 // refreshState is called with SFU.mu held after client intent or a server-side
@@ -207,14 +212,30 @@ func New(options Options, changed func([]State)) (*SFU, error) {
 	// renegotiation" and "the server can carry a screen" are different claims and only
 	// the second one is useful.
 	//
-	// H.264 rather than VP8: it is what a browser's getDisplayMedia produces most
-	// reliably, and what the hardware encoders on the supported platforms accept. The
+	// Two codecs, and the client's own offer decides which one a screen is carried in
+	// (see `screenTrackCodec`): H264 first when the offer lists it first, VP8 when it
+	// lists that. A screen is carried end to end without transcoding, so a codec the
+	// publisher's encoder produces but a viewer's decoder cannot read is a picture that
+	// arrives in full and decodes to nothing — which is what answering a VP8-first
+	// browser with H264 produced on Firefox (ENG-05, 2 October). The H264
 	// profile-level-id is left to the default so a stream that does not match the
 	// preferred profile falls back rather than failing the whole connection.
 	for _, parameters := range h264Codecs() {
 		if err := media.RegisterCodec(parameters, webrtc.RTPCodecTypeVideo); err != nil {
 			return nil, err
 		}
+	}
+	// VP8 is registered as a fallback, not as a preference. A browser without an H264
+	// decoder — some Chromium builds ship without the proprietary codec, and a
+	// distribution may build Firefox that way — offers only VP8, and a server that does
+	// not carry it cannot answer: the screen negotiates and never arrives. H264 stays
+	// first because it is what a screen capture produces most reliably and what the
+	// hardware encoders on the supported platforms accept.
+	if err := media.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: videoClockRate},
+		PayloadType:        96,
+	}, webrtc.RTPCodecTypeVideo); err != nil {
+		return nil, err
 	}
 	registry := &interceptor.Registry{}
 	if err := webrtc.RegisterDefaultInterceptors(media, registry); err != nil {
@@ -883,6 +904,21 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 		if signal.SDP == nil || signal.SDP.SDP == "" {
 			return errors.New("a renegotiation needs an offer")
 		}
+		// Which codec the answer may carry is decided by what this client's offer
+		// listed: a browser without an H264 decoder offers VP8, and an output built for
+		// the wrong codec negotiates into a stream nothing can decode.
+		peer.screenCodec = screenTrackCodec(*signal.SDP)
+		// A viewer's line carries what the running publication carries, when the viewer
+		// offers that codec: the server forwards payloads rather than transcoding, so an
+		// output negotiated for another codec delivers bytes the receiver cannot decode.
+		if carried := s.screenPublicationCodec(peer.state.ChannelID); carried.MimeType != "" {
+			for _, name := range videoCodecsInOffer(*signal.SDP) {
+				if offered, ok := videoCapability(name); ok && offered.MimeType == carried.MimeType {
+					peer.screenCodec = carried
+					break
+				}
+			}
+		}
 		// A view line is how a client asks to receive, and it is answered below. What
 		// is still refused is a *sending* video line the server was not told about:
 		// the receive path must not become a way to publish by omitting a field,
@@ -1036,6 +1072,10 @@ func (s *SFU) renegotiate(peer *Peer, signal Signal) error {
 	if publicationID == "" {
 		publicationID = PublicationID(uuid.NewString())
 	}
+	// The codec the answer may carry comes from this publisher's own offer, for the same
+	// reason it does on the view path: an output the client cannot decode is a screen
+	// that negotiates and never appears.
+	peer.screenCodec = screenTrackCodec(*signal.SDP)
 	// The output track is added before the description is created, so the answer
 	// actually satisfies the offer. Creating it afterwards would produce an answer the
 	// client's offer did not ask for, which a peer connection rejects.
@@ -1463,7 +1503,12 @@ func (p *Peer) addScreenOutputOfKind(kind PublicationKind) error {
 			return nil
 		}
 	}
-	codec := webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}
+	codec := p.screenCodec
+	if codec.MimeType == "" {
+		// No offer has been read on this connection (a harness, or a publication that
+		// names media already negotiated): H264 is what this build sends by preference.
+		codec = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}
+	}
 	label := "screen"
 	if kind == PublicationScreenAudio {
 		codec = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}
@@ -1705,6 +1750,83 @@ func mediaMid(media sdpMedia) string {
 		}
 	}
 	return ""
+}
+
+// videoCodecsInOffer returns the video codec names a client's offer lists, in the order
+// it listed them.
+//
+// The order is the client's own preference — the codec it is best placed to encode and to
+// decode — and it is the only statement about that which a server can read. A browser
+// that lists VP8 first means it, and answering with the codec this build happens to like
+// best produced a share that negotiated, arrived in full and decoded to nothing: the
+// publisher encoded H264 and Firefox's decoder produced no frame from any of it (ENG-05,
+// measured on the Firefox project, 2 October).
+func videoCodecsInOffer(description webrtc.SessionDescription) []string {
+	names := []string{}
+	for _, media := range remoteMedia(description.SDP) {
+		if !isVideoMedia(media) {
+			continue
+		}
+		for _, attribute := range media.attributes {
+			if !strings.HasPrefix(attribute, "a=rtpmap:") {
+				continue
+			}
+			fields := strings.Fields(strings.TrimPrefix(attribute, "a=rtpmap:"))
+			if len(fields) < 2 {
+				continue
+			}
+			names = append(names, strings.ToLower(strings.SplitN(fields[1], "/", 2)[0]))
+		}
+	}
+	return names
+}
+
+// videoCapability names a codec this build carries, in the form a track is created with.
+func videoCapability(name string) (webrtc.RTPCodecCapability, bool) {
+	switch name {
+	case "h264":
+		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}, true
+	case "vp8":
+		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: videoClockRate}, true
+	default:
+		return webrtc.RTPCodecCapability{}, false
+	}
+}
+
+// screenTrackCodec chooses the codec the server will send a screen with, from the codecs
+// the client's own offer listed and in the order it listed them.
+//
+// H264 is the default only when the offer says nothing this build can carry: the answer
+// has to name a codec the offer contained, or the negotiation fails outright, and the
+// output track is created from the offer *before* it is applied, so the decision has to be
+// made from the description's own text.
+func screenTrackCodec(description webrtc.SessionDescription) webrtc.RTPCodecCapability {
+	for _, name := range videoCodecsInOffer(description) {
+		if capability, ok := videoCapability(name); ok {
+			return capability
+		}
+	}
+	return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate}
+}
+
+// screenPublicationCodec reports the codec a room's live screen publication is encoded
+// with, which is what a viewer's output has to carry: the server forwards payloads rather
+// than transcoding, so an output negotiated for a different codec delivers bytes the
+// receiver cannot decode — the same shape of failure that answering a VP8-first browser
+// with H264 produced. An empty capability means nothing is being published.
+func (s *SFU) screenPublicationCodec(room string) webrtc.RTPCodecCapability {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, publication := range s.existingRoom(room).list() {
+		if publication.Kind != PublicationScreenVideo {
+			continue
+		}
+		if owner := s.peers[publication.Owner]; owner != nil {
+			return owner.screenCodec
+		}
+		return webrtc.RTPCodecCapability{}
+	}
+	return webrtc.RTPCodecCapability{}
 }
 
 // peerIsViewing reports whether the offer that was just applied is a client asking to

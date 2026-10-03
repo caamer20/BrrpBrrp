@@ -35,6 +35,16 @@ const SPEAKERS_WITH_SPEAK = ['channel.read', 'message.send', 'voice.connect', 'v
 // capturePeers keeps a handle on every peer connection the page creates, so the journey
 // can read the transport counters the application itself never exposes.
 async function capturePeers(page) {
+  // A page's own errors are the one diagnostic a screenshot cannot show, and the trace
+  // does not always carry them (Firefox's did not). Only errors and warnings are
+  // printed, so an ordinary run stays quiet and a failure names what the browser
+  // complained about.
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') {
+      console.log(`PAGE-CONSOLE ${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on('pageerror', (error) => console.log(`PAGE-ERROR ${error.message}`));
   await page.addInitScript(() => {
     // Chromium's fake-device capture can hang in the host audio service before a track
     // exists. Generate a real MediaStream with Web Audio for this transport-only journey.

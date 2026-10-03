@@ -112,7 +112,12 @@ async function run() {
         ...cleanEnv,
         BRRP_E2E_BASE_URL: baseURL,
         BRRP_E2E_DATA_DIR: dataDir,
-        BRRP_E2E_PRIVATE_CONVERSATIONS: process.env.BRRP_E2E_PRIVATE_CONVERSATIONS || '0'
+        BRRP_E2E_PRIVATE_CONVERSATIONS: process.env.BRRP_E2E_PRIVATE_CONVERSATIONS || '0',
+        // Forwarded by name, like the feature mode above: every BRRP_ variable is
+        // stripped from the child so the server's own configuration cannot leak into
+        // the run, and a project the config defines only for this flag would otherwise
+        // never exist.
+        BRRP_E2E_FIREFOX: process.env.BRRP_E2E_FIREFOX || '0'
       },
       stdio: 'inherit'
     }
