@@ -4,6 +4,7 @@ import {
   captureGeneratedAudio,
   createAccount,
   createRole,
+  expectAccessible,
   OWNER,
   setRolePermissions,
   signIn,
@@ -716,6 +717,59 @@ test('a shared screen reaches another browser and stops cleanly', async ({
     await expect
       .poll(async () => (await decodedVideo(viewer)).frames, { timeout: 30000 })
       .toBeGreaterThan(firstDecoded.frames + 3);
+
+    // The viewer's controls over the picture (ENG-04). Audio-only is asserted against the
+    // inbound track, not the element: the point of the choice is that the picture stops
+    // being decoded, and hiding the element would leave the decode running.
+    const stage = viewer.locator('.screen-stage');
+    await expect(stage).toBeVisible();
+    const videoShape = await viewer.locator('video.shared-screen').evaluate((node) => ({
+      muted: node.muted,
+      inline: node.playsInline,
+      tracks: node.srcObject ? node.srcObject.getVideoTracks().length : 0
+    }));
+    expect(videoShape.muted, 'the screen element is not muted').toBe(true);
+    expect(videoShape.inline, 'the screen element is not inline').toBe(true);
+    expect(videoShape.tracks, 'the viewer has no inbound video track').toBeGreaterThan(0);
+
+    await stage.getByRole('button', { name: 'Audio only' }).click();
+    await expect(stage.getByText(/the picture is not being decoded/)).toBeVisible();
+    expect(
+      await viewer
+        .locator('video.shared-screen')
+        .evaluate((node) => node.srcObject.getVideoTracks()[0].enabled)
+    ).toBe(false);
+    // The element is still mounted and the control that brings the picture back is
+    // reachable: an audio-only view must never strand the person in it.
+    await expect(stage.getByRole('button', { name: 'Show picture' })).toBeVisible();
+    await stage.getByRole('button', { name: 'Show picture' }).click();
+    expect(
+      await viewer
+        .locator('video.shared-screen')
+        .evaluate((node) => node.srcObject.getVideoTracks()[0].enabled)
+    ).toBe(true);
+    await expect
+      .poll(async () => (await decodedVideo(viewer)).frames, { timeout: 30000 })
+      .toBeGreaterThan(firstDecoded.frames + 3);
+
+    // Fullscreen and the larger stage are the browser's own state and the viewer's own
+    // preference; both are asserted where they actually live.
+    await stage.getByRole('button', { name: 'Enlarge' }).click();
+    await expect(stage).toHaveClass(/large/);
+    await stage.getByRole('button', { name: 'Fullscreen' }).click();
+    await expect
+      .poll(() => viewer.evaluate(() => document.fullscreenElement?.className ?? ''))
+      .toContain('screen-stage');
+    await stage.getByRole('button', { name: 'Exit fullscreen' }).click();
+    await expect.poll(() => viewer.evaluate(() => document.fullscreenElement)).toBe(null);
+
+    // A phone keeps the picture and its controls: the layout a share is hardest to use on
+    // is the one it is most often watched on.
+    await viewer.setViewportSize({ width: 390, height: 844 });
+    await expect(stage).toBeVisible();
+    await expect(stage.getByRole('button', { name: 'Audio only' })).toBeVisible();
+    await expectAccessible(viewer);
+    await viewer.setViewportSize({ width: 1280, height: 720 });
 
     // Stopping the share releases it: the room hears the stop, the browser's capture
     // is stopped, the picture stops arriving, and both clients are still in the call

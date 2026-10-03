@@ -1333,6 +1333,53 @@ owner's decisions have already fixed and the ones with no external dependency.
   by the permalink and initial-route journeys), and it says nothing about Back from a voice
   channel: joining voice is not a conversation selection and writes no entry.
 
+### 11j. ENG-04 — viewer controls, and the phone layout a share is watched on
+
+- **What a viewer gets.** `ScreenStage.svelte` replaces the bare `<video>` the workspace
+  used to place: the picture, a placeholder that says the picture is not being decoded, and
+  three controls — **Audio only**, **Enlarge**, **Fullscreen**. All three are real buttons
+  with `aria-pressed`, so the state is announced, and the stage is a labelled region.
+- **Audio-only is a data choice, not a display trick.** Hiding the element would keep the
+  browser receiving and decoding a picture nobody asked to see, which is the cost the
+  choice exists to avoid — so `applyScreenAudioOnly` disables the inbound *video tracks*
+  and leaves the audio alone (the desktop's sound is what the viewer chose to keep). The
+  element stays mounted in both states and the control that restores the picture stays
+  reachable: an audio-only view must never strand the person in it. The store applies the
+  preference on the attach path, so a share that starts while audio-only is on arrives
+  already silenced rather than playing one frame first. Fullscreen is an explicit request to
+  see the picture, so it clears audio-only rather than filling the screen with black.
+- **A real layout bug the phone assertion found.** The stage was rendered inside the sidebar,
+  which on a phone is a drawer — so a viewer with their channel list closed would have had
+  no picture and no controls. It is placed at the workspace root now, outside every drawer;
+  it is fixed-positioned, so where it sits in the tree is about who can see it, not layout.
+- **Two contrast violations the phone sweep found, and fixed.** My own pressed-state chip
+  measured 3.27:1 (`#0d1117` on the accent green) and now uses the theme's own
+  `--accent-text`. The other two were pre-existing and only visible on a pale selected row
+  in the light theme: `--muted`/`--faint` measured 4.37:1 against `#dfead9` — just under the
+  threshold, on the two rows a person reads first. The light theme's muted tone is now
+  `#566272` (4.9:1 there, 6.1:1 on white). The accessibility helper now reports the measured
+  ratio and both colours with each violation, because a contrast fix depends on the numbers.
+- **Tests.** `screen-receive.test.mjs`: audio-only disables video tracks and leaves audio
+  tracks enabled, restores them, and tolerates a missing stream; the stage keeps the control
+  that turns the picture back on. `voice-state.test.mjs`: a share arriving while audio-only
+  is on is born silenced, and turning the picture back on re-enables it — the shell now
+  compiles the real `screen-receive.ts` rather than standing in for it, and its stream
+  fixtures grew the `getVideoTracks` a stream owes. The two-browser journey asserts, on the
+  viewer's side, that the element is muted and inline, that Audio only disables the inbound
+  track while the picture control remains reachable, that the picture resumes decoding
+  afterwards, that Enlarge and Fullscreen take effect where they live (`document.fullscreenElement`,
+  the element's own class), and that at 390×844 the stage and its controls are visible and
+  axe-clean.
+- **One source-text test replaced rather than re-pinned.** The old assertion that
+  `Workspace.svelte` contains `class="shared-screen"` moved to the component and gained the
+  behavioural assertions above; a test that greps a template for `muted` is not what proves
+  a viewer's picture is muted.
+- **Commands and results.** 332/332 frontend unit tests; `svelte-check` 0/0; formatting
+  clean; voice project 9 passed; default mode **27 passed**, private mode **41 passed**.
+- **What it does not prove.** Fullscreen was asserted in headless Chromium only, so the
+  browser matrix (Firefox, Safari) for these controls is still owed; and the phone layout
+  was measured at one viewport (390×844), not across the range of real devices.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
@@ -1340,8 +1387,9 @@ tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **EN
 (the codec policy and the Firefox project, tranche 10), **ENG-07** (the documented media
 limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), **ENG-13**
 (the storage quota, the disk guard and the single-sourced limits), **ENG-08**
-(emphasis and block quotes), **ENG-09** (the member profile surface) and **ENG-10**
-(Back and Forward between conversations).
+(emphasis and block quotes), **ENG-09** (the member profile surface), **ENG-10**
+(Back and Forward between conversations) and **ENG-04** (viewer controls and the phone
+layout).
 
 Still open, in the order they are worth taking:
 

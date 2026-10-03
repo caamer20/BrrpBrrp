@@ -11,6 +11,15 @@ const compiled = ts
   })
   .outputText.replace(/import .*? from .*?;\n/g, '')
   .replace('export const voice = new Voice();', 'export { Voice };');
+// The screen-receive helpers are pure and are used on the attach path, so the real module
+// is compiled into the same bundle rather than stood in for: a stub here would let the
+// preference stop silencing the inbound picture without any test noticing.
+const screenReceive = ts
+  .transpileModule(
+    await readFile(new URL('../src/lib/screen-receive.ts', import.meta.url), 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }
+  )
+  .outputText.replace(/^export /gm, '');
 const prelude = `
 const $state = value => value;
 const storage = {getItem:()=>null,setItem:()=>{}};
@@ -36,7 +45,8 @@ export const applyScreenPreset = async (sender, preset) => { presetApplications.
 export const storedValues = {};
 `;
 const { Voice, workspace, setCapture, presetApplications } = await import(
-  'data:text/javascript;base64,' + Buffer.from(prelude + compiled).toString('base64')
+  'data:text/javascript;base64,' +
+    Buffer.from(prelude + screenReceive + compiled).toString('base64')
 );
 
 function connected() {
@@ -241,7 +251,7 @@ function videoElement() {
 
 test('a screen that arrives before the element is rendered once the element exists', () => {
   const voice = new Voice();
-  const stream = { getTracks: () => [] };
+  const stream = { getTracks: () => [], getVideoTracks: () => [] };
   voice.attachScreen(stream);
   // The element has not mounted yet: the share is announced and the stream held, but
   // nothing has been rendered, because there was nothing to render into.
@@ -261,7 +271,7 @@ test('a screen that arrives after the element is rendered immediately', () => {
   const voice = new Voice();
   const element = videoElement();
   voice.bindScreenElement(element);
-  const stream = { getTracks: () => [] };
+  const stream = { getTracks: () => [], getVideoTracks: () => [] };
   voice.attachScreen(stream);
   assert.equal(element.srcObject, stream);
   assert.equal(element.played, 1);
@@ -274,7 +284,7 @@ test('binding the same element twice does not restart playback', () => {
   const voice = new Voice();
   const element = videoElement();
   voice.bindScreenElement(element);
-  const stream = { getTracks: () => [] };
+  const stream = { getTracks: () => [], getVideoTracks: () => [] };
   voice.attachScreen(stream);
   voice.bindScreenElement(element);
   voice.bindScreenElement(element);
@@ -282,13 +292,26 @@ test('binding the same element twice does not restart playback', () => {
   assert.equal(element.srcObject, stream);
 });
 
+test('a share that arrives while audio-only is on is born silenced', () => {
+  // The preference outlives one share: somebody watching on a phone with a data limit who
+  // chose audio-only must not get one frame of the next share decoded before they can
+  // choose again. The store applies the preference on the attach path.
+  const voice = new Voice();
+  const video = { enabled: true };
+  voice.setScreenAudioOnly(true);
+  voice.attachScreen({ getTracks: () => [video], getVideoTracks: () => [video] });
+  assert.equal(video.enabled, false, 'the arriving picture was not silenced');
+  voice.setScreenAudioOnly(false);
+  assert.equal(video.enabled, true, 'turning the picture back on did not re-enable it');
+});
+
 test('a second share replaces the first on the same element', () => {
   const voice = new Voice();
   const element = videoElement();
   voice.bindScreenElement(element);
-  const first = { getTracks: () => [] };
+  const first = { getTracks: () => [], getVideoTracks: () => [] };
   voice.attachScreen(first);
-  const second = { getTracks: () => [] };
+  const second = { getTracks: () => [], getVideoTracks: () => [] };
   voice.attachScreen(second);
   assert.equal(element.srcObject, second, 'the element still shows the previous share');
   assert.equal(element.played, 2, 'a new share was not started');
@@ -298,14 +321,14 @@ test('the element going away does not leave the model pointing at a detached nod
   const voice = new Voice();
   const element = videoElement();
   voice.bindScreenElement(element);
-  voice.attachScreen({ getTracks: () => [] });
+  voice.attachScreen({ getTracks: () => [], getVideoTracks: () => [] });
   voice.bindScreenElement(null);
   assert.equal(voice.screenElement, null);
   // A stream arriving after that is held rather than written into nothing, so a share
   // that arrives while the workspace is between renders is not lost. The detached element
   // keeps whatever it had — it is no longer on screen, and touching it would be the only
   // way to leak the model into a node nobody owns.
-  const stream = { getTracks: () => [] };
+  const stream = { getTracks: () => [], getVideoTracks: () => [] };
   voice.attachScreen(stream);
   assert.equal(voice.screenStream, stream);
   assert.notEqual(element.srcObject, stream, 'a stream was written into a detached element');

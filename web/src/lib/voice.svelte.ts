@@ -5,7 +5,7 @@ import { errorMessage } from './api';
 import type { RealtimeEvent } from './types';
 import { VoiceChime } from './voice-chime';
 import { describePath } from './connection-path';
-import { VIEW_STREAM_ID, isViewOnlyTrack } from './screen-receive';
+import { applyScreenAudioOnly, VIEW_STREAM_ID, isViewOnlyTrack } from './screen-receive';
 import {
   applyScreenPreset,
   canShareScreen,
@@ -89,6 +89,13 @@ class Voice {
   screenLabel = $state('');
   screenMessage = $state('');
   screenStream = $state<MediaStream | null>(null);
+  // How the picture is presented, and whether it is decoded at all. Both are the
+  // viewer's, both outlive one share, and neither is the server's business: the room
+  // does not know who is watching on a phone with a data limit.
+  screenStage = $state<'corner' | 'large'>(
+    storage.getItem('brrp.screen-stage') === 'large' ? 'large' : 'corner'
+  );
+  screenAudioOnly = $state(storage.getItem('brrp.screen-audio-only') === 'true');
   private releaseScreenWatch: (() => void) | null = null;
   microphone = $state(storage.getItem('brrp.microphone') || '');
   pushToTalk = $state(storage.getItem('brrp.push-to-talk') === 'true');
@@ -564,6 +571,9 @@ class Voice {
     // screen was announced as shared, and nothing arrived: a blank rectangle with no
     // error anywhere, which a viewer cannot tell from a share that failed to send.
     this.screenShared = true;
+    // A share that starts while the viewer prefers audio-only arrives already silenced,
+    // rather than playing one frame's worth of a picture they asked not to decode.
+    applyScreenAudioOnly(stream, this.screenAudioOnly);
     this.renderScreen();
   }
 
@@ -583,6 +593,17 @@ class Voice {
    * screen was announced, and nothing was ever rendered — a blank rectangle with no
    * error, indistinguishable from a share that failed to send.
    */
+  setScreenAudioOnly(audioOnly: boolean) {
+    this.screenAudioOnly = audioOnly;
+    storage.setItem('brrp.screen-audio-only', String(audioOnly));
+    applyScreenAudioOnly(this.screenStream, audioOnly);
+  }
+
+  setScreenStage(stage: 'corner' | 'large') {
+    this.screenStage = stage;
+    storage.setItem('brrp.screen-stage', stage);
+  }
+
   bindScreenElement(element: HTMLVideoElement | null) {
     this.screenElement = element;
     this.renderScreen();

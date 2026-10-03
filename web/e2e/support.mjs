@@ -136,7 +136,13 @@ export async function expectAccessible(page) {
     id,
     impact,
     help,
-    targets: nodes.map(({ target }) => target).slice(0, 8)
+    targets: nodes.map(({ target }) => target).slice(0, 8),
+    // The measured ratio and the two colours, for the one rule where the fix depends on
+    // numbers rather than on structure.
+    detail: nodes
+      .slice(0, 3)
+      .map(({ failureSummary }) => failureSummary)
+      .filter(Boolean)
   }));
   if (violations.length) {
     throw new Error(`accessibility violations: ${JSON.stringify(violations, null, 2)}`);

@@ -17,30 +17,6 @@
   import ThreadListPanel from './ThreadListPanel.svelte';
   import ChannelSwitcher from './ChannelSwitcher.svelte';
 
-  /**
-   * Hands the screen element to the voice model when it mounts.
-   *
-   * An action rather than `bind:this`, because binding records the element and nothing
-   * else: it does not tell the model that a stream is now waiting for it. A share can
-   * arrive before this element exists — on a slow join it usually does — and the old
-   * binding attached the stream only when the stream arrived, so the first share of a
-   * call rendered a blank rectangle with no error anywhere.
-   */
-  function screenTarget(
-    node: HTMLVideoElement,
-    voice: { bindScreenElement: (element: HTMLVideoElement | null) => void }
-  ) {
-    voice.bindScreenElement(node);
-    return {
-      update(next: typeof voice) {
-        next.bindScreenElement(node);
-      },
-      destroy() {
-        voice.bindScreenElement(null);
-      }
-    };
-  }
-
   import LazyPanel from './LazyPanel.svelte';
   import { drawerFocus } from '../drawer-focus';
   import { voice } from '../voice.svelte';
@@ -48,6 +24,7 @@
   import ExportPanel from './ExportPanel.svelte';
   import MemberProfile from './MemberProfile.svelte';
   import VoiceControls from './VoiceControls.svelte';
+  import ScreenStage from './ScreenStage.svelte';
   let narrow = $state(window.innerWidth <= 640);
   let overlayMembers = $state(window.innerWidth <= 900);
   let channelDrawer: HTMLElement;
@@ -297,19 +274,6 @@
           </div>{/each}{/if}
     </nav>
     <VoiceControls />
-    {#if voice.screenShared}
-      <!-- A shared screen, rendered once for the whole workspace. The element is muted
-           and inline: a video element that tried to unmute would play the sharer's system
-           audio at everybody watching, and inline keeps a phone from going fullscreen. -->
-      <video
-        use:screenTarget={voice}
-        class="shared-screen"
-        autoplay
-        playsinline
-        muted
-        aria-label="A screen being shared in this conversation"
-      ></video>
-    {/if}
     <div class="sidebar-bottom">
       <span class="connection-dot" class:connected={workspace.connection === 'connected'}
       ></span><span
@@ -342,6 +306,11 @@
       >
     </div>
   </aside>
+  <!-- The shared screen is placed here, outside the sidebar and outside every drawer, so a
+       phone that has its channel list closed still shows the picture and its controls.
+       The stage is fixed-positioned, so where it sits in the tree is about who can see it,
+       not about layout. -->
+  {#if voice.screenShared}<ScreenStage />{/if}
   <main
     class="conversation"
     inert={(narrow && workspace.sidebarOpen) || (overlayMembers && workspace.membersOpen)}

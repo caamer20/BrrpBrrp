@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { VIEW_STREAM_ID, isViewOnlyTrack } from '../src/lib/screen-receive.ts';
+import {
+  applyScreenAudioOnly,
+  screenVideoTracks,
+  VIEW_STREAM_ID,
+  isViewOnlyTrack
+} from '../src/lib/screen-receive.ts';
 
 // A client asking to *watch* a screen and a client asking to *share* one produce
 // byte-identical offers: a receiving video transceiver emits a media section with no
@@ -45,13 +50,38 @@ test('a view track is told from a microphone by its stream id', () => {
   assert.equal(isViewOnlyTrack(microphone), false);
 });
 
-test('the workspace renders a shared screen once, muted and inline', () => {
-  const workspace = read('src/lib/components/Workspace.svelte');
-  // Muted because a video element that unmutes would play the sharer's system audio at
-  // every viewer; inline because a phone should not be taken fullscreen by somebody else
-  // starting a share.
-  assert.match(workspace, /class="shared-screen"/);
-  assert.match(workspace, /muted/);
-  assert.match(workspace, /playsinline/);
-  assert.match(workspace, /aria-label="A screen being shared/);
+test('audio-only stops the picture being decoded, and leaves the sound alone', () => {
+  // Audio-only is a data preference, not a display trick. Hiding the element would keep
+  // the browser receiving and decoding a picture nobody asked to see, which is the cost
+  // the choice exists to avoid; muting the audio would defeat it entirely, because the
+  // desktop's sound is what the viewer chose to keep.
+  const video = { enabled: true };
+  const audio = { enabled: true };
+  const stream = { getVideoTracks: () => [video], getAudioTracks: () => [audio] };
+  applyScreenAudioOnly(stream, true);
+  assert.equal(video.enabled, false);
+  assert.equal(audio.enabled, true);
+  applyScreenAudioOnly(stream, false);
+  assert.equal(video.enabled, true);
+  // A stream that has not arrived, or one with no video at all (a screen whose capture
+  // stopped before the announcement did), is not an error.
+  assert.equal(screenVideoTracks(null).length, 0);
+  assert.deepEqual(screenVideoTracks(stream), [video]);
+  applyScreenAudioOnly(null, true);
+  applyScreenAudioOnly({ getVideoTracks: () => [] }, true);
+});
+
+test('the stage keeps the control that turns the picture back on', () => {
+  // The one thing an audio-only view must not take away. The element stays mounted in
+  // both states; only the track is disabled, so the control that reverses the choice is
+  // always reachable and the person is never left with a picture they cannot restore.
+  const stage = readFileSync(
+    new URL('../src/lib/components/ScreenStage.svelte', import.meta.url),
+    'utf8'
+  );
+  assert.match(stage, /class:audio-only=/);
+  assert.match(stage, /class="shared-screen"/);
+  assert.match(stage, /muted/);
+  assert.match(stage, /playsinline/);
+  assert.match(stage, /Show picture/);
 });

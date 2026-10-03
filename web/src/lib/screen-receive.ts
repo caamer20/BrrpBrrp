@@ -27,3 +27,30 @@ export function isViewOnlyTrack(stream: MediaStream | undefined | null): boolean
   const track = stream.getVideoTracks()[0];
   return !!track && track.id.startsWith(VIEW_STREAM_ID);
 }
+
+/**
+ * The video half of a received screen.
+ *
+ * A screen stream is video with an optional audio track beside it (the screen's own
+ * audio is a separate publication). Only the video half is ever silenced: a viewer who
+ * chose audio-only wants to hear the person's desktop, which is the reason the choice
+ * exists.
+ */
+export function screenVideoTracks(stream: MediaStream | undefined | null): MediaStreamTrack[] {
+  return stream ? stream.getVideoTracks() : [];
+}
+
+/**
+ * Whether the picture is being decoded at all, on this viewer.
+ *
+ * Audio-only is a data preference, not a display trick: a hidden element still receives
+ * and decodes the video, so the tracks are disabled rather than the element concealed.
+ * The caller keeps the element mounted, because the control that turns the picture back
+ * on has to stay reachable.
+ */
+export function applyScreenAudioOnly(
+  stream: MediaStream | undefined | null,
+  audioOnly: boolean
+): void {
+  for (const track of screenVideoTracks(stream)) track.enabled = !audioOnly;
+}
