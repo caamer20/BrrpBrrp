@@ -16,7 +16,33 @@ export type Token =
   | { kind: 'text'; value: string }
   | { kind: 'code'; value: string }
   | { kind: 'mention'; value: string; name: string }
-  | { kind: 'link'; value: string };
+  | { kind: 'link'; value: string }
+  | { kind: 'emphasis'; style: 'bold' | 'italic' | 'strike'; tokens: Token[] }
+  | { kind: 'quote'; tokens: Token[] };
+
+/**
+ * The emphasis markers a message may use, longest first.
+ *
+ * Longest first is not a preference: `**bold**` read with `*` before `**` is an empty
+ * italic pair followed by text, which is how a formatting pass turns a bold word into
+ * punctuation.
+ */
+const EMPHASIS: { marker: string; style: 'bold' | 'italic' | 'strike' }[] = [
+  { marker: '**', style: 'bold' },
+  { marker: '__', style: 'bold' },
+  { marker: '~~', style: 'strike' },
+  { marker: '*', style: 'italic' },
+  { marker: '_', style: 'italic' }
+];
+
+/**
+ * How deep emphasis may nest. A cap rather than a limit on the person: it is a bound on
+ * the work one message can make the renderer do, and three is already past anything
+ * somebody types on purpose.
+ */
+const MAX_EMPHASIS_DEPTH = 3;
+
+const WORD = /[A-Za-z0-9_]/;
 
 /**
  * The schemes a message may link to.
@@ -47,9 +73,25 @@ export function tokenizeMessage(input: string): Token[] {
     code.length = 0;
   };
 
+  // Consecutive quoted lines are one quote, so a quoted paragraph renders as a paragraph
+  // rather than as a stack of one-line quotes. The content inside keeps every other rule:
+  // a mention in a quote is still a mention, and a link still needs its scheme.
+  let quoted: string[] = [];
+  const flushQuote = () => {
+    if (!quoted.length) return;
+    const children: Token[] = [];
+    quoted.forEach((line, index) => {
+      if (index > 0) children.push({ kind: 'text', value: '\n' });
+      for (const piece of tokenizeLine(line)) children.push(piece);
+    });
+    tokens.push({ kind: 'quote', tokens: mergeText(children) });
+    quoted = [];
+  };
+
   for (const [index, line] of lines.entries()) {
     const fence = /^\s*(```+|~~~+)\s*([A-Za-z0-9+#-]*)\s*$/.exec(line);
     if (fence) {
+      flushQuote();
       if (inCode) {
         flushCode();
         inCode = false;
@@ -63,6 +105,12 @@ export function tokenizeMessage(input: string): Token[] {
       code.push(line);
       continue;
     }
+    const quote = /^\s*>\s?(.*)$/.exec(line);
+    if (quote) {
+      quoted.push(quote[1]);
+      continue;
+    }
+    flushQuote();
     // The line break is itself content. A message is not a sequence of unrelated lines:
     // `first` and `second` on consecutive lines are one sentence with a line break in
     // it, and rendering them as `firstsecond` changes what was written.
@@ -75,13 +123,98 @@ export function tokenizeMessage(input: string): Token[] {
     for (const piece of tokenizeLine(line)) tokens.push(piece);
   }
   // An unterminated fence is still code: the alternative is rendering a half-pasted
-  // snippet as prose, with its mentions and links live.
+  // snippet as prose, with its mentions and links live. A quote at the end of a message
+  // is flushed for the same reason.
+  flushQuote();
   flushCode();
   return mergeText(tokens);
 }
 
+/**
+ * Splits one line into mentions, links, code spans, emphasis and plain runs.
+ *
+ * Emphasis is read per line and never across one: a `**` left open at the end of a line
+ * must not swallow the next, because the common ways to leave one open are a signature, a
+ * pasted excerpt and a typo — and all three would silently restyle everything below them.
+ */
+function tokenizeLine(line: string, depth = 0): Token[] {
+  if (depth >= MAX_EMPHASIS_DEPTH) return tokenizePlain(line);
+  const pair = findEmphasis(line);
+  if (!pair) return tokenizePlain(line);
+  const pieces: Token[] = tokenizePlain(line.slice(0, pair.start));
+  pieces.push({ kind: 'emphasis', style: pair.style, tokens: tokenizeLine(pair.inner, depth + 1) });
+  pieces.push(...tokenizeLine(line.slice(pair.end), depth));
+  return pieces;
+}
+
+/**
+ * Finds the first emphasis pair on a line that is really a pair, or null when there is
+ * none.
+ *
+ * Both markers have to be markers in their own right. `_` inside a word is how people
+ * write `snake_case`, and a `*` that opens a list or sits between digits is arithmetic,
+ * so an underscore only opens where it is not preceded by a word character and only
+ * closes where it is not followed by one. A pair with nothing between the markers is not
+ * emphasis either — that is what `**` on its own looks like.
+ */
+function findEmphasis(
+  line: string
+): { start: number; end: number; inner: string; style: 'bold' | 'italic' | 'strike' } | null {
+  // The *earliest* pair wins, whatever its marker. Reading the markers in their own order
+  // instead meant `a **bold** and *italic* and ~~struck~~` lost the italic: `~~` came
+  // before `*` in the list, so the strike pair further down the line was taken first and
+  // the recursion resumed after it, leaving the italic unread.
+  let best: {
+    start: number;
+    end: number;
+    inner: string;
+    style: 'bold' | 'italic' | 'strike';
+  } | null = null;
+  for (const { marker, style } of EMPHASIS) {
+    let from = 0;
+    while (from < line.length) {
+      const start = line.indexOf(marker, from);
+      if (start === -1) break;
+      if (best && start > best.start) break;
+      const before = start > 0 ? line[start - 1] : '';
+      const after = line[start + marker.length] ?? '';
+      if (marker === '_' && before !== '' && WORD.test(before)) {
+        from = start + 1;
+        continue;
+      }
+      if (after === '' || /\s/.test(after)) {
+        from = start + marker.length;
+        continue;
+      }
+      // The closing marker: not part of a longer run of the same character, and for `_`
+      // not inside a word.
+      let search = start + marker.length;
+      for (;;) {
+        const end = line.indexOf(marker, search);
+        if (end === -1) break;
+        const inner = line.slice(start + marker.length, end);
+        const closedBefore = line[end - 1] ?? '';
+        const closedAfter = line[end + marker.length] ?? '';
+        const sound =
+          inner.length > 0 &&
+          !/\s$/.test(inner) &&
+          !(marker === '_' && closedAfter !== '' && WORD.test(closedAfter)) &&
+          !(marker.length === 1 && closedBefore === marker);
+        if (sound) {
+          const candidate = { start, end: end + marker.length, inner, style };
+          if (!best || candidate.start < best.start) best = candidate;
+          break;
+        }
+        search = end + 1;
+      }
+      from = best && best.start === start ? start + marker.length : start + 1;
+    }
+  }
+  return best;
+}
+
 /** Splits one line of ordinary text into mentions, links and plain runs. */
-function tokenizeLine(line: string): Token[] {
+function tokenizePlain(line: string): Token[] {
   const pieces: Token[] = [];
   // A mention is a whole token. Allowing a mention to end mid-word is how `@alice`
   // inside an email address becomes a live mention for the wrong person.

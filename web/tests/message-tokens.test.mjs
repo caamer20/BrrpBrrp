@@ -176,3 +176,102 @@ test('code keeps its own whitespace without gaining the surrounding message line
     'before\nafter'
   );
 });
+
+// Emphasis and block quotes (ENG-08). The owner's decision of 2 October bounds this to
+// emphasis and quotes: lists are not in v1. The property that matters is unchanged — no
+// piece of a message ever becomes markup, and the token types are a closed set the
+// renderer chooses elements from.
+test('emphasis becomes a token with its content inside, never a markup string', () => {
+  const tokens = tokenizeMessage('a **bold** and *italic* and ~~struck~~ word');
+  const styles = tokens.filter((t) => t.kind === 'emphasis').map((t) => t.style);
+  assert.deepEqual(styles, ['bold', 'italic', 'strike']);
+  const bold = tokens.find((t) => t.kind === 'emphasis');
+  assert.deepEqual(bold.tokens, [{ kind: 'text', value: 'bold' }]);
+  // The control: the markers are consumed, not left in the text.
+  assert.equal(
+    tokens
+      .filter((t) => t.kind === 'text')
+      .map((t) => t.value)
+      .join(''),
+    'a  and  and  word'
+  );
+});
+
+test('an underscore inside a word is a word, and digits multiply', () => {
+  // `snake_case_name` is how people write identifiers, and `2*3` is arithmetic. Treating
+  // either as emphasis rewrites text the author spelled out.
+  const tokens = tokenizeMessage('use snake_case_name and 2*3 and file_name.py');
+  assert.equal(
+    tokens.some((t) => t.kind === 'emphasis'),
+    false
+  );
+  assert.equal(tokens.map((t) => t.value).join(''), 'use snake_case_name and 2*3 and file_name.py');
+});
+
+test('an unmatched marker stays literal, and emphasis never crosses a line', () => {
+  const unclosed = tokenizeMessage('a **bold that never closes');
+  assert.equal(
+    unclosed.some((t) => t.kind === 'emphasis'),
+    false
+  );
+  assert.equal(unclosed.map((t) => t.value).join(''), 'a **bold that never closes');
+  // A marker left open at the end of a line -- a typo, a signature, a pasted excerpt --
+  // must not restyle everything below it.
+  const acrossLines = tokenizeMessage('**open\nthis stays plain**');
+  assert.equal(
+    acrossLines.some((t) => t.kind === 'emphasis'),
+    false
+  );
+});
+
+test('code is still literal: markers inside a fence and inside emphasis', () => {
+  const fenced = tokenizeMessage('```\n**not bold** and *not italic*\n```');
+  assert.deepEqual(fenced, [{ kind: 'code', value: '**not bold** and *not italic*' }]);
+  // Emphasis around code: the code stays code, and the emphasis wraps it.
+  const wrapped = tokenizeMessage('**see `x` here**');
+  const bold = wrapped.find((t) => t.kind === 'emphasis');
+  assert.equal(bold.style, 'bold');
+  assert.equal(bold.tokens[0].kind, 'text');
+});
+
+test('mentions and links keep their own tokens inside emphasis', () => {
+  const tokens = tokenizeMessage('**ask @alice at https://example.com**');
+  const bold = tokens.find((t) => t.kind === 'emphasis');
+  const kinds = bold.tokens.map((t) => t.kind);
+  assert.deepEqual(kinds, ['text', 'mention', 'text', 'link']);
+});
+
+test('consecutive quoted lines are one quote, and its content is still tokenized', () => {
+  const tokens = tokenizeMessage('before\n> first @alice\n> second\n\nafter');
+  const quote = tokens.find((t) => t.kind === 'quote');
+  assert.ok(quote, 'the quoted lines did not become a quote');
+  // Adjacent text runs are merged, so the two quoted lines arrive as one run around the
+  // mention with the line break inside it -- which is what the renderer should have.
+  assert.deepEqual(
+    quote.tokens.map((t) => t.kind),
+    ['text', 'mention', 'text']
+  );
+  assert.equal(quote.tokens[2].value, '\nsecond');
+  assert.equal(quote.tokens[1].name, 'alice');
+  // Two lines separated by a blank line are two quotes: a quote is a run of adjacent
+  // quoted lines, not everything below the first one.
+  const split = tokenizeMessage('> one\n\n> two');
+  assert.equal(split.filter((t) => t.kind === 'quote').length, 2);
+});
+
+test('malicious markup stays inert inside and outside emphasis', () => {
+  const tokens = tokenizeMessage('**<b>not a tag</b>** <img src=x onerror=alert(1)>');
+  const bold = tokens.find((t) => t.kind === 'emphasis');
+  assert.deepEqual(bold.tokens, [{ kind: 'text', value: '<b>not a tag</b>' }]);
+  // Nothing anywhere in the result is anything but the closed set of token kinds, which
+  // is what the renderer chooses an element from.
+  const kinds = new Set();
+  const collect = (list) => {
+    for (const token of list) {
+      kinds.add(token.kind);
+      if (token.tokens) collect(token.tokens);
+    }
+  };
+  collect(tokens);
+  assert.deepEqual([...kinds].sort(), ['emphasis', 'text']);
+});

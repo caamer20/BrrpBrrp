@@ -1214,13 +1214,56 @@ owner's decisions have already fixed and the ones with no external dependency.
   this product's upload rate (ten per minute per account) and is recorded here as the
   reason it has not been turned into a counter.
 
+### 11g. ENG-08 — emphasis and block quotes, and still no markup
+
+- **What the row bounds.** The owner decided on 2 October that formatting is emphasis and
+  block quotes only: lists are out of v1, and the tokenizer's contract is unchanged — no
+  piece of a message ever becomes markup. The renderer chooses an element from a closed set
+  of token kinds; the message contributes text.
+- **Changed files and reason.** `web/src/lib/message-tokens.ts` gains two token kinds —
+  `emphasis` (bold, italic, strike) and `quote`, both carrying their own tokens — and the
+  parsing for them: markers are read *per line* so an unclosed `**` cannot restyle the rest
+  of a message, `_` inside a word is left alone (`snake_case_name`) and `*` between digits
+  is arithmetic, an unmatched marker stays literal, and consecutive `> ` lines become one
+  quote whose content is still tokenized (a mention in a quote is a mention). Emphasis
+  nests to a depth of three, which is a bound on the renderer's work rather than on the
+  person. `web/src/lib/components/MessageTokens.svelte` is new: the recursive renderer,
+  moved out of `MessageItem.svelte`'s inline template (which could only ever render one
+  level) and now used by it. Code is untouched by all of this: a fenced block is still
+  literal, and markers inside one are text.
+- **One bug the tests found, and it is the kind this file's history is made of.** The first
+  parser read the markers in their own order — `**`, `__`, `~~`, `*`, `_` — so in
+  `a **bold** and *italic* and ~~struck~~` it found the strike pair first, recursed past it,
+  and lost the italic entirely. The rule is that the *earliest* pair wins whatever its
+  marker, and the test that caught it is the one that lists three styles in one line.
+- **Tests.** Seven tokenizer tests, each with its control: the three styles become tokens
+  with their content inside and the markers are consumed; `snake_case_name`, `2*3` and
+  `file_name.py` stay text; an unmatched marker stays literal and emphasis never crosses a
+  line; a fence keeps markers literal and emphasis around code leaves the code a token;
+  mentions and links keep their own tokens inside emphasis; consecutive quoted lines are one
+  quote, two lines separated by a blank line are two, and a mention inside a quote is still a
+  mention; and malicious markup stays inert — `**<b>not a tag</b>**` produces a bold token
+  whose only child is text, and the set of kinds in the result is exactly
+  `emphasis, text`. The rendered proof is in `release.spec.mjs`: the browser journey posts
+  `**bold text** and *italic text*`, a two-line quote, and `**<b>not a tag</b>**`, and
+  asserts the `strong`/`em`/`blockquote` elements exist with the right text while no `b`
+  element appears anywhere in that message's body.
+- **Commands and results.** 328/328 frontend tests; `svelte-check` 0/0; formatting clean;
+  the release project green (7 journeys); default mode **26 passed**, private mode
+  **40 passed** against the rebuilt binary.
+- **What it does not prove.** It does not render an Arabic or right-to-left emphasis (that
+  is a Phase C proof owed), does not cover lists (out of v1 by decision), and says nothing
+  about how a screen reader announces nested emphasis — the accessibility sweep checks
+  violations, not comprehension.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
 tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **ENG-05**
 (the codec policy and the Firefox project, tranche 10), **ENG-07** (the documented media
-limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake) and **ENG-13**
-(the storage quota, the disk guard and the single-sourced limits).
+limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), **ENG-13**
+(the storage quota, the disk guard and the single-sourced limits) and **ENG-08**
+(emphasis and block quotes).
 
 Still open, in the order they are worth taking:
 

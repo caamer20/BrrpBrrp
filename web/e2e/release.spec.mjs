@@ -60,6 +60,26 @@ test('first setup, persistent chat, search and sign-out', async ({ page, context
   await expect(shapedContent).toBeVisible();
   expect(await shapedContent.last().innerText()).toBe(shaped);
 
+  // Emphasis and quotes become elements the renderer chooses, never markup taken from
+  // the message. The last line here is the control: text that looks like a tag must
+  // produce no element, while the emphasis around it is real.
+  await composer.fill('**bold text** and *italic text*');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  const formatted = log.locator('article.message').filter({ hasText: 'bold text' }).last();
+  await expect(formatted.locator('.message-content strong')).toHaveText('bold text');
+  await expect(formatted.locator('.message-content em')).toHaveText('italic text');
+
+  await composer.fill('> quoted line\n> second quoted line');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  const quoted = log.locator('article.message').filter({ hasText: 'quoted line' }).last();
+  await expect(quoted.locator('.message-content blockquote')).toContainText('second quoted line');
+
+  await composer.fill('**<b>not a tag</b>**');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  const inert = log.locator('article.message').filter({ hasText: 'not a tag' }).last();
+  await expect(inert.locator('.message-content strong')).toHaveText('<b>not a tag</b>');
+  await expect(inert.locator('.message-content b')).toHaveCount(0);
+
   // A focused discussion keeps its own draft, uploads, and live replies.
   await composer.fill('Keep my channel draft');
   const original = log

@@ -6,6 +6,7 @@
   import ReactionPicker from './ReactionPicker.svelte';
   import { reactionName } from '../reactions';
   import { tokenizeMessage, linkHost } from '../message-tokens';
+  import MessageTokens from './MessageTokens.svelte';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import Modal from './Modal.svelte';
@@ -150,12 +151,6 @@
   let threadTitleInput = $state<HTMLInputElement>();
   let threadTitle = $state('');
   let threadError = $state('');
-  // A mention of somebody who is not here reads as plain text rather than as a link
-  // to nowhere, which is also what a name inside a code block is.
-  const memberExists = (name: string) =>
-    workspace.state?.users.some((member) => member.username.toLowerCase() === name.toLowerCase())
-      ? ''
-      : 'Nobody by this name is on this server';
 
   async function startNamedThread() {
     const title = threadTitle.trim();
@@ -253,17 +248,7 @@
         </div>
       </form>
     {:else}
-      <p class="message-content">
-        {#each tokens(message.content) as token, index (index)}{#if token.kind === 'link'}<a
-              href={token.value}
-              target="_blank"
-              rel="noopener noreferrer">{token.value}</a
-            >{:else if token.kind === 'mention'}<span
-              class="mention"
-              title={memberExists(token.name)}>{token.value}</span
-            >{:else if token.kind === 'code'}<code class="message-code">{token.value}</code
-            >{:else}{token.value}{/if}{/each}
-      </p>
+      <p class="message-content"><MessageTokens tokens={tokens(message.content)} /></p>
     {/if}
     {#each message.attachments as attachment (attachment.id)}
       {#if /^image\/(png|jpeg|webp|gif)$/.test(attachment.mime_type)}<ImagePreview
