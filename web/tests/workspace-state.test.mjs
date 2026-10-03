@@ -49,7 +49,21 @@ export const store = {
 };
 const storage = store;
 const localStorage = storage;
-const window = { innerWidth: 1200 };
+const windowListeners = new Map();
+const window = {
+  innerWidth: 1200,
+  addEventListener: (type, handler) => {
+    const handlers = windowListeners.get(type) ?? new Set();
+    handlers.add(handler);
+    windowListeners.set(type, handlers);
+  },
+  removeEventListener: (type, handler) => windowListeners.get(type)?.delete(handler)
+};
+// The store's connectivity triggers listen on the window, so the harness has to be able
+// to fire them: "connectivity came back" is the condition the fast retry exists for.
+export const dispatchWindow = (type) => {
+  for (const handler of [...(windowListeners.get(type) ?? [])]) handler({ type });
+};
 const Notification = { permission: 'default' };
 const navigator = {};
 // The workspace's sign-out path asks the notification worker to stop first. The real
@@ -73,7 +87,40 @@ export const setDocumentFocus = (hidden, focused) => {
   document.hidden = hidden;
   document.hasFocus = () => focused;
 };
-const WebSocket = { OPEN: 1 };
+// A socket the tests can drive: the reconnect policy is about what happens when one
+// closes, goes silent, or a second one is opened, and none of that is observable through
+// a plain object.
+export const sockets = [];
+class FakeWebSocket {
+  static OPEN = 1;
+  constructor(url) {
+    this.url = url;
+    this.sent = [];
+    this.readyState = 0;
+    sockets.push(this);
+  }
+  send(data) {
+    this.sent.push(data);
+  }
+  close() {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.onclose?.();
+  }
+  open() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+  deliver(payload) {
+    this.onmessage?.({ data: JSON.stringify(payload) });
+  }
+}
+const WebSocket = FakeWebSocket;
+// The reconnect policy module is stripped with the other imports; these are its values,
+// kept in step by web/tests/reconnect.test.mjs, which asserts the real module.
+const HEARTBEAT_WATCH_MS = 10000;
+const SILENT_CONNECTION_MS = 75000;
+const reconnectDelayMs = attempt => Math.min(30000, 1000 * 2 ** attempt);
 const errorMessage = error => error.message;
 // The protocol handshake's module is stripped with the other imports. The stub answers
 // compatible unless a test drives it, and a test that wants the incompatible state sets
@@ -100,7 +147,9 @@ const {
   setDocumentFocus,
   apiError,
   setNotificationWorker,
-  setProtocolVerdict
+  setProtocolVerdict,
+  sockets,
+  dispatchWindow
 } = await import(
   'data:text/javascript;base64,' + Buffer.from(prelude + shellModules + compiled).toString('base64')
 );
@@ -2377,4 +2426,94 @@ test('a hello from an incompatible server stops sending and keeps the text', asy
   assert.equal(value.hasPendingMessages, true, 'the control could not send at all');
   held.resolve(message('saved'));
   await sending;
+});
+
+// The store half of the reconnect policy (ENG-11): a socket that closes waits out a
+// backoff, but connectivity returning, a foreground resume or a socket that has gone
+// silent all short-circuit it. The plan's budget is ten seconds at p95 after connectivity
+// returns, and the backoff that was pending when it went away knows nothing about that.
+test('connectivity returning reconnects immediately instead of waiting out the backoff', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  // The reconnect re-reads the workspace first, so the stub has to answer with one: a
+  // failed read would leave nothing to connect to and the test would prove nothing.
+  setHandler(async () => state());
+  value.connect();
+  // `enter()` attaches the connectivity watchers in production; the harness drives them
+  // directly, because the alternative is a test that proves nothing about the listeners
+  // by never having any.
+  value.watchConnectivity();
+  // The page has to be in the foreground for the trigger to act: a hidden page's
+  // reconnection would be a guess about a connection nobody is using.
+  setDocumentFocus(false, true);
+  const first = sockets.at(-1);
+  assert.ok(first, 'the workspace did not open a socket');
+  first.open();
+  assert.equal(value.connection, 'connected');
+
+  // The socket dies; a backoff of at least a second is now pending.
+  first.close();
+  assert.equal(value.connection, 'offline');
+  const socketsBefore = sockets.length;
+
+  // The browser says connectivity is back. A reconnect is attempted *now* — which is
+  // observable as a second socket existing before any timer could have fired, because
+  // this test does not advance the clock at all.
+  dispatchWindow('online');
+  // The attempt re-reads the workspace first, so it lands a few tasks later. The wait
+  // below is a quarter of a second — well inside the one-second backoff the closing
+  // socket scheduled — so a socket that appears here appeared *because* connectivity was
+  // reported, which is the whole claim.
+  for (let attempt = 0; attempt < 50 && sockets.length === socketsBefore; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  console.log(
+    'DIAGONLINE',
+    JSON.stringify({
+      sockets: sockets.length,
+      connection: value.connection,
+      stopped: value.stopped,
+      hasState: !!value.state,
+      hasSocket: !!value.socket
+    })
+  );
+  assert.equal(sockets.length, socketsBefore + 1, 'the fast retry did not open a socket');
+});
+
+test('an open socket is left alone when the browser reports connectivity again', (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  setDocumentFocus(false, true);
+  value.connect();
+  const socket = sockets.at(-1);
+  socket.open();
+  const socketsBefore = sockets.length;
+  dispatchWindow('online');
+  dispatchWindow('visibilitychange');
+  assert.equal(sockets.length, socketsBefore, 'a healthy connection was reconnected');
+});
+
+test('a socket that has delivered nothing for over a minute is treated as half-open', (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  value.connect();
+  const socket = sockets.at(-1);
+  socket.open();
+  setDocumentFocus(false, true);
+  const realNow = Date.now;
+  try {
+    // The socket opened a moment ago and received nothing since: not yet.
+    Date.now = () => realNow() + 20_000;
+    value.checkHalfOpen();
+    assert.equal(socket.readyState, 1, 'a socket inside the settle window was closed');
+
+    // Past the server's cadence with no frame at all: closed, so the ordinary reconnect
+    // path runs rather than a second mechanism being invented for it.
+    Date.now = () => realNow() + 80_000;
+    value.checkHalfOpen();
+    assert.equal(socket.readyState, 3, 'a silent socket was left looking connected');
+    assert.equal(value.connection, 'offline');
+  } finally {
+    Date.now = realNow;
+  }
 });

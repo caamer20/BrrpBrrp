@@ -592,3 +592,46 @@ test.describe('phone viewport', () => {
     await expect(composer).toBeInViewport();
   });
 });
+
+// A connection that dies while the page is open has to come back on its own, quickly,
+// without a reload: the plan's budget is ten seconds at p95 after connectivity returns.
+// The socket is severed by the test rather than by the network — the first connection the
+// page opens is closed the moment it opens, and every later one is proxied to the real
+// server — so what is being measured is the client's own recovery, and the assertion is a
+// message sent afterwards being stored: a connection label that says "Connected" while
+// nothing moves would pass a weaker test.
+test('a severed connection reconnects on its own within the budget', async ({ page, context }) => {
+  test.setTimeout(120000);
+  let sever = true;
+  let attempts = 0;
+  await context.routeWebSocket(/\/ws$/, (socket) => {
+    attempts += 1;
+    if (sever) {
+      sever = false;
+      socket.close();
+      return;
+    }
+    socket.connectToServer();
+  });
+
+  await signIn(page, OWNER);
+  const channel = page.getByRole('button', { name: /general/i }).first();
+  await channel.click();
+  const composer = page.locator('.composer textarea').first();
+  await expect(composer).toBeVisible();
+  const connection = page.locator('.sidebar-bottom span').nth(1);
+  // Severed, then recovered without a reload. Ten seconds is the budget rather than a
+  // comfortable round number, so a regression that waits out a thirty-second backoff
+  // fails here.
+  await expect(connection).toHaveText('Connected', { timeout: 10000 });
+
+  // A second attempt is what proves the severance was real: the first connection was
+  // closed by the test, and the workspace is on a later one.
+  expect(attempts, 'the workspace never reconnected').toBeGreaterThanOrEqual(2);
+
+  const line = 'a line sent after the connection came back';
+  await composer.fill(line);
+  await composer.press('Enter');
+  await expect(page.locator(`article.message:has-text("${line}")`).first()).toBeVisible();
+  await expect(page.locator('article.message .message-delivery')).toHaveCount(0);
+});

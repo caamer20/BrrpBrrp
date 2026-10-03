@@ -1173,5 +1173,46 @@ owner's decisions have already fixed and the ones with no external dependency.
   intermittently red on this host, not a claim that it is stable; the Chromium modes have
   not shown it, and the media assertions themselves have never been the failing step.
 
+### 11d. ENG-11 — a reconnect policy that meets the budget
+
+- **What it was.** The socket's backoff doubled to a thirty-second ceiling, and nothing
+  else was watching: no `online` trigger, no foreground resume, and no way to notice a
+  socket that had gone *half-open* — a path that died without a close event, which is the
+  common case on a flaky link. The plan's budget is ten seconds at p95 after connectivity
+  returns, and a schedule that has already climbed cannot meet it.
+- **Changed files and reason.** `web/src/lib/reconnect.ts` — the policy as data:
+  `reconnectDelayMs` (one second doubling to thirty, jitter added by the caller so two
+  tabs do not arrive together) and `SILENT_CONNECTION_MS` (75 s — two and a half of the
+  server's thirty-second `presence.update` frames, so one lost frame is not a
+  reconnection). `web/src/lib/workspace.svelte.ts` — one shared `attemptReconnect`, a
+  `retryNow` that cancels the pending backoff and resets the attempt count when the
+  browser reports connectivity returning (`online`, visibility, focus), and a half-open
+  check every ten seconds that *closes* a silent socket so the ordinary close path runs
+  rather than a second reconnection mechanism existing. The listeners are attached once
+  per session and removed in `stop()`, because a listener left behind by a signed-out
+  session would reconnect as the wrong account. A hidden page is skipped: browsers
+  throttle timers and suspend sockets in the background, and reconnecting there is a guess
+  about a connection nobody is using.
+- **Tests.** `web/tests/reconnect.test.mjs` pins the schedule and the silence window.
+  `web/tests/workspace-state.test.mjs` gained a drivable `WebSocket` and window listeners
+  in its harness and three tests: connectivity returning opens a socket *immediately*
+  (asserted by a socket appearing inside a quarter of a second, well inside the one-second
+  backoff the close scheduled), a healthy connection is left alone, and a socket silent
+  past the window is closed while one inside it is not. `release.spec.mjs` gained "a
+  severed connection reconnects on its own within the budget": the test severs the page's
+  first socket with `routeWebSocket` and proxies every later one to the real server,
+  asserts the workspace is connected within **10 s** (the plan's budget, not a comfortable
+  round number), that at least two connection attempts happened, and that a message sent
+  afterwards is stored rather than merely rendered.
+- **Commands and results.** 321/321 frontend tests; `svelte-check` 0/0; the new journey
+  passes in 2.2 s in the release project. Against the rebuilt artifact
+  (`dist/brrpbrrp-e2e`): default mode **26 passed** (25 + the new journey), private mode
+  **40 passed**, Firefox **11 passed** — the Firefox invocation failed once first with the
+  open sign-in intermittent recorded in 11c, and passed on the rerun.
+- **What it does not prove.** The half-open detector is proven with an injected clock, not
+  by a real dead path; the `online` trigger is proven in the store harness and by the
+  browser's own event, not by unplugging a cable; and no measurement over a real network
+  exists — the p95 the plan states needs the reference hardware and a lossy link.
+
 
 

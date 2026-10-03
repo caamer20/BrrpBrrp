@@ -21,6 +21,7 @@ import {
   writeOutbox,
   type OutboxEntry
 } from './outbox';
+import { HEARTBEAT_WATCH_MS, reconnectDelayMs, SILENT_CONNECTION_MS } from './reconnect';
 import { protocolVerdict } from './protocol';
 import type { Attachment, Channel, Message, RealtimeEvent, WorkspaceState } from './types';
 
@@ -226,6 +227,17 @@ class Workspace {
   voiceReconnected: (() => void) | null = null;
   private socket: WebSocket | null = null;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
+  // When a frame last arrived on the open socket. The server speaks every thirty seconds;
+  // silence past `SILENT_CONNECTION_MS` is a half-open connection (see ./reconnect).
+  private lastFrameAt = 0;
+  private connectivityWatched = false;
+  // Bound once, so the listeners can be removed again on sign-out; an arrow field is the
+  // same function every time it is used.
+  private onConnectivityReturned = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    this.retryNow();
+  };
   private refreshTimer?: ReturnType<typeof setTimeout>;
   private toastTimer?: ReturnType<typeof setTimeout>;
   private retry = 0;
@@ -665,6 +677,33 @@ class Workspace {
       this.adminOpen = true;
     }
     this.connect();
+    this.watchConnectivity();
+  }
+
+  /**
+   * Starts the two things that notice a connection nobody else is noticing.
+   *
+   * The listeners answer "connectivity came back" — the browser's own `online` event, a
+   * foreground resume — and the interval answers "this socket is not delivering". Both
+   * are attached once per session and removed in `stop()`, because a listener left behind
+   * by a signed-out session would reconnect as the wrong account.
+   */
+  private watchConnectivity() {
+    if (this.connectivityWatched || typeof window?.addEventListener !== 'function') return;
+    this.connectivityWatched = true;
+    window.addEventListener('online', this.onConnectivityReturned);
+    window.addEventListener('visibilitychange', this.onConnectivityReturned);
+    window.addEventListener('focus', this.onConnectivityReturned);
+    this.heartbeatTimer = setInterval(() => this.checkHalfOpen(), HEARTBEAT_WATCH_MS);
+  }
+
+  private unwatchConnectivity() {
+    if (!this.connectivityWatched) return;
+    this.connectivityWatched = false;
+    window.removeEventListener('online', this.onConnectivityReturned);
+    window.removeEventListener('visibilitychange', this.onConnectivityReturned);
+    window.removeEventListener('focus', this.onConnectivityReturned);
+    clearInterval(this.heartbeatTimer);
   }
 
   channelMoving = $state(false);
@@ -1856,10 +1895,12 @@ class Workspace {
       if (socket !== this.socket) return;
       this.connection = 'connected';
       this.retry = 0;
+      this.lastFrameAt = Date.now();
       this.voiceReconnected?.();
     };
     socket.onmessage = (event) => {
       if (socket !== this.socket) return;
+      this.lastFrameAt = Date.now();
       try {
         this.receive(JSON.parse(event.data));
       } catch {
@@ -1878,22 +1919,65 @@ class Workspace {
       const stillCurrent = () =>
         session === this.sessionVersion && account === (this.user?.id ?? '');
       this.reconnectTimer = setTimeout(
-        async () => {
-          try {
-            await this.refreshState();
-            if (!stillCurrent()) return;
-            this.connect();
-          } catch (error) {
-            if (!stillCurrent()) return;
-            if (error instanceof APIError && error.status === 401) {
-              this.stop();
-              this.state = null;
-            } else this.connect();
-          }
-        },
-        Math.min(30000, 1000 * 2 ** this.retry++) + Math.random() * 400
+        () => void this.attemptReconnect(stillCurrent),
+        reconnectDelayMs(this.retry++) + Math.random() * 400
       );
     };
+  }
+
+  /**
+   * One reconnect attempt: re-read the workspace, then open the socket again.
+   *
+   * It is shared by the backoff timer, the `online` event and a foreground resume,
+   * because all three want exactly this and only the *decision* differs — waiting before
+   * trying is the wrong answer once the browser has said connectivity is back.
+   */
+  private async attemptReconnect(stillCurrent: () => boolean = () => !this.stopped) {
+    try {
+      await this.refreshState();
+      if (!stillCurrent()) return;
+      this.connect();
+    } catch (error) {
+      if (!stillCurrent()) return;
+      if (error instanceof APIError && error.status === 401) {
+        this.stop();
+        this.state = null;
+      } else this.connect();
+    }
+  }
+
+  /**
+   * Reconnect now, cancelling whatever wait was pending.
+   *
+   * Called when the browser reports connectivity returning (`online`) or the page coming
+   * back to the foreground: the pending backoff was scheduled by a client that knew
+   * nothing about either, and by the time it fires the plan's ten-second budget has
+   * passed. The attempt count is reset because this is a *new* condition, not another
+   * failure of the old one.
+   */
+  private retryNow() {
+    if (this.stopped || !this.state || this.connection === 'connected') return;
+    clearTimeout(this.reconnectTimer);
+    this.retry = 0;
+    void this.attemptReconnect();
+  }
+
+  /**
+   * The half-open check: a socket that has delivered nothing past the server's own
+   * cadence is closed so the ordinary reconnect path can run.
+   *
+   * Closing rather than merely flagging it is deliberate: every other path — the backoff,
+   * `online`, a foreground resume — already reacts to a close, so this adds one detector
+   * instead of a second reconnection mechanism. A hidden page is skipped: browsers
+   * throttle timers and suspend sockets in the background, and a reconnection there would
+   * be a guess about a connection nobody is using.
+   */
+  private checkHalfOpen() {
+    if (this.stopped || this.connection !== 'connected') return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (Date.now() - this.lastFrameAt < SILENT_CONNECTION_MS) return;
+    this.lastFrameAt = Date.now();
+    this.socket?.close();
   }
 
   private receive(event: RealtimeEvent) {
@@ -2519,6 +2603,7 @@ class Workspace {
   }
 
   stop() {
+    this.unwatchConnectivity();
     ++this.sessionVersion;
     ++this.loadVersion;
     this.authorizationUnverified = false;
