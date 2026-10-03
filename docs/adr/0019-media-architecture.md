@@ -1014,3 +1014,46 @@ It does not establish anything about a codec neither engine offers, a viewer who
 the publisher cannot produce, or the quality of either codec: the presets bound the
 bitrate, and legibility at the text preset is still a qualification item that needs the
 reference hardware.
+
+## 13. The recovery path, stated and measured, and where the sound comes out
+
+**Two failures, two answers.** A voice session in this product depends on two transports that
+fail independently, and the code already distinguished them; what was missing was the sentence
+that says which recovery each one gets, and a measurement rather than an intention.
+
+A **lost signaling connection** is not a lost call. Media is a peer connection between the
+client and the SFU and does not run over the socket, so audio keeps flowing while the socket
+is gone; the server holds the session for 28 seconds, and the client reinstates it with the
+`voice.resume` token it was issued when the call started (`voice.resumed` carries a fresh
+token, so a rejoin later in the same call is not done with a stale one). Measured in Chromium
+against the shipped server, with a two-account call and audio in both directions: **4.0 s
+from the connection being severed to the session being resumed**, against the plan's 15-second
+budget, asserted at 15 s in the journey so a regression that waits out a backoff fails there.
+The journey also asserts the thing that makes this the *right* answer rather than a lucky one:
+the other side's inbound audio kept growing across the severance, so the call itself did not
+pause.
+
+A **failed media transport** (the peer reports `disconnected` or `failed`) is torn down and
+rejoined: four seconds of tolerance for a transport that comes back on its own, then a full
+`voice.leave` + `voice.join` under the room's ordinary admission rules, with a 20-second guard
+that leaves the call and says so, and no second retry inside the same call. **An ICE restart is
+not used**, and that is the decision: `restartIce` keeps the peer and needs the server to agree
+a renegotiation for a transport it has already lost, while a rejoin reuses admission, capacity
+and the publication model unchanged — the boring path, which is the one that should be holding
+somebody's call. This path is implemented and staged; it is **not** measured in a browser yet,
+because the harness cannot fail a peer honestly (Playwright's offline emulation covers the HTTP
+stack and leaves WebRTC alone, and closing a peer reports `closed`, which is not a state the
+recovery listens for). The ledger records it as owed rather than passed.
+
+**A deliberate rejoin is also how a restricted network is served**: TURN is offered where it is
+configured, and the relay is forced only when the server says a relay is actually available
+(§7.4), so a client that cannot reach the server directly is admitted through the relay rather
+than by a different code path.
+
+**Where the sound comes out.** `setSinkId` where the browser has it — Chromium and Edge; not
+Firefox and not Safari, where the panel says in words that the system default is what plays.
+The chosen speaker is applied to every audio element a call owns *and to each element as it
+arrives*, because a participant who joins after the choice was made must not come out of a
+different speaker than the others. A device id stored on one machine and carried to another
+names nothing: the sink call fails, the remembered choice is cleared, and the person is told,
+rather than being left with silence and no explanation.

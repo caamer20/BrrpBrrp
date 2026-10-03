@@ -98,6 +98,10 @@ class Voice {
   screenAudioOnly = $state(storage.getItem('brrp.screen-audio-only') === 'true');
   private releaseScreenWatch: (() => void) | null = null;
   microphone = $state(storage.getItem('brrp.microphone') || '');
+  // The chosen speaker, where the browser has the notion at all. Applied to every audio
+  // element the call owns, and to each one as it arrives: a participant who joins after
+  // the choice was made must not come out of a different speaker than the others.
+  outputDevice = $state(storage.getItem('brrp.output-device') || '');
   pushToTalk = $state(storage.getItem('brrp.push-to-talk') === 'true');
   talkHeld = $state(false);
   joinSounds = $state(storage.getItem('brrp.join-sounds') !== 'false');
@@ -593,6 +597,40 @@ class Voice {
    * screen was announced, and nothing was ever rendered — a blank rectangle with no
    * error, indistinguishable from a share that failed to send.
    */
+  /**
+   * Sends one audio element to the chosen speaker.
+   *
+   * The failure is reported rather than swallowed: a device id stored on one machine and
+   * carried to another names nothing, and silence with no explanation is the one outcome
+   * a person cannot act on.
+   */
+  private applyOutputDevice(audio: HTMLAudioElement) {
+    if (!this.outputDevice || typeof audio.setSinkId !== 'function') return;
+    audio.setSinkId(this.outputDevice).catch(() => {
+      this.outputDevice = '';
+      storage.setItem('brrp.output-device', '');
+      this.error =
+        'That speaker is not available on this device. Choose another in voice settings.';
+    });
+  }
+
+  async setOutputDevice(deviceId: string) {
+    this.outputDevice = deviceId;
+    storage.setItem('brrp.output-device', deviceId);
+    for (const audio of this.audios) {
+      if (typeof audio.setSinkId !== 'function') continue;
+      try {
+        await audio.setSinkId(deviceId);
+      } catch {
+        this.outputDevice = '';
+        storage.setItem('brrp.output-device', '');
+        this.error =
+          'That speaker could not be used. Choose another in voice settings; the system default is playing meanwhile.';
+        return;
+      }
+    }
+  }
+
   setScreenAudioOnly(audioOnly: boolean) {
     this.screenAudioOnly = audioOnly;
     storage.setItem('brrp.screen-audio-only', String(audioOnly));
@@ -667,6 +705,7 @@ class Voice {
       audio.autoplay = true;
       audio.srcObject = new MediaStream([event.track]);
       this.audios.push(audio);
+      this.applyOutputDevice(audio);
       const slot = Number((event.streams[0]?.id || '').replace('voice-', ''));
       this.audioSlots.set(audio, slot);
       this.applyAudioState();

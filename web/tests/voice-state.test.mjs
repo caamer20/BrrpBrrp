@@ -22,12 +22,46 @@ const screenReceive = ts
   .outputText.replace(/^export /gm, '');
 const prelude = `
 const $state = value => value;
-const storage = {getItem:()=>null,setItem:()=>{}};
+// An in-memory device store, so a preference a test sets is a preference the store reads
+// back rather than a call that went nowhere.
+export const storedValues = {};
+const storage = {
+  getItem: key => (key in storedValues ? storedValues[key] : null),
+  setItem: (key, value) => { storedValues[key] = String(value); },
+  removeItem: key => { delete storedValues[key]; }
+};
 const window = {addEventListener:()=>{}, isSecureContext:true};
 let capture = () => Promise.reject(new Error('no capture fixture'));
 export const setCapture = next => capture = next;
 const navigator = {mediaDevices:{getUserMedia:(...args)=>capture(...args)}};
 class AudioContext { resume(){return Promise.resolve();} close(){return Promise.resolve();} }
+// The call's audio elements, and the speaker they are sent to. A real one plays through
+// the system; these record what they were asked to do.
+export const sinkCalls = [];
+class Audio {
+  constructor(){ this.autoplay = false; this.srcObject = null; }
+  play(){ return Promise.resolve(); }
+  setSinkId(id){ sinkCalls.push(id); return Promise.resolve(); }
+}
+export let failSink = false;
+export const setFailSink = next => failSink = next;
+// One peer connection the test can drive, so the arrival of a participant is an event the
+// test fires rather than a path it hopes works.
+export const peers = [];
+class RTCPeerConnection {
+  constructor(){ this.connectionState = 'new'; peers.push(this); }
+  addTransceiver(){}
+  addTrack(){}
+  async createOffer(){ return { type: 'offer', sdp: 'v=0' }; }
+  async setLocalDescription(){ this.localDescription = { toJSON: () => ({ type: 'offer', sdp: 'v=0' }) }; }
+  close(){ this.connectionState = 'closed'; }
+  getSenders(){ return []; }
+}
+class MediaStream { constructor(tracks){ this.tracks = tracks || []; } getTracks(){ return this.tracks; } getVideoTracks(){ return this.tracks.filter(t => t.kind === 'video'); } getAudioTracks(){ return this.tracks.filter(t => t.kind === 'audio'); } }
+// The test body runs in another module, so the two fixtures it needs to build are handed
+// over rather than guessed at.
+export const newAudio = () => new Audio();
+export const newStream = (tracks) => new MediaStream(tracks);
 const document = {addEventListener:()=>{}};
 const errorMessage = error => String(error);
 class VoiceChime {stop(){}}
@@ -42,9 +76,19 @@ export const SCREEN_PRESETS = {
 export const screenPresetFromValue = value => (value === 'text' ? 'text' : 'motion');
 export const presetApplications = [];
 export const applyScreenPreset = async (sender, preset) => { presetApplications.push(preset); return true; };
-export const storedValues = {};
 `;
-const { Voice, workspace, setCapture, presetApplications } = await import(
+const {
+  Voice,
+  workspace,
+  setCapture,
+  presetApplications,
+  sinkCalls,
+  setFailSink,
+  newAudio,
+  newStream,
+  storedValues,
+  peers
+} = await import(
   'data:text/javascript;base64,' +
     Buffer.from(prelude + screenReceive + compiled).toString('base64')
 );
@@ -303,6 +347,62 @@ test('a share that arrives while audio-only is on is born silenced', () => {
   assert.equal(video.enabled, false, 'the arriving picture was not silenced');
   voice.setScreenAudioOnly(false);
   assert.equal(video.enabled, true, 'turning the picture back on did not re-enable it');
+});
+
+test('the chosen speaker is applied to every audio element, present and arriving', async () => {
+  // Where the browser has speakers at all. The choice has to reach the elements a call
+  // already owns and the one a later participant arrives on: a person who joins after the
+  // choice was made must not come out of a different speaker than the others.
+  const voice = new Voice();
+  const existing = newAudio();
+  voice.audios.push(existing);
+  await voice.setOutputDevice('speaker-2');
+  assert.equal(voice.outputDevice, 'speaker-2');
+  assert.equal(storedValues['brrp.output-device'], 'speaker-2');
+  assert.deepEqual(sinkCalls, ['speaker-2'], 'the element already in the call was not moved');
+
+  // The peer is built the way a real accept builds it: the store only negotiates for the
+  // room it believes it is in, and only once it holds a microphone.
+  voice.channelId = 'lounge';
+  voice.stream = newStream([{ kind: 'audio' }]);
+  await voice.createPeer({
+    channel_id: 'lounge',
+    resume_token: 'resume-secret',
+    connection_id: 'peer-1',
+    ice_servers: [],
+    receive_slots: 1,
+    force_relay: false,
+    relay_available: false,
+    bitrate: 24000,
+    may_speak: true
+  });
+  const peer = peers[peers.length - 1];
+  peer.ontrack({ track: { kind: 'audio' }, streams: [newStream([{ kind: 'audio' }])] });
+  assert.deepEqual(
+    sinkCalls,
+    ['speaker-2', 'speaker-2'],
+    'the participant who arrived after the choice came out of the default speaker'
+  );
+});
+
+test('a speaker that is gone is forgotten, and said out loud', async () => {
+  // A device id stored on one machine and carried to another names nothing. Silence with
+  // no explanation is the one outcome a person cannot act on.
+  const voice = new Voice();
+  setFailSink(true);
+  try {
+    const element = newAudio();
+    element.setSinkId = async () => {
+      throw new Error('NotFoundError');
+    };
+    voice.audios.push(element);
+    await voice.setOutputDevice('gone');
+    assert.equal(voice.outputDevice, '');
+    assert.equal(storedValues['brrp.output-device'], '');
+    assert.match(voice.error, /speaker/i);
+  } finally {
+    setFailSink(false);
+  }
 });
 
 test('a second share replaces the first on the same element', () => {

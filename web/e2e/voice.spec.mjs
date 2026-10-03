@@ -839,3 +839,142 @@ test('a shared screen reaches another browser and stops cleanly', async ({
     }
   }
 });
+
+// ENG-06. Two things the plan asks for and the code has to answer for: the speaker a call
+// plays through, where the browser has such a notion at all, and how long a call takes to
+// carry audio again after the connection to the server is lost. The second is measured
+// against the plan's fifteen-second rejoin budget, from the moment the connection is
+// severed.
+//
+// What is severed here is the socket, because that is what a harness can sever honestly:
+// Playwright's offline emulation covers the HTTP stack and leaves a peer connection's own
+// transport alone, and calling `close()` on a peer reports `closed`, which is not one of
+// the states the recovery path listens for. The media-failure path — a peer that reaches
+// `failed` is torn down and rejoined after four seconds, with a twenty-second guard — is
+// implemented and staged, and is recorded in the ledger as not yet measurable here.
+const OUTAGE_SPEAKER = { username: 'outage_speaker', password: 'an outage speaker passphrase' };
+const OUTAGE_LISTENER = {
+  username: 'outage_listener',
+  password: 'an outage listener passphrase'
+};
+
+test('a call survives a severed connection and resumes inside the budget', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(300000);
+  await signInOverApi(request);
+  await createAccount(request, OUTAGE_SPEAKER);
+  await createAccount(request, OUTAGE_LISTENER);
+
+  // Where the browser supports choosing a speaker, the choice is offered; where it does
+  // not, the panel says so in words. Chromium supports it, so this asserts the control
+  // exists, lists what the browser reports, and can be used without an error.
+  await signIn(page, OUTAGE_SPEAKER);
+  await page.getByLabel('Your preferences').click();
+  const preferences = page.getByRole('dialog', { name: 'Your preferences' });
+  await preferences.getByRole('tab', { name: 'Audio', exact: true }).click();
+  const speaker = preferences.getByLabel('Speaker');
+  await expect(speaker).toBeVisible();
+  expect(
+    (await speaker.locator('option').allInnerTexts()).length,
+    'the speaker list is empty'
+  ).toBeGreaterThan(0);
+  await speaker.selectOption({ index: 0 });
+  await expect(preferences.getByText(/could not be used|could not be listed/)).toHaveCount(0);
+  await expectAccessible(page);
+  await preferences.getByRole('button', { name: 'Close dialog' }).click();
+
+  await captureGeneratedAudio(page);
+  await capturePeers(page);
+  const listenerContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const listener = await listenerContext.newPage();
+  await captureGeneratedAudio(listener);
+  await capturePeers(listener);
+  // The listener's own connection to the server, held open by the harness so the test can
+  // sever it at the moment of its choosing. Every later connection is proxied untouched.
+  let live = null;
+  let severed = false;
+  await listenerContext.routeWebSocket(/\/ws$/, (socket) => {
+    socket.connectToServer();
+    if (!severed) {
+      live = socket;
+      severed = true;
+    }
+  });
+  // The events the voice store receives, so the resume is observed rather than inferred
+  // from a label.
+  await listener.addInitScript(() => {
+    const Original = window.WebSocket;
+    if (!Original) return;
+    window.__brrpEvents = [];
+    window.WebSocket = class extends Original {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener('message', (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data && data.t) window.__brrpEvents.push(String(data.t));
+          } catch {
+            /* Not an event frame. */
+          }
+        });
+      }
+    };
+  });
+  try {
+    await joinVoice(page, OUTAGE_SPEAKER);
+    await joinVoice(listener, OUTAGE_LISTENER);
+
+    // Audio in both directions before the severance: the control. A measurement of
+    // recovery from nothing proves nothing.
+    await expect
+      .poll(async () => (await audioBytes(listener)).inbound, { timeout: 40000 })
+      .toBeGreaterThan(2000);
+    await expect
+      .poll(async () => (await audioBytes(page)).inbound, { timeout: 40000 })
+      .toBeGreaterThan(2000);
+
+    // The connection goes. The call itself does not: media is a peer connection, and a
+    // lost socket must not reach into it. The speaker's inbound bytes keep growing while
+    // the listener is disconnected from the server.
+    const flowing = (await audioBytes(page)).inbound;
+    expect(live, "the harness never held the listener's connection").toBeTruthy();
+    const started = Date.now();
+    await live.close();
+    await listener.waitForTimeout(4000);
+    await expect
+      .poll(async () => (await audioBytes(page)).inbound, { timeout: 20000 })
+      .toBeGreaterThan(flowing + 1000);
+
+    // The resume is the recovery path the ADR names: the socket returns, and the session
+    // is reinstated under the token the server issued when the call started. Measured from
+    // the severance, against the plan's fifteen seconds.
+    await expect
+      .poll(
+        () =>
+          listener.evaluate(
+            () => (window.__brrpEvents ?? []).filter((t) => t === 'voice.resumed').length
+          ),
+        { timeout: 15000, intervals: [250, 500, 1000] }
+      )
+      .toBeGreaterThan(0);
+    const elapsed = Date.now() - started;
+    // Printed rather than only asserted: the plan asks for a measurement, and a number in
+    // the run's output is one the ledger can quote.
+    console.log(`voice resume measured: ${elapsed} ms from severance to voice.resumed`);
+    expect(elapsed, `the session took ${elapsed} ms to resume`).toBeLessThanOrEqual(15000);
+    await expect(listener.getByText(/Join again to reconnect/)).toHaveCount(0);
+    await expect(sidebarVoice(listener).getByRole('button', { name: 'Leave voice' })).toBeVisible({
+      timeout: 20000
+    });
+    // And the call still carries audio: the resume was of a live session, not a rejoin.
+    const resumed = (await audioBytes(listener)).inbound;
+    await expect
+      .poll(async () => (await audioBytes(listener)).inbound, { timeout: 20000 })
+      .toBeGreaterThan(resumed);
+  } finally {
+    await listenerContext.close();
+  }
+});

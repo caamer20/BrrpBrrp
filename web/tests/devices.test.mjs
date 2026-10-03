@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnoseMicrophone, microphoneMessage } from '../src/lib/devices.ts';
+import {
+  diagnoseMicrophone,
+  listOutputs,
+  microphoneMessage,
+  supportsOutputSelection
+} from '../src/lib/devices.ts';
 
 // A call that does not start has a small number of ordinary causes, and the generic
 // "check your permissions" is the wrong words for most of them. Somebody whose
@@ -136,4 +141,74 @@ test('no two diagnoses share the same words', () => {
     'unsupported-browser'
   ].map(microphoneMessage);
   assert.equal(new Set(messages).size, messages.length);
+});
+
+// Output selection, where the browser has it. Firefox and Safari have no setSinkId, and
+// the honest feature is the sentence that says so rather than a list that appears to work.
+function withOutputSupport(devices, run, supported = true) {
+  const previousMedia = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const previousElement = Object.getOwnPropertyDescriptor(globalThis, 'HTMLMediaElement');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { mediaDevices: { enumerateDevices: async () => devices } },
+    configurable: true,
+    writable: true
+  });
+  Object.defineProperty(globalThis, 'HTMLMediaElement', {
+    value: supported ? { prototype: { setSinkId: async () => {} } } : { prototype: {} },
+    configurable: true,
+    writable: true
+  });
+  try {
+    return run();
+  } finally {
+    if (previousMedia) Object.defineProperty(globalThis, 'navigator', previousMedia);
+    else delete globalThis.navigator;
+    if (previousElement) Object.defineProperty(globalThis, 'HTMLMediaElement', previousElement);
+    else delete globalThis.HTMLMediaElement;
+  }
+}
+
+test('the speakers are listed, and a browser without them says so in words', async () => {
+  const devices = [
+    { kind: 'audioinput', deviceId: 'mic-1', label: 'Desk microphone' },
+    { kind: 'audiooutput', deviceId: 'default', label: '' },
+    { kind: 'audiooutput', deviceId: 'speaker-2', label: 'Headphones' }
+  ];
+  await withOutputSupport(devices, async () => {
+    const listed = await listOutputs();
+    assert.deepEqual(
+      listed.devices.map((device) => device.label),
+      // Chrome reports the default output with no label before permission is granted; it
+      // is still the device a person means by "system default", so it is named that.
+      ['System default', 'Headphones']
+    );
+    assert.equal(listed.error, '');
+  });
+  await withOutputSupport(
+    devices,
+    async () => {
+      const listed = await listOutputs();
+      assert.deepEqual(listed.devices, []);
+      assert.match(listed.error, /system default/i);
+    },
+    false
+  );
+  assert.equal(
+    withOutputSupport([], () => supportsOutputSelection()),
+    true
+  );
+  assert.equal(
+    withOutputSupport([], () => supportsOutputSelection(), false),
+    false
+  );
+});
+
+test('the speakers are not called microphones when the listing fails', async () => {
+  await withOutputSupport(null, async () => {
+    const listed = await listOutputs();
+    assert.deepEqual(listed.devices, []);
+    // A failure message that talks about microphones is a message about the wrong device.
+    assert.match(listed.error, /speakers/i);
+    assert.doesNotMatch(listed.error, /microphone/i);
+  });
 });

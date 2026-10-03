@@ -3,9 +3,14 @@
   import { voice } from '../voice.svelte';
   import { VoiceChime } from '../voice-chime';
   import { errorMessage } from '../api';
-  import { listInputs } from '../devices';
+  import { listInputs, listOutputs, supportsOutputSelection } from '../devices';
   let { compact = false }: { compact?: boolean } = $props();
   let devices = $state<MediaDeviceInfo[]>([]);
+  // Where the browser has speakers to choose between, they are chosen here. Where it
+  // does not, the panel says so instead of showing an empty list.
+  let supportsOutputs = supportsOutputSelection();
+  let outputs = $state<{ id: string; label: string }[]>([]);
+  let outputsError = $state('');
   let testing = $state(false);
   let busy = $state(false);
   let level = $state(0);
@@ -20,6 +25,9 @@
     // The shared helper, so the list and the call's failure speak the same language.
     // Two enumerations in one product means one of them eventually says "your browser
     // could not list microphones" for a failure the other one can name exactly.
+    const speakers = await listOutputs();
+    outputs = speakers.devices;
+    outputsError = speakers.error;
     const result = await listInputs();
     // The template reads `deviceId` and `label`, which is the shape the select has
     // always been written against. Adapting here keeps one enumeration in the product
@@ -144,6 +152,27 @@
       {/if}</small
     ></label
   >
+  {#if supportsOutputs}
+    <label
+      >Speaker<select
+        value={voice.outputDevice}
+        onchange={(event) => voice.setOutputDevice(event.currentTarget.value)}
+      >
+        <option value="">System default</option>
+        {#each outputs.filter((device) => device.id && device.id !== 'default') as device}<option
+            value={device.id}>{device.label}</option
+          >{/each}
+      </select><small
+        >{#if outputsError}{outputsError}{:else}Played through this speaker for every voice
+          conversation on this device.{/if}</small
+      ></label
+    >
+  {:else}
+    <p class="muted">
+      This browser always plays voice through the system default speaker, so there is nothing to
+      choose here.
+    </p>
+  {/if}
   <div class="button-row">
     <button class="secondary" onclick={testMicrophone}
       >{testing || busy ? 'Stop microphone test' : 'Test microphone'}</button

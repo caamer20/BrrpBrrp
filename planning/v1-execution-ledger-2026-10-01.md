@@ -1380,6 +1380,54 @@ owner's decisions have already fixed and the ones with no external dependency.
   browser matrix (Firefox, Safari) for these controls is still owed; and the phone layout
   was measured at one viewport (390×844), not across the range of real devices.
 
+### 11k. ENG-06 — the sound's destination, and the rejoin budget measured
+
+- **Output selection, where the browser has it.** `devices.ts` gains
+  `supportsOutputSelection` and `listOutputs` (mirroring the input listing, including the
+  nameless `default` entry Chrome reports before permission, which is named "System
+  default"); `voice.svelte.ts` gains `outputDevice` and `setOutputDevice`, applied to every
+  audio element the call owns **and to each one as it arrives** — a participant who joins
+  after the choice must not come out of a different speaker than the others. A device id
+  stored on one machine and carried to another names nothing: the sink call fails, the
+  choice is forgotten and said out loud. Firefox and Safari have no `setSinkId`, and the
+  panel says so in a sentence rather than showing a list that appears to work.
+- **The recovery path, stated.** Two transports fail independently. A lost *signaling*
+  connection is not a lost call: media is a peer connection and keeps flowing, the server
+  holds the session for 28 s, and the client reinstates it with the `voice.resume` token.
+  A *failed media transport* is torn down and rejoined (4 s of tolerance, then
+  `voice.leave` + `voice.join` under ordinary admission, with a 20 s guard and no second
+  retry in the same call). **ICE restart is not used**, and §13 of ADR 0019 now says why: a
+  rejoin reuses admission, capacity and the publication model unchanged.
+- **The measurement, and one wrong turn worth recording.** The first journey I wrote
+  injected the outage with Playwright's `setOffline` — and the client never noticed,
+  because that emulation covers the HTTP stack and leaves WebRTC alone. The call kept
+  playing, `Connected` stayed on screen, and the assertion failed after 30 s: the fault
+  injection was wrong, not the product. Rewritten to sever the socket itself (the harness
+  holds the listener's connection open and closes it), the journey asserts the correct
+  shape: audio on the far side keeps growing across the severance (the call survives),
+  `voice.resumed` arrives **4 027 ms** after severance, the app never says "Join again",
+  the listener is still in the room and audio flows again afterwards. Asserted at 15 s in
+  the journey, so a regression that waits out a backoff fails there; the number is printed
+  by the run so the ledger can quote it.
+- **What is owed, explicitly.** The *media-failure* rejoin is implemented and staged but
+  **not measured** in a browser: the harness cannot fail a peer honestly (`setOffline`
+  leaves WebRTC alone; `close()` reports `closed`, which the recovery does not listen for).
+  Measuring it needs a fault-injection hook or a real network change on a physical host —
+  a Phase D item, recorded rather than claimed.
+- **Tests.** `devices.test.mjs`: the speakers are listed with the default named, a browser
+  without output selection says so in words, and a listing failure is never described as a
+  microphone problem. `voice-state.test.mjs`: the chosen speaker reaches the elements the
+  call already owns and the one a later participant arrives on (driven through a real
+  `createPeer` + `ontrack`, not by reaching into the store), and a speaker that is gone is
+  forgotten and said out loud. The browser journey asserts the Speaker control exists in
+  Chromium's preferences, that choosing from it produces no error, and is axe-clean.
+- **Commands and results.** 336/336 frontend unit tests; `svelte-check` 0/0; voice project
+  green; default mode **28 passed**, private mode **42 passed**.
+- **What it does not prove.** Firefox and Safari are untested for output selection (they
+  have no such API, and the panel's sentence is what runs there); the resume budget was
+  measured on localhost, where the socket comes back in milliseconds — a hostile network is
+  Phase D; and the media-failure path is unmeasured, as above.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
@@ -1388,8 +1436,8 @@ tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **EN
 limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), **ENG-13**
 (the storage quota, the disk guard and the single-sourced limits), **ENG-08**
 (emphasis and block quotes), **ENG-09** (the member profile surface), **ENG-10**
-(Back and Forward between conversations) and **ENG-04** (viewer controls and the phone
-layout).
+(Back and Forward between conversations), **ENG-04** (viewer controls and the phone
+layout) and **ENG-06** (output selection and the measured rejoin budget).
 
 Still open, in the order they are worth taking:
 

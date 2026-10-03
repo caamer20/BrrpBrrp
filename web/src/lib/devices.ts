@@ -118,6 +118,54 @@ export interface InputDevices {
   error: string;
 }
 
+/**
+ * Whether this browser can send audio to a chosen speaker.
+ *
+ * Firefox and Safari have no `setSinkId`, and saying so is part of the feature: a
+ * settings list that offers a device and then plays through the system default is
+ * worse than one that says it cannot.
+ */
+export function supportsOutputSelection(): boolean {
+  return (
+    typeof HTMLMediaElement !== 'undefined' &&
+    typeof HTMLMediaElement.prototype.setSinkId === 'function'
+  );
+}
+
+/** The speakers a browser will let us see, for the same settings list as the inputs. */
+export async function listOutputs(): Promise<InputDevices> {
+  if (!supportsOutputSelection()) {
+    return {
+      devices: [],
+      namesPending: false,
+      error: 'This browser always plays through the system default speaker.'
+    };
+  }
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+    return { devices: [], namesPending: false, error: 'This browser cannot list speakers.' };
+  }
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const devices = all
+      .filter((device) => device.kind === 'audiooutput')
+      .map((device, index) => ({
+        id: device.deviceId,
+        // Chrome reports a nameless entry with deviceId 'default' before permission has
+        // been granted. It is the ordinary state of a first visit, and it is selectable.
+        label:
+          device.label ||
+          (device.deviceId === 'default' ? 'System default' : `Speaker ${index + 1}`)
+      }));
+    return { devices, namesPending: false, error: '' };
+  } catch (error) {
+    return {
+      devices: [],
+      namesPending: false,
+      error: `The speakers could not be listed: ${error instanceof Error ? error.name : 'unknown error'}.`
+    };
+  }
+}
+
 export async function listInputs(): Promise<InputDevices> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
     return { devices: [], namesPending: false, error: 'This browser cannot list microphones.' };
