@@ -1256,14 +1256,45 @@ owner's decisions have already fixed and the ones with no external dependency.
   about how a screen reader announces nested emphasis — the accessibility sweep checks
   violations, not comprehension.
 
+### 11h. ENG-09 — a member's profile, from the list and from a message
+
+- **Changed files.** `web/src/lib/components/MemberProfile.svelte` is new: a dialog showing
+  the identity the workspace already publishes — avatar, display name, `@handle`, role
+  standing (Owner / Administrator / Member, with "that's you" on the reader's own), live
+  availability when presence is enabled, the account's creation date, and a note when the
+  account is deactivated. Nothing private is on it: no conversation state, no unread count,
+  no moderation history, no timeout — a profile is the member list's own information laid
+  out legibly. `workspace.profileUser` is store state, because two different surfaces open
+  the same dialog about the same person. `Workspace.svelte` renders it and its member rows
+  are now `<button>`s (a list of people is not a mouse-only surface); `MessageItem.svelte`
+  makes the author's name and picture open the same dialog; `app.css` carries the button
+  resets so both still look like the text and avatars they replaced.
+- **Tests.** The a11y journey in `release.spec.mjs` now focuses the first member row **by
+  keyboard** (`focus()` then `Enter`) and asserts the dialog opens, carries the handle and
+  "Member since", passes the accessibility sweep, closes on `Escape`, and **returns focus to
+  the row it came from**; then opens the same dialog from a message author and asserts it
+  identifies the reader's own profile. That focus-return assertion is the one this file's
+  history keeps paying for: a dialog that closes into nowhere is a keyboard user stranded.
+- **One self-inflicted detour, recorded because it cost a run.** The first execution of the
+  new assertions failed waiting for a button that did not exist in the served page: the
+  frontend had been rebuilt but the Go binary that embeds it had not, so the harness served
+  the previous bundle. `make browser-check` runs `build` (which builds the web bundle) and
+  then builds `brrpbrrp-e2e`, so the ordering is right there; the trap is only in ad-hoc
+  runs. Both artifacts are now rebuilt together in the commands below.
+- **Commands and results.** `svelte-check` 0/0; release project green (7 journeys) after the
+  binary rebuild; default mode **26 passed**, private mode **40 passed**.
+- **What it does not prove.** It does not prove a screen reader announces the dialog well
+  (that is the human accessibility review, M6), and it says nothing about a member who is
+  banned or deactivated beyond the note the record already carries.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
 tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **ENG-05**
 (the codec policy and the Firefox project, tranche 10), **ENG-07** (the documented media
 limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), **ENG-13**
-(the storage quota, the disk guard and the single-sourced limits) and **ENG-08**
-(emphasis and block quotes).
+(the storage quota, the disk guard and the single-sourced limits), **ENG-08**
+(emphasis and block quotes) and **ENG-09** (the member profile surface).
 
 Still open, in the order they are worth taking:
 

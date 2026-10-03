@@ -23,7 +23,7 @@ import {
 } from './outbox';
 import { HEARTBEAT_WATCH_MS, reconnectDelayMs, SILENT_CONNECTION_MS } from './reconnect';
 import { protocolVerdict } from './protocol';
-import type { Attachment, Channel, Message, RealtimeEvent, WorkspaceState } from './types';
+import type { Attachment, Channel, Message, RealtimeEvent, User, WorkspaceState } from './types';
 
 // resourceForMessages is the path segment every message operation uses. It is named
 // once because the two places that build a message URL are the two places that would
@@ -102,6 +102,10 @@ class Workspace {
   sidebarOpen = $state(false);
   membersOpen = $state(window.innerWidth > 900 && storage.getItem('brrp.members-open') !== 'false');
   searchOpen = $state(false);
+  // The member whose profile is open, if any. It is store state rather than a local of
+  // the member list or of a message, because both surfaces open the same dialog: a
+  // message's author and a row in the member list are the same person.
+  profileUser = $state<User | null>(null);
   settingsOpen = $state(false);
   // The member's own data export. It is a read path that leaves the building, so it
   // is a deliberate action with its own panel rather than a link hidden somewhere.

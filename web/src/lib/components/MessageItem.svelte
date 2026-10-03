@@ -198,7 +198,12 @@
         hour: 'numeric',
         minute: '2-digit'
       })}</span
-    >{:else}<Avatar user={author} />{/if}
+    >{:else}{#if author}<button
+        type="button"
+        class="author-avatar"
+        aria-label={`${author.display_name || author.username} — open profile`}
+        onclick={() => (workspace.profileUser = author)}><Avatar user={author} /></button
+      >{:else}<Avatar user={author} />{/if}{/if}
   <div class="message-body">
     {#if message.reply_to_id}<button
         class="reply-reference"
@@ -209,8 +214,14 @@
       >{/if}
     {#if message.pinned}<span class="pin-label"><Icon name="pin" size={12} /> Pinned</span>{/if}
     <div class="message-meta" class:visually-hidden={grouped}>
-      <strong>{author?.display_name || author?.username || 'Former member'}</strong
-      >{#if author?.is_admin}<span class="admin-badge">ADMIN</span>{/if}<time
+      {#if author}<button
+          type="button"
+          class="author-name"
+          onclick={() => (workspace.profileUser = author)}
+          >{author.display_name || author.username}</button
+        >{:else}<strong>Former member</strong>{/if}{#if author?.is_admin}<span class="admin-badge"
+          >ADMIN</span
+        >{/if}<time
         datetime={message.created_at}
         title={new Date(message.created_at).toLocaleString()}
         >{new Date(message.created_at).toLocaleTimeString([], {

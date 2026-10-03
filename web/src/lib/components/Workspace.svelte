@@ -46,6 +46,7 @@
   import { voice } from '../voice.svelte';
   import VoicePanel from './VoicePanel.svelte';
   import ExportPanel from './ExportPanel.svelte';
+  import MemberProfile from './MemberProfile.svelte';
   import VoiceControls from './VoiceControls.svelte';
   let narrow = $state(window.innerWidth <= 640);
   let overlayMembers = $state(window.innerWidth <= 900);
@@ -455,10 +456,13 @@
         >
           {group.label} <span>— {group.users.length}</span>
         </h3>
-        {#each group.users as user (user.id)}<div
+        {#each group.users as user (user.id)}<button
+            type="button"
             class="member"
             class:offline={workspace.state?.settings.enable_presence &&
               !workspace.state.presence[user.id]}
+            aria-label={`${user.display_name || user.username} — open profile`}
+            onclick={() => (workspace.profileUser = user)}
           >
             <div class="avatar-wrap">
               <Avatar {user} size={32} />{#if workspace.state?.settings.enable_presence}<i
@@ -472,7 +476,7 @@
               >
             </div>
             {#if user.is_admin}<Icon name="shield" size={14} />{/if}
-          </div>{/each}{/each}
+          </button>{/each}{/each}
       <div class="members-footnote">
         <span class="tiny-mark">b.</span>Small circle. Good company.
       </div>
@@ -497,5 +501,6 @@
     close={() => (workspace.adminOpen = false)}
     load={() => import('./AdminPanel.svelte')}
   />{/if}
+{#if workspace.profileUser}<MemberProfile user={workspace.profileUser} />{/if}
 {#if workspace.exportOpen}<ExportPanel />{/if}
 {#if voice.panelOpen}<VoicePanel />{/if}

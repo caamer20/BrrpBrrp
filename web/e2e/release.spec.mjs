@@ -343,6 +343,29 @@ test('the operator and member surfaces are free of detectable violations', async
   test.setTimeout(120000);
   await signIn(page, OWNER);
 
+  // A member's profile. Both entry points are exercised: the member list, reached by
+  // keyboard because a list of people is not a thing to be navigated with a mouse only,
+  // and the author of a message, which must open the same dialog about the same person.
+  const memberRow = page.getByRole('button', { name: /— open profile$/ }).first();
+  await memberRow.focus();
+  await expect(memberRow).toBeFocused();
+  await page.keyboard.press('Enter');
+  const profile = page.getByRole('dialog', { name: /— profile$/ });
+  await expect(profile).toBeVisible();
+  await expect(profile).toContainText('@');
+  await expect(profile).toContainText('Member since');
+  await expectAccessible(page);
+  await page.keyboard.press('Escape');
+  await expect(profile).toHaveCount(0);
+  await expect(memberRow).toBeFocused();
+
+  const authorName = page.getByRole('button', { name: 'release_admin', exact: true }).first();
+  await authorName.click();
+  await expect(profile).toContainText('that’s you');
+  await expect(profile.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(profile).toHaveCount(0);
+
   // The data export panel: a dialog a member opens on purpose and reads closely.
   await page.getByRole('button', { name: 'Your data export' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
