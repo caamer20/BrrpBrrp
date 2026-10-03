@@ -290,13 +290,11 @@ class Workspace {
     }
     const wanted = entry.conversation_id;
     if (!wanted) return;
-    if (
-      this.isPrivate(wanted) ||
-      this.state?.channels.some((c) => c.id === wanted && c.type === 'text')
-    ) {
+    if (this.routeReadable(wanted)) {
       // The dialog closes because the conversation it was covering is now behind it.
       this.messagesOpen = false;
-      await this.selectChannel(wanted);
+      // Following an entry is a deliberate move, so Back returns to where the member was.
+      await this.selectChannel(wanted, true);
     }
   }
 
@@ -418,6 +416,13 @@ class Workspace {
     if (message.thread_id)
       return `/threads/${encodeURIComponent(message.thread_id)}/${resourceForMessages}`;
     return this.conversationPath(conversation, resourceForMessages);
+  }
+  private historyPush(url: string) {
+    try {
+      history.pushState(null, '', url);
+    } catch {
+      history.replaceState(null, '', url);
+    }
   }
   conversationURL(id: string) {
     return `/?${this.isPrivate(id) ? 'conversation' : 'channel'}=${encodeURIComponent(id)}`;
@@ -630,12 +635,7 @@ class Workspace {
       if (entryHash === '#requests') this.openMessagesTab('requests');
       else {
         const wanted = decodeURIComponent(entryHash.slice('#conversation='.length));
-        if (
-          this.isPrivate(wanted) ||
-          this.state?.channels.some((c) => c.id === wanted && c.type === 'text')
-        ) {
-          await this.selectChannel(wanted);
-        }
+        if (this.routeReadable(wanted)) await this.selectChannel(wanted);
       }
       history.replaceState(null, '', location.pathname + location.search);
     }
@@ -682,6 +682,9 @@ class Workspace {
     }
     this.connect();
     this.watchConnectivity();
+    // Back and Forward are bound to the session rather than to the store's lifetime: a
+    // listener left behind by a signed-out session would navigate as the wrong account.
+    this.bindHistoryNavigation();
   }
 
   /**
@@ -1048,7 +1051,65 @@ class Workspace {
     while (this.views.size > 5) this.views.delete(this.views.keys().next().value!);
   }
 
-  async selectChannel(id: string) {
+  // Whether a conversation id is one this account may *ask* to open: a private
+  // conversation it holds, or a text channel in its own snapshot. It is a local
+  // pre-check only -- the server decides, and a stale answer here still ends in a
+  // refusal rather than a view (see selectChannel's re-read of authority).
+  routeReadable(id: string) {
+    return (
+      (this.isPrivate(id) || this.state?.channels.some((c) => c.id === id && c.type === 'text')) ===
+      true
+    );
+  }
+
+  // Back and Forward move between the conversations this account has visited. The
+  // browser owns the entry list; this reads the destination out of the URL and opens it
+  // the same way any other route is opened, so authority is re-read and a conversation
+  // revoked while the member was away is refused rather than shown.
+  private async openHistoryDestination() {
+    if (!this.state?.user) return;
+    const params = new URLSearchParams(location.search);
+    const id = params.get('conversation') || params.get('channel') || '';
+    if (!id || id === this.activeId) return;
+    if (!this.routeReadable(id)) {
+      // The destination names something this account cannot open -- revoked while it
+      // was away, or never held. A route is a destination, not a grant: land on the
+      // workspace's first readable channel and let the address bar say where it is.
+      const fallback = this.state.channels.find((channel) => channel.type === 'text')?.id;
+      if (fallback && fallback !== id) await this.selectChannel(fallback);
+      // Nothing readable to land on: the address bar is left naming the workspace rather
+      // than a conversation this account can no longer open.
+      else history.replaceState(null, '', '/');
+      return;
+    }
+    await this.selectChannel(id);
+  }
+
+  private historyBound = false;
+  private onPopState = () => {
+    void this.openHistoryDestination();
+  };
+  private bindHistoryNavigation() {
+    if (this.historyBound) return;
+    this.historyBound = true;
+    window.addEventListener('popstate', this.onPopState);
+  }
+  private unbindHistoryNavigation() {
+    if (!this.historyBound) return;
+    this.historyBound = false;
+    window.removeEventListener('popstate', this.onPopState);
+  }
+
+  /**
+   * Opens a conversation.
+   *
+   * `push` is true for a deliberate selection -- a click in the sidebar, a conversation
+   * search result, a notification -- whose entry Back should return through. Every other
+   * transition (the initial load, an authority re-read moving the account out of a
+   * channel, a history response arriving) replaces the current entry, because Back
+   * should not walk through a sequence of screens the member never chose.
+   */
+  async selectChannel(id: string, push = false) {
     this.threadId = '';
     // A named thread belongs to the channel it is in. Opening another channel closes
     // it, the same as a reply thread, because the view it holds is that channel's.
@@ -1081,7 +1142,13 @@ class Workspace {
     this.messagesError = '';
     this.hasOlder = cached?.hasOlder ?? false;
     this.readMarker = '';
-    history.replaceState(null, '', this.conversationURL(id));
+    const url = this.conversationURL(id);
+    // A deliberate selection pushes, but never a second entry for the URL already on
+    // screen: re-opening the conversation you are in -- an empty one above all, where
+    // the early return above does not apply because a refetch is still wanted -- must
+    // not leave a Back step that appears to do nothing.
+    if (push && url !== location.pathname + location.search) this.historyPush(url);
+    else history.replaceState(null, '', url);
     await this.loadMessages(false, !!cached);
   }
 
@@ -2608,6 +2675,7 @@ class Workspace {
 
   stop() {
     this.unwatchConnectivity();
+    this.unbindHistoryNavigation();
     ++this.sessionVersion;
     ++this.loadVersion;
     this.authorizationUnverified = false;

@@ -1,8 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { createAccount, expectAccessible, OWNER, signIn, signInOverApi } from './support.mjs';
+import {
+  createAccount,
+  expectAccessible,
+  OWNER,
+  setRolePermissions,
+  signIn,
+  signInOverApi
+} from './support.mjs';
 
 test('first setup, persistent chat, search and sign-out', async ({ page, context }) => {
   test.setTimeout(120000);
@@ -677,4 +685,100 @@ test('a severed connection reconnects on its own within the budget', async ({ pa
   await composer.press('Enter');
   await expect(page.locator(`article.message:has-text("${line}")`).first()).toBeVisible();
   await expect(page.locator('article.message .message-delivery')).toHaveCount(0);
+});
+
+// ENG-10. Back and Forward move between the conversations the member has visited, and a
+// conversation revoked while they were away is refused rather than shown. This is the
+// journey a unit test cannot be: real browser entries and a real server refusal.
+test('Back and Forward walk the conversations visited, and a revoked one is not shown', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(180000);
+  // The setup runs through the API context alone: the page is signed in once, as the
+  // member, because a page cannot hold two sessions and a second sign-in would find the
+  // app already open.
+  await signInOverApi(request);
+  const member = { username: 'walk_member', password: 'a walk member passphrase' };
+  await createAccount(request, member);
+
+  // A room of this journey's own, with one line in it. The member walks into it while it
+  // is readable, which is the control: the refusal below has to be about the revocation,
+  // not about a room that was never open to them.
+  const room = 'walk-room';
+  const created = await request.post('/api/channels', {
+    data: { name: room, type: 'text', visibility: 'public', max_voice_users: 8 }
+  });
+  expect(created.ok(), `create ${room}: ${created.status()}`).toBe(true);
+  const channels = await (await request.get('/api/channels')).json();
+  const channel = channels.find((item) => item.name === room);
+  expect(channel, 'the room the member will walk into exists').toBeTruthy();
+  const line = 'a line only the walk room holds';
+  const posted = await request.post(`/api/channels/${channel.id}/messages`, {
+    data: { content: line, idempotency_key: randomUUID() }
+  });
+  expect(posted.ok(), `post into ${room}: ${posted.status()}`).toBe(true);
+
+  await signIn(page, member);
+  const log = page.getByRole('log', { name: 'Channel messages' });
+  const composer = page.getByRole('textbox', { name: 'Message general' });
+  await composer.fill('a line in general the member came from');
+  await composer.press('Enter');
+  await expect(log.getByText('a line in general the member came from')).toBeVisible();
+
+  const roomLink = page.locator('nav.channel-navigation button.channel-link').filter({
+    hasText: room
+  });
+  await roomLink.click();
+  await expect(log.getByText(line).first()).toBeVisible({ timeout: 20000 });
+  const roomURL = page.url();
+  expect(roomURL).toContain(encodeURIComponent(channel.id));
+
+  // The walk itself: Back returns to the conversation the member came from, and Forward
+  // returns to the one they deliberately opened.
+  await page.goBack();
+  await expect(composer).toBeVisible();
+  await expect(log.getByText('a line in general the member came from')).toBeVisible();
+  await page.goForward();
+  await expect(log.getByText(line).first()).toBeVisible();
+
+  // Revoked while the member is in the room: the privilege a reader needs goes, and the
+  // member's own snapshot stops listing conversations. Waiting for the line to go is what
+  // makes the next step a test of the revocation rather than of a stale local view.
+  const roles = await (await request.get('/api/roles')).json();
+  const memberRole = roles.find((role) => role.is_default);
+  expect(memberRole).toBeTruthy();
+  const granted = memberRole.permissions;
+  expect(granted).toContain('channel.read');
+  await setRolePermissions(
+    request,
+    memberRole.id,
+    granted.filter((name) => name !== 'channel.read')
+  );
+  await expect(log.getByText(line)).toHaveCount(0, { timeout: 30000 });
+
+  // Back names the conversation the member came from, also revoked, and Forward names the
+  // room. Neither is a grant: both are refused, and the address bar is left naming the
+  // workspace rather than a conversation this account can no longer open.
+  await page.goBack();
+  await expect(log.getByText(line)).toHaveCount(0);
+  await expect(page.getByText('a line in general the member came from')).toHaveCount(0);
+  await page.goForward();
+  await expect(log.getByText(line)).toHaveCount(0);
+  await expect(page).not.toHaveURL(roomURL);
+
+  // Restoring the privilege is the other half of the contract: the member may read again,
+  // but the revoked conversation is not reopened by a history step they took while it was
+  // refused.
+  await setRolePermissions(request, memberRole.id, granted);
+  await expect(roomLink).toBeVisible({ timeout: 30000 });
+  await expect(log.getByText(line)).toHaveCount(0);
+  await roomLink.click();
+  await expect(log.getByText(line).first()).toBeVisible({ timeout: 20000 });
+
+  // The journey leaves the fixture as it found it: the room and its line go.
+  const removed = await request.delete(`/api/channels/${channel.id}`, {
+    data: { confirm: room }
+  });
+  expect(removed.ok(), `delete ${room}: ${removed.status()}`).toBe(true);
 });

@@ -80,8 +80,62 @@ export const setNotificationWorker = ready => {
     delete navigator.serviceWorker;
   }
 };
-const location = { hash: '', search: '', protocol: 'http:', host: 'localhost' };
-const history = { replaceState() {} };
+const location = {
+  hash: '',
+  search: '',
+  pathname: '/',
+  protocol: 'http:',
+  host: 'localhost'
+};
+// A history the tests can walk: Back and Forward are the browser's behaviour, and the
+// store's popstate path has to be exercised against an entry list that actually moves.
+const historyEntries = [];
+let historyIndex = -1;
+const applyURL = url => {
+  if (typeof url !== 'string') return;
+  const [path, query] = url.split('?');
+  location.pathname = path;
+  location.search = query ? '?' + query : '';
+};
+const history = {
+  pushState(_state, _title, url) {
+    historyEntries.splice(historyIndex + 1);
+    historyEntries.push(url);
+    historyIndex = historyEntries.length - 1;
+    applyURL(url);
+  },
+  replaceState(_state, _title, url) {
+    if (historyIndex < 0) {
+      historyEntries.push(url);
+      historyIndex = 0;
+    } else {
+      historyEntries[historyIndex] = url;
+    }
+    applyURL(url);
+  }
+};
+export const historyURLs = () => [...historyEntries];
+// The shell is one module shared by every test in this file, so the entry list has to be
+// cleared between tests that walk it: a browser gives each page its own history.
+export const resetHistory = () => {
+  historyEntries.length = 0;
+  historyIndex = -1;
+  applyURL('/');
+};
+export const historyBack = () => {
+  if (historyIndex <= 0) return false;
+  historyIndex -= 1;
+  applyURL(historyEntries[historyIndex]);
+  dispatchWindow('popstate');
+  return true;
+};
+export const historyForward = () => {
+  if (historyIndex >= historyEntries.length - 1) return false;
+  historyIndex += 1;
+  applyURL(historyEntries[historyIndex]);
+  dispatchWindow('popstate');
+  return true;
+};
 const document = { hidden: true, hasFocus: () => false };
 export const setDocumentFocus = (hidden, focused) => {
   document.hidden = hidden;
@@ -149,7 +203,11 @@ const {
   setNotificationWorker,
   setProtocolVerdict,
   sockets,
-  dispatchWindow
+  dispatchWindow,
+  historyURLs,
+  historyBack,
+  historyForward,
+  resetHistory
 } = await import(
   'data:text/javascript;base64,' + Buffer.from(prelude + shellModules + compiled).toString('base64')
 );
@@ -2516,4 +2574,47 @@ test('a socket that has delivered nothing for over a minute is treated as half-o
   } finally {
     Date.now = realNow;
   }
+});
+
+// ENG-10. Back and Forward move between the conversations the member has visited, and a
+// conversation revoked while they were away is refused rather than shown. The distinction
+// the store draws is between a *deliberate* selection (a click in the sidebar, a result,
+// a notification), which pushes an entry Back should return through, and every other
+// transition (the initial load, an authority re-read moving the account out of a channel),
+// which replaces the current entry: Back must not walk through screens nobody chose.
+test('Back returns to the conversation you came from, and a revoked one is not shown', async () => {
+  resetHistory();
+  const value = workspace();
+  setHandler(async () => [message('001', { channel_id: 'a' })]);
+  await value.selectChannel('a', true);
+  await value.selectChannel('b', true);
+  assert.deepEqual(historyURLs(), ['/?channel=a', '/?channel=b']);
+  assert.equal(await historyBack(), true);
+  await value.openHistoryDestination();
+  assert.equal(value.activeId, 'a');
+
+  // The channel is revoked while the member is away: the next snapshot no longer lists
+  // it. Forward names it, and the destination is a route, not a grant -- the account
+  // lands on a conversation it may read, and the revoked one is never opened.
+  value.state = { ...value.state, channels: [{ id: 'a', type: 'text' }] };
+  assert.equal(await historyForward(), true);
+  await value.openHistoryDestination();
+  assert.notEqual(value.activeId, 'b');
+  assert.equal(value.activeId, 'a');
+  assert.equal(
+    value.messages.some((item) => item.channel_id === 'b'),
+    false
+  );
+});
+
+test('a selection that changes nothing does not add a history entry', async () => {
+  resetHistory();
+  const value = workspace();
+  setHandler(async () => [message('001', { channel_id: 'b' })]);
+  await value.selectChannel('b', true);
+  assert.equal(historyURLs().length, 1);
+  // The conversation you are already in: the second selection changes nothing on screen,
+  // and a pushed entry here would leave a Back step that appears to do nothing.
+  await value.selectChannel('b', true);
+  assert.equal(historyURLs().length, 1);
 });

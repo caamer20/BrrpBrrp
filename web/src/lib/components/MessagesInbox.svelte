@@ -378,7 +378,7 @@
     await workspace.refreshState();
     if (!workspace.canReadConversation(direct.id)) return;
     workspace.messagesOpen = false;
-    await workspace.selectChannel(direct.id);
+    await workspace.selectChannel(direct.id, true);
   }
 </script>
 
@@ -603,7 +603,7 @@
                 groupMembers = [];
                 invitingGroup = '';
                 workspace.messagesOpen = false;
-                void workspace.selectChannel(group.id);
+                void workspace.selectChannel(group.id, true);
               }}>Open conversation</button
             >
             <button

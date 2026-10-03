@@ -196,7 +196,7 @@
               class:active={workspace.activeId === direct.id}
               class:unread={!!unread?.count}
               aria-current={workspace.activeId === direct.id ? 'page' : undefined}
-              onclick={() => workspace.selectChannel(direct.id)}
+              onclick={() => workspace.selectChannel(direct.id, true)}
             >
               <Avatar user={direct.peer} size={22} /><span
                 >{direct.peer.display_name || direct.peer.username}</span
@@ -218,7 +218,7 @@
                 class:active={workspace.activeId === group.id}
                 class:unread={!!unread?.count}
                 aria-current={workspace.activeId === group.id ? 'page' : undefined}
-                onclick={() => workspace.selectChannel(group.id)}
+                onclick={() => workspace.selectChannel(group.id, true)}
               >
                 <span>{group.name}</span>{#if !group.can_write}<small>Read-only</small
                   >{/if}{#if unread?.count}<i class="unread-dot"></i>{/if}
@@ -247,7 +247,7 @@
                 class:active={workspace.activeId === channel.id}
                 class:unread={!!unread?.count}
                 aria-current={workspace.activeId === channel.id ? 'page' : undefined}
-                onclick={() => workspace.selectChannel(channel.id)}
+                onclick={() => workspace.selectChannel(channel.id, true)}
                 ><Icon name="hash" /><span>{channel.name}</span
                 >{#if channel.visibility === 'private'}<i
                     class="channel-flag"

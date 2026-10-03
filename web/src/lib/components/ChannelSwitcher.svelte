@@ -40,7 +40,7 @@
   });
   async function choose(id: string) {
     workspace.switcherOpen = false;
-    await workspace.selectChannel(id);
+    await workspace.selectChannel(id, true);
     await tick();
     document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus();
   }

@@ -1287,6 +1287,52 @@ owner's decisions have already fixed and the ones with no external dependency.
   (that is the human accessibility review, M6), and it says nothing about a member who is
   banned or deactivated beyond the note the record already carries.
 
+### 11i. ENG-10 — Back and Forward, and a revoked conversation is not shown
+
+- **The distinction the row needs.** Until now every selection wrote the address bar with
+  `replaceState`, so Back left the app: the browser's entry list never held a conversation.
+  The rule implemented is between a *deliberate* selection — a click in the channel list, a
+  direct conversation, a result in the switcher, a notification entry — which pushes an
+  entry Back should return through, and every other transition — the initial load, an
+  authority re-read moving the account out of a channel, a reply that arrives late — which
+  replaces the current entry. Back must not walk through screens nobody chose.
+- **Changed files.** `workspace.svelte.ts`: `selectChannel(id, push)` (never pushing the URL
+  already on screen, so re-opening the conversation you are in — an empty one, where the
+  refetch is still wanted — cannot leave a Back step that appears to do nothing); a
+  `routeReadable` test that replaces the same three-line check written out at three call
+  sites; `openHistoryDestination`, which reads the destination out of the URL on `popstate`
+  and opens it exactly the way any other route is opened; a `historyPush` wrapper that falls
+  back to `replaceState` if the browser refuses; and bind/unbind of the `popstate` listener
+  beside the connectivity watchers, because a listener left behind by a signed-out session
+  would navigate as the wrong account. The call sites that push are the channel list, the
+  direct and group lists, the switcher, the messages inbox and an activity entry's
+  destination.
+- **A route is a destination, not a grant.** `openHistoryDestination` re-runs the same rule
+  the initial load does: an id the account may no longer open is not selected. When the
+  account has nothing readable at all to fall back to, the address bar is reset to the
+  workspace root rather than left naming a conversation the account cannot open.
+- **Tests, unit.** Two in `workspace-state.test.mjs` against a history the shell can walk
+  (`pushState`, `replaceState`, `historyBack`, `historyForward` firing a real `popstate`):
+  Back returns to the conversation you came from, and a channel missing from the next
+  snapshot — revoked while the member was away — is not opened by Forward, with the
+  member's own message history never showing that channel's content; and a selection that
+  changes nothing writes no second entry. The shell's entry list is shared by the file, so
+  a `resetHistory` helper clears it between tests: a browser gives each page its own.
+- **Tests, browser.** A new journey in `release.spec.mjs` (both modes) creates a room of its
+  own with one line in it and walks it: general → room → Back (general's own line is there)
+  → Forward (the room's line is there). Then the member's role loses `channel.read` and the
+  line disappears from the open view; Back names general, also revoked, and Forward names
+  the room — neither is shown, and the address bar does not end up naming the room. When the
+  privilege is restored the room is listed again but the history step taken while it was
+  refused does not reopen it: only a deliberate click does. The journey deletes its room at
+  the end.
+- **Commands and results.** 330/330 frontend unit tests; `svelte-check` 0/0; release project
+  green with the new journey; default mode **27 passed**, private mode **41 passed**.
+- **What it does not prove.** It does not prove Back/Forward across a *reload* (the entry
+  list survives, the in-memory view does not — that is the ordinary cold-load path, covered
+  by the permalink and initial-route journeys), and it says nothing about Back from a voice
+  channel: joining voice is not a conversation selection and writes no entry.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
@@ -1294,7 +1340,8 @@ tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **EN
 (the codec policy and the Firefox project, tranche 10), **ENG-07** (the documented media
 limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), **ENG-13**
 (the storage quota, the disk guard and the single-sourced limits), **ENG-08**
-(emphasis and block quotes) and **ENG-09** (the member profile surface).
+(emphasis and block quotes), **ENG-09** (the member profile surface) and **ENG-10**
+(Back and Forward between conversations).
 
 Still open, in the order they are worth taking:
 
