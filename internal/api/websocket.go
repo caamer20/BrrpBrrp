@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
 	"brrpbrrp/internal/ws"
@@ -133,7 +134,14 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request, user db.User)
 		}
 	}()
 	defer func() { cancel(); <-writerDone }()
-	client.Send("hello", map[string]any{"user_id": user.ID, "refetch": true, "presence": s.visiblePresence()})
+	client.Send("hello", map[string]any{
+		"user_id": user.ID, "refetch": true, "presence": s.visiblePresence(),
+		// The protocol handshake. A client that has been open across an update speaks an
+		// older conversation than this server; it needs to know that *before* it sends
+		// text the server would store differently, and it needs to keep the text it has
+		// already typed while it updates (see internal/ws/protocol.go).
+		"protocol": ws.Protocol, "protocol_min": ws.ProtocolMin, "version": app.Version,
+	})
 	s.publishPresence()
 	for {
 		var event ws.Event

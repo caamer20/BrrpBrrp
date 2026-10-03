@@ -181,6 +181,10 @@
 
   function send() {
     if ((!text.trim() && !attachments.length) || progress !== null || readOnly) return;
+    // A bundle the server cannot answer keeps what is typed rather than handing it over:
+    // the notice above says to update, and nothing here is cleared, so the text survives
+    // the reload the update performs (ENG-12).
+    if (workspace.protocolNotice) return;
     const content = text.trim();
     const uploaded = attachments;
     text = '';
@@ -343,7 +347,10 @@
         class="send-button"
         aria-label={thread ? 'Send reply' : 'Send message'}
         title="Send message"
-        disabled={(!text.trim() && !attachments.length) || progress !== null || readOnly}
+        disabled={(!text.trim() && !attachments.length) ||
+          progress !== null ||
+          readOnly ||
+          !!workspace.protocolNotice}
         onclick={send}><Icon name="send" size={19} /></button
       >
     </div>

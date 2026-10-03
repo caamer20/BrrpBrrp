@@ -75,6 +75,13 @@ export const setDocumentFocus = (hidden, focused) => {
 };
 const WebSocket = { OPEN: 1 };
 const errorMessage = error => error.message;
+// The protocol handshake's module is stripped with the other imports. The stub answers
+// compatible unless a test drives it, and a test that wants the incompatible state sets
+// it through setProtocolVerdict -- which is what the hello frame would have done.
+export let protocolVerdict = () => ({ ok: true, message: '' });
+export const setProtocolVerdict = next => {
+  protocolVerdict = next;
+};
 class APIError extends Error {
   constructor(message, status) {
     super(message);
@@ -86,11 +93,17 @@ let handler;
 export const setHandler = value => handler = value;
 const api = (...args) => handler(...args);
 `;
-const { Workspace, setHandler, store, setDocumentFocus, apiError, setNotificationWorker } =
-  await import(
-    'data:text/javascript;base64,' +
-      Buffer.from(prelude + shellModules + compiled).toString('base64')
-  );
+const {
+  Workspace,
+  setHandler,
+  store,
+  setDocumentFocus,
+  apiError,
+  setNotificationWorker,
+  setProtocolVerdict
+} = await import(
+  'data:text/javascript;base64,' + Buffer.from(prelude + shellModules + compiled).toString('base64')
+);
 const state = () => ({
   user: { id: 'me' },
   channels: [
@@ -2322,4 +2335,46 @@ test('a success that lands after a switch is dropped and releases its record', a
     store.getItem(`brrp.outbox.${recoveryAccount}`),
     "the first account's own scope lost its unconfirmed record"
   );
+});
+
+// The protocol handshake's client half (ENG-12): a hello from a server this bundle cannot
+// answer stops the composer from handing text over, says why, and leaves the draft and
+// the typed text exactly where they were. What it must never do is clear anything.
+test('a hello from an incompatible server stops sending and keeps the text', async (t) => {
+  const value = workspace();
+  t.after(() => value.stop());
+  setProtocolVerdict(() => ({
+    ok: false,
+    message:
+      'This app is older than the server. Update it before sending — your drafts stay here until you do.'
+  }));
+  t.after(() => setProtocolVerdict(() => ({ ok: true, message: '' })));
+
+  value.receive({ t: 'hello', d: { protocol: 9, protocol_min: 9, version: '9.9.9' } });
+  assert.match(value.protocolNotice, /older than the server/i);
+
+  // The send path is refused: no pending operation, no optimistic row, and the draft the
+  // composer would have cleared is still exactly where it was.
+  const held = deferred();
+  setHandler(() => held.promise);
+  value.saveDraft('a', 'text somebody typed while the server was updated');
+  const draft = value.drafts?.a;
+  await value.send('text somebody typed while the server was updated', []);
+  assert.equal(
+    value.hasPendingMessages,
+    false,
+    'a message was queued against an incompatible server'
+  );
+  assert.equal(value.drafts?.a, draft, 'the draft was disturbed by a refused send');
+
+  // The permitted control: a compatible hello clears the notice and the *same* call now
+  // queues a message, so the refusal was about the protocol and not about a workspace
+  // that could not send in the first place.
+  setProtocolVerdict(() => ({ ok: true, message: '' }));
+  value.receive({ t: 'hello', d: { protocol: 1, protocol_min: 1, version: '0.4.0-alpha.9' } });
+  assert.equal(value.protocolNotice, '');
+  const sending = value.send('text somebody typed while the server was updated', []);
+  assert.equal(value.hasPendingMessages, true, 'the control could not send at all');
+  held.resolve(message('saved'));
+  await sending;
 });

@@ -1103,5 +1103,75 @@ owner's decisions have already fixed and the ones with no external dependency.
   any network: which restrictive networks the embedded relay traverses is a G5 item and
   still needs hosts and devices.
 
+### 11b. ENG-12 — a protocol handshake that protects drafts
+
+- **What it is for.** A tab can be open across a server update, and the bundle in it is
+  then older than the server. Most changes are additive and harmless, but a change in what
+  a frame *means* is not something an old bundle survives quietly: it would send text the
+  server stores differently, or hold text while every send is refused and nothing says why.
+- **Changed files and reason.**
+  - `internal/ws/protocol.go` — `Protocol` and `ProtocolMin`, and why the number moves: a
+    change in meaning, not an added field.
+  - `internal/api/websocket.go` — `hello` carries `protocol`, `protocol_min` and
+    `version`, so a client learns the server's range on the frame that opens every
+    connection and a person can be told which side is stale.
+  - `web/src/lib/protocol.ts` — the bundle's `PROTOCOL` and `protocolVerdict()`: inside
+    the range is compatible; below the minimum means update the app; above the server's
+    number means update the server. An absent field is an older server — the field arrives
+    with the first protocol-aware release — and is treated as compatible rather than
+    turning a missing field into a broken installation.
+  - `web/src/lib/workspace.svelte.ts` — `protocolNotice`, set from the hello frame, and a
+    refusal in **both** send paths (`send` and `sendIntoThread`).
+  - `web/src/lib/components/Composer.svelte` — the send control is disabled and the send
+    handler returns *before* clearing anything, so the typed text, the attachments and the
+    draft stay exactly where they were; the reload an update performs restores the draft
+    through the machinery that already exists.
+  - `web/src/lib/components/UpdateNotice.svelte` — an incompatible protocol shows a notice
+    that names which side is stale and cannot be dismissed, with the same "Update now"
+    action whose draft capture already exists.
+- **Tests.** `internal/api/protocol_test.go` dials a real websocket and asserts the hello
+  frame carries the protocol, the minimum, the version, and — as the control — the fields
+  it already had. `web/tests/protocol.test.mjs` pins the four verdicts.
+  `web/tests/workspace-state.test.mjs` drives the hello frame and asserts the refusal: no
+  pending operation, the draft untouched, and the *same* call queues a message once a
+  compatible hello arrives.
+- **What the first attempt got wrong, and how the test found it.** The store had no guard
+  — only the composer did — and the test *hung* rather than failed: `await value.send(…)`
+  never resolved because the send was accepted and the harness's response never came. That
+  is as close to a proof as the harness can produce that a component guard is not the
+  contract; the store now refuses in the same state, so a reply panel, a retry button and
+  the thread view are covered too.
+- **What it does not prove.** No browser was run with an incompatible pair, because both
+  halves come from one tree: the rendered notice is proven by `svelte-check`, by the
+  store-level test and by the component's shape rather than by a journey. The protocol
+  number is 1 on both sides, so the handshake is exercised end to end in its compatible
+  direction and by unit tests in its incompatible one.
+
+### 11c. An open intermittent: Firefox occasionally loses a session right after sign-in
+
+- **What happens.** Roughly one Firefox invocation in three, a journey fails at `signIn`
+  with `getByLabel('Your preferences')` never appearing. The failure dump added in this
+  tranche names the state precisely: the page is on the sign-in form, and a probe from
+  that page shows **`/api/state` returning 401** — the session it believes it has is not
+  accepted. The sign-in POST itself returns **200 and sets the session cookie** (measured
+  earlier in the same investigation).
+- **What is disproved, with the measurements.** Sequential Firefox contexts render the
+  workspace in 0.6–1.2 s; four *concurrent* contexts in 0.9–1.4 s; a second context signing
+  in while the first is in a voice call in ~0.65 s. The login throttle is 400 per five
+  minutes per address (the harness raises it), so it is not that; no account in those
+  projects has a second factor; page console and page errors are silent on failure.
+- **Two wrong turns that are worth keeping.** The first "fix" was a retry loop around the
+  form, which could never succeed once the sign-in had worked (the form is gone) and turned
+  a five-second failure into a thirty-second one; and an earlier batch runner that killed
+  its own shell left Playwright children running concurrently, which made a real regression
+  look like a suite-wide flake.
+- **Where the next session should start.** The probe distinguishes "the server has no such
+  session" from "the browser is not sending the cookie" if it is made to send the cookie
+  explicitly (the cookie is `Secure` when the deployment is, `SameSite=Strict` always, and
+  Firefox and Chromium treat `http://127.0.0.1` differently for `Secure` cookies — the
+  first hypothesis to test). Until then the Firefox project is engine coverage that is
+  intermittently red on this host, not a claim that it is stable; the Chromium modes have
+  not shown it, and the media assertions themselves have never been the failing step.
+
 
 

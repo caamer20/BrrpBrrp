@@ -200,7 +200,7 @@ async function openRoom(page) {
 // away: the store's error text, the screen share's message and the control state are all
 // rendered there, and the failure screenshot only shows the last moment of a long wait.
 // Printing it turns the next intermittent into something with a named cause in the log.
-test.afterEach(async ({ page }, testInfo) => {
+test.afterEach(async ({ page, browser }, testInfo) => {
   if (testInfo.status === 'passed' || testInfo.status === 'skipped') return;
   const parts = [];
   for (const [name, locator] of [
@@ -216,6 +216,31 @@ test.afterEach(async ({ page }, testInfo) => {
   console.log(
     `VOICE-STATE ${testInfo.title}: ${parts.join(' | ') || '(no voice surface rendered)'}`
   );
+  // Every open page is dumped, wherever it lives, with a probe of the session it holds:
+  // an intermittent failure in a secondary context is invisible from the main page, and
+  // "the workspace never appeared" is not a cause. The probe answers whether the session
+  // the page believes it has is still accepted by the server.
+  for (const [index, context] of browser.contexts().entries()) {
+    for (const [pageIndex, other] of context.pages().entries()) {
+      const body = await other
+        .locator('body')
+        .innerText({ timeout: 2000 })
+        .catch(() => '(unreadable)');
+      const probe = await other
+        .evaluate(async () => {
+          try {
+            const response = await fetch('/api/state', { credentials: 'same-origin' });
+            return `state=${response.status}`;
+          } catch (error) {
+            return `state=threw:${String(error).slice(0, 60)}`;
+          }
+        })
+        .catch(() => 'state=unevaluable');
+      console.log(
+        `PAGE-DUMP ctx=${index} page=${pageIndex} url=${other.url()} ${probe} text=${JSON.stringify(body.slice(0, 200))}`
+      );
+    }
+  }
 });
 
 test('withdrawing voice.speak stops the forwarded audio, and returning it resumes', async ({

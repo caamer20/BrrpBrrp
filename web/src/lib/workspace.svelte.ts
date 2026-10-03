@@ -21,6 +21,7 @@ import {
   writeOutbox,
   type OutboxEntry
 } from './outbox';
+import { protocolVerdict } from './protocol';
 import type { Attachment, Channel, Message, RealtimeEvent, WorkspaceState } from './types';
 
 // resourceForMessages is the path segment every message operation uses. It is named
@@ -238,6 +239,12 @@ class Workspace {
   // must not write its text back into a scope the person just asked to clear.
   private draftsClearedFor = '';
   private pending = $state<Record<string, Message>>({});
+  /**
+   * Set when the server's hello says this bundle speaks a conversation the server cannot
+   * answer — a tab left open across an update. Sending is refused while it is set (the
+   * composer keeps the text and the draft) and the interface says to update.
+   */
+  protocolNotice = $state('');
   get hasPendingMessages() {
     return Object.keys(this.pending).length > 0;
   }
@@ -1536,6 +1543,12 @@ class Workspace {
       !this.canWriteConversation(this.activeId)
     )
       return;
+    // A server this bundle cannot answer refuses sends here as well as in the composer:
+    // a reply panel, a retry button and the thread view are not the composer, and each
+    // would otherwise queue text into a conversation the server may store differently.
+    // Nothing is cleared by refusing — the text stays wherever it was typed, and the
+    // notice says to update (ENG-12).
+    if (this.protocolNotice) return;
     const key = crypto.randomUUID();
     const message: Message = {
       id: key,
@@ -1602,6 +1615,9 @@ class Workspace {
     if (!this.user || this.authorizationUnverified || !this.can('message.send'))
       return { state: 'refused' };
     if (!threadID) return { state: 'refused' };
+    // Same refusal as `send`, for the same reason: a thread reply is text too, and an
+    // incompatible bundle must not queue it.
+    if (this.protocolNotice) return { state: 'refused' };
     const sender = this.user.id;
     const request = this.identity();
     const key = idempotencyKey;
@@ -2006,6 +2022,13 @@ class Workspace {
       // The mention policy is re-read too, not just the workspace: a mute written
       // on another device while this socket was down has no event left to carry
       // it, and a same-revision reconnect produces none either (review 9, R9-02).
+      if (event.t === 'hello') {
+        // Whether this bundle and the server speak the same conversation. It is set
+        // here, on the frame that opens every connection, so a tab that was already
+        // open when the server was updated learns it before it sends anything.
+        const verdict = protocolVerdict(event.d);
+        this.protocolNotice = verdict.ok ? '' : verdict.message;
+      }
       this.refreshWorkspace = true;
       this.requestPreferenceRefresh();
       this.scheduleChanges(true);
