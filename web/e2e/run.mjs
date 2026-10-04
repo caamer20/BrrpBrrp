@@ -117,7 +117,10 @@ async function run() {
         // stripped from the child so the server's own configuration cannot leak into
         // the run, and a project the config defines only for this flag would otherwise
         // never exist.
-        BRRP_E2E_FIREFOX: process.env.BRRP_E2E_FIREFOX || '0'
+        BRRP_E2E_FIREFOX: process.env.BRRP_E2E_FIREFOX || '0',
+        // The long-thread scale project is gated the same way, because it seeds a thousand
+        // messages and takes about ten minutes.
+        BRRP_E2E_SCALE: process.env.BRRP_E2E_SCALE || '0'
       },
       stdio: 'inherit'
     }

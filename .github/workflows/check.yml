@@ -82,6 +82,12 @@ jobs:
       # prose. Three documents tell an operator what schema the release writes, and all
       # three were stale — an operator reading one to decide whether a backup can be
       # restored afterwards is reading something that has already gone wrong.
+      # The plan's scenario catalog and the evidence behind it are checked together: a
+      # scenario with no check, a check that was renamed or deleted, and an id the plan
+      # does not declare all fail here. `make check` runs the same script, and
+      # web/tests/acceptance-matrix.test.mjs proves it can fail.
+      - name: The acceptance matrix is accounted for
+        run: node scripts/check-acceptance-matrix.mjs
       - name: Documentation states the schema this binary writes
         run: |
           node scripts/check-schema-docs.mjs --self-test
@@ -248,6 +254,11 @@ jobs:
         run: node scripts/upgrade-recovery.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery.json
       - name: Fresh recovery rehearsal (private-state fixture)
         run: node scripts/upgrade-recovery-private.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/recovery-private.json
+      # The documented encrypted off-host procedure, run rather than described: back up,
+      # encrypt off the host with whichever documented tool this runner has, delete the
+      # plaintext, and restore only from the encrypted copy.
+      - name: Fresh recovery rehearsal (encrypted off-host copy)
+        run: node scripts/backup-encrypted-rehearsal.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/encrypted-backup.json
       # The schema-13 rehearsal needs a schema-13 data directory, and only a real
       # schema-13 executable can write one: a current binary produces a current
       # database, and the rehearsal's own checks reject that. The seed is therefore

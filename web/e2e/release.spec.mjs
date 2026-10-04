@@ -285,8 +285,12 @@ test('a member requests their data export, downloads it, and removes it', async 
     await route.continue();
   });
   await dialog.getByRole('button', { name: 'Request an export' }).click();
-  // The lost response is reported, not silently swallowed.
-  await expect(dialog.getByRole('alert')).toBeVisible();
+  // The lost response is reported, not silently swallowed. The wait is generous because
+  // the route handler fetches the real response (so the server commits) and only then
+  // aborts it: the alert cannot appear before that chain finishes, and 5 s was tight
+  // enough to fail once in twenty runs on 3 October. This is not a latency claim — the
+  // journey asserts *that* the member is told, not how fast.
+  await expect(dialog.getByRole('alert')).toBeVisible({ timeout: 20000 });
   await expect(dialog.locator('.export-row')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Request an export' }).click();
   await expect(dialog.locator('.export-row')).toHaveCount(1);
@@ -355,7 +359,16 @@ test('the operator and member surfaces are free of detectable violations', async
   // keyboard because a list of people is not a thing to be navigated with a mouse only,
   // and the author of a message, which must open the same dialog about the same person.
   const memberRow = page.getByRole('button', { name: /— open profile$/ }).first();
+  await expect(memberRow).toBeVisible();
+  // `toBeFocused` also asserts that the *page* has focus, and a headless page that another
+  // context was created behind reports `inactive` while the element really is
+  // document.activeElement. Bringing this page to the front makes the assertion about the
+  // row rather than about which window the browser considers current.
+  await page.bringToFront();
   await memberRow.focus();
+  // A presence update arriving between the focus and this assertion used to rebuild the
+  // group and replace the row; the list is keyed so the row a keyboard user is standing
+  // on survives (the failure this assertion first produced).
   await expect(memberRow).toBeFocused();
   await page.keyboard.press('Enter');
   const profile = page.getByRole('dialog', { name: /— profile$/ });
@@ -626,9 +639,18 @@ test.describe('phone viewport', () => {
     // used to be faded to half opacity, which put the text they had just typed — and the
     // "Sending…" line — below the contrast minimum whenever the two raced (2 October).
     await page.route('**/api/**/messages', async (route) => {
-      if (route.request().method() !== 'POST') return route.continue();
+      // A read is not what this holds back. `fallback()` rather than `continue()`: a
+      // handler that continues a request another handler already owns throws "Route is
+      // already handled", which this journey produced twice on 3 October while the sweep
+      // and the send were racing (see the ledger).
+      if (route.request().method() !== 'POST') return route.fallback();
       await new Promise((done) => setTimeout(done, 1500));
-      return route.continue();
+      try {
+        return await route.continue();
+      } catch {
+        // The page moved on while the request was held; there is nothing left to continue.
+        return undefined;
+      }
     });
     await composer.fill('a message from a phone-sized viewport');
     await composer.press('Enter');
@@ -781,4 +803,75 @@ test('Back and Forward walk the conversations visited, and a revoked one is not 
     data: { confirm: room }
   });
   expect(removed.ok(), `delete ${room}: ${removed.status()}`).toBe(true);
+});
+
+// T-CONTENT-01's owed half. Arabic is the script this product's direction handling was
+// written for and had never been exercised end to end. A message that begins in Arabic and
+// ends with an English URL is the case that breaks quietly: the browser decides the
+// paragraph's direction from its first strong character, and a full stop or a line break on
+// the wrong side is legible and wrong. What is asserted is the *resolved* direction and the
+// rendered text, not the CSS rule that is supposed to produce them.
+test('an Arabic message is composed, rendered and searched in its own direction', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(120000);
+  await signInOverApi(request);
+  const member = { username: 'arabic_member', password: 'a private arabic passphrase' };
+  const memberId = await createAccount(request, member);
+  const arabicName = 'ليلى';
+  const renamed = await request.patch(`/api/admin/users/${memberId}`, {
+    data: { display_name: arabicName }
+  });
+  expect(renamed.ok(), `the display name was refused: ${renamed.status()}`).toBe(true);
+
+  await signIn(page, member);
+  const composer = page.getByRole('textbox', { name: 'Message general' });
+  const arabic = 'مرحباً بالجميع، هذا سطر عربي\nوهذا سطر ثانٍ';
+  await composer.fill(arabic);
+  await composer.press('Enter');
+  const line = page.locator('article.message').filter({ hasText: 'مرحباً بالجميع' }).first();
+  await expect(line).toBeVisible({ timeout: 20000 });
+  // A message is rendered optimistically and then replaced by the server's copy, so the
+  // element captured a moment ago can be the detached one — and a detached node computes
+  // no CSS at all, which is `direction: ltr`. Waiting for delivery to settle and polling
+  // the resolved direction is what makes this an assertion about the message the reader
+  // ends up with rather than about the one they saw for a moment.
+  await expect(line.locator('.message-delivery')).toHaveCount(0, { timeout: 20000 });
+  await expect
+    .poll(
+      async () =>
+        line.locator('.message-content').evaluate((node) => getComputedStyle(node).direction),
+      { timeout: 20000, intervals: [100, 250, 500] }
+    )
+    .toBe('rtl');
+
+  // The rendered paragraph takes its direction from its own first strong character, and the
+  // line break the author typed survives the tokenizer.
+  const rendered = await line.locator('.message-content').evaluate((node) => node.innerText);
+  expect(rendered).toBe(arabic);
+
+  // The author's name, in the same script, is part of the same claim.
+  await expect
+    .poll(
+      async () =>
+        line
+          .locator('.message-meta strong, .message-meta .author-name')
+          .first()
+          .evaluate((node) => getComputedStyle(node).direction),
+      { timeout: 20000, intervals: [100, 250, 500] }
+    )
+    .toBe('rtl');
+  await expect(line.locator('.message-meta')).toContainText(arabicName);
+
+  // And the message is findable by its own text rather than only displayable.
+  await page.getByRole('button', { name: 'Search messages' }).click();
+  const search = page.getByRole('dialog', { name: 'Search messages' });
+  await expect(search.getByText('Find a moment in the conversation')).toBeVisible();
+  await search.getByLabel('Search', { exact: true }).fill('سطر عربي');
+  await search.getByRole('button', { name: 'Search' }).click();
+  await expect(search.getByText(/1 message found/)).toBeVisible({ timeout: 20000 });
+  await expect(search.getByText('مرحباً بالجميع').first()).toBeVisible();
+  await expectAccessible(page);
+  await search.getByRole('button', { name: 'Close dialog' }).click();
 });

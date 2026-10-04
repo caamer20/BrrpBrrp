@@ -217,6 +217,7 @@
       {#if author}<button
           type="button"
           class="author-name"
+          dir="auto"
           onclick={() => (workspace.profileUser = author)}
           >{author.display_name || author.username}</button
         >{:else}<strong>Former member</strong>{/if}{#if author?.is_admin}<span class="admin-badge"
@@ -259,7 +260,7 @@
         </div>
       </form>
     {:else}
-      <p class="message-content"><MessageTokens tokens={tokens(message.content)} /></p>
+      <p class="message-content" dir="auto"><MessageTokens tokens={tokens(message.content)} /></p>
     {/if}
     {#each message.attachments as attachment (attachment.id)}
       {#if /^image\/(png|jpeg|webp|gif)$/.test(attachment.mime_type)}<ImagePreview

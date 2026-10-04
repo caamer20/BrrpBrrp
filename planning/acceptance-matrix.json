@@ -1,0 +1,291 @@
+{
+  "$comment": "Machine-checked by scripts/check-acceptance-matrix.mjs, which runs in make check and in CI. Every id is from docs/v1-implementation-plan.md §11.2; every check named here is looked up where it lives, so a renamed or deleted test fails the build. `owed` says what is missing and which phase owns it — the plan's G0-G8 gates and phases A-I.",
+  "generated_from": "docs/v1-implementation-plan.md §11.2 (Mandatory scenario catalog)",
+  "scenarios": {
+    "T-AUTH-01": {
+      "checks": [
+        "api::TestPrivateChannelLifecycleReachesOnlyItsAudience",
+        "api::TestRestrictedChannelPrivacyAcrossDeliverySurfaces",
+        "api::TestRealtimeEventsAreAudienceScoped",
+        "api::TestReplyContextPinsAndDeletion",
+        "directs.spec.mjs::a request badge appears for a waiting request and a private report discloses exactly one message",
+        "privacy.spec.mjs::losing read access clears the page and no older response restores it"
+      ],
+      "owed": [
+        "Phase D: the same walk against a physical second device, where the outsider's client is not the same browser profile."
+      ]
+    },
+    "T-AUTH-02": {
+      "checks": [
+        "api::TestACredentialCommitRefusesAQueuedWriteOnTheRevokedSession",
+        "api::TestEndedSocketsRefuseEventsResolvedAfterTheRevocationCommit",
+        "api::TestTheRevokedAudienceIsNotDeliveredOnARealSocket",
+        "api::TestExportStopsWhenRoleCapabilityIsWithdrawnAfterRegistration",
+        "api::TestAnExportStopsMidTransferWhenItsScopeIsWithdrawn",
+        "privacy.spec.mjs::held panel answers cannot repopulate pins, a thread, search or a preview"
+      ]
+    },
+    "T-AUTH-03": {
+      "checks": [
+        "api::TestDelegatedMemberManagerCannotEscalateAuthority",
+        "api::TestEmptyingTheLastAssignmentCannotGrantWhatTheActorCannot",
+        "api::TestTimeoutCannotBeAppliedAtOrAboveTheActorsAuthority",
+        "api::TestAuthorityChangesCarryTheirAuditRecord",
+        "authority.spec.mjs::single-capability managers see only the tools they were granted"
+      ]
+    },
+    "T-AUTH-04": {
+      "checks": [
+        "api::TestAdministrationAndRestore",
+        "api::TestMemberExportNeedsRecentAuthentication",
+        "api::TestMemberExportContainsNoCredentialsOfAnyKind",
+        "api::TestAnAccountRaisedOutOfReachCannotBeChanged",
+        "api::TestSensitiveRoutesRequireRecentStrongAuthentication",
+        "ownership.spec.mjs::ownership designation and transfer move the operator surface"
+      ]
+    },
+    "T-IDENT-01": {
+      "checks": [
+        "api::TestTOTPVectorsAndReplay",
+        "api::TestMFAEnrollmentRecoveryAndSessionRevocation",
+        "api::TestOperatorRemovesALostSecondFactor",
+        "api::TestCredentialTransitionsCommitWithTheirAuditRecords",
+        "api::TestSelfServiceSecurityMutationsRejectAnEndedSession"
+      ]
+    },
+    "T-DM-01": {
+      "checks": [
+        "api::TestDirectConsentIsCanonicalExplicitAndNeverAdministrative",
+        "api::TestDirectRequestsHaveDurableLimitsAndRejectionCooldown",
+        "api::TestDirectAcceptBlockRaceNeverAllowsBlockedContact",
+        "api::TestDirectIncomingInboxIsBounded",
+        "directs.spec.mjs::an unsent request introduction survives unrelated refreshes and a refused send"
+      ]
+    },
+    "T-DM-02": {
+      "checks": [
+        "api::TestDirectBlockCancelsWritesButRetainsHistoryAndOwnDeletion",
+        "api::TestDirectHistorySurvivesBlockingAndPeerErasure",
+        "directs.spec.mjs::a recipient can report a request and block without accepting it",
+        "directs.spec.mjs::two members talk in a group through the interface without reloading"
+      ],
+      "owed": [
+        "Phase D: blocking during a live private call on physical devices — the server half is proven, the media half needs two real clients."
+      ]
+    },
+    "T-GROUP-01": {
+      "checks": [
+        "api::TestGroupMembershipRequiresTheRecipientsOwnAcceptance",
+        "api::TestGroupMemberBoundIsEnforcedInTheAcceptingTransaction",
+        "api::TestGroupOwnershipIsDeterministicAcrossTransferAndLeave",
+        "api::TestGroupRemovalRevokesForwardAndKeepsThePastReadable",
+        "api::TestTheLastMemberLeavingRemovesTheGroup",
+        "directs.spec.mjs::a group is created, joined and handed over through the interface"
+      ]
+    },
+    "T-CHAT-01": {
+      "checks": [
+        "api::TestASendReceiptIsIdempotentAndNeverRecreatesDeletedContent",
+        "api::TestConcurrentRetriesOfOneOperationCreateOneMessage",
+        "api::TestAnOperationKeyIsBoundToItsIntent",
+        "api::TestAnExpiredReceiptIsNeverNewWork",
+        "privacy.spec.mjs::an unconfirmed send survives a reload and is reconciled by its own key",
+        "privacy.spec.mjs::refused sends offer complete recoverable text without retrying or replacing drafts"
+      ],
+      "owed": [
+        "Phase C: the 1,000-send scale run itself — concurrency and idempotency are proven at the operation level, and the plan's figure needs a load run recorded against a frozen candidate."
+      ]
+    },
+    "T-CHAT-02": {
+      "checks": [
+        "directs.spec.mjs::an unsent request introduction and its held response never cross an account switch",
+        "account-switch.spec.mjs::a channel move held across a sign-in cannot reorder the next account",
+        "directs.spec.mjs::a message edited while reporting is re-read and confirmed, not sent silently",
+        "release.spec.mjs::a message permalink opens the message, and an upload can be stopped"
+      ]
+    },
+    "T-READ-01": {
+      "checks": [
+        "api::TestAcknowledgmentIsDurableAndMonotonic",
+        "api::TestLightweightUnreadAndHistoryWindow",
+        "api::TestMutingSuppressesInterruptionAndNotHistory",
+        "directs.spec.mjs::activity acknowledgment marks exactly the rows it reported and survives a reopen",
+        "directs.spec.mjs::activity fetches on every open, not only the first"
+      ]
+    },
+    "T-THREAD-01": {
+      "checks": [
+        "api::TestReplyContextPinsAndDeletion",
+        "threads.spec.mjs::a named thread is started, answered, listed and locked",
+        "threads.spec.mjs::a thread reply moves only the thread, and archiving closes replies until reopened",
+        "threads.spec.mjs::a thread a reader cannot reach is not found rather than forbidden",
+        "thread-scale.spec.mjs::a thousand replies are navigable, each appearing once, with the oldest reachable"
+      ]
+    },
+    "T-NOTIFY-01": {
+      "checks": [
+        "api::TestChannelMuteSuppressesAlreadyQueuedPushAndUnmuteRestoresIt",
+        "api::TestChannelMuteIsRecheckedBetweenPushDevices",
+        "api::TestPrivatePushPayloadCarriesNoPrivateContent",
+        "api::TestAnActivityRowNamesTheConversationItsReaderMayOpen",
+        "release.spec.mjs::the service worker claims one notice per event across tabs and sweeps its keys"
+      ],
+      "owed": [
+        "Phase D: a closed PWA on a physical phone — the retained store and the claim are proven, the operating system's delivery is not."
+      ]
+    },
+    "T-NOTIFY-02": {
+      "checks": [
+        "api::TestAnUntypedPushDestinationIsRefused",
+        "api::TestPushDeviceMutationsRejectARevokedSession",
+        "api::TestInactiveAccountsHaveNoPushDispatchSubscriptions",
+        "release.spec.mjs::the service worker claims one notice per event across tabs and sweeps its keys"
+      ]
+    },
+    "T-MOD-01": {
+      "checks": [
+        "api::TestTimeoutSuspendsAndLiftsAtExpiryLeavingRolesAlone",
+        "api::TestReportAssignmentIsAClaimNotAGrant",
+        "api::TestBoundedInvitationAdmitsExactlyItsUses",
+        "api::TestRevokedInvitationRefusesWithoutRevealingWhy",
+        "privacy.spec.mjs::member reports reach permitted moderators and revoked report evidence cannot return",
+        "authority.spec.mjs::channel slow mode is configurable and a refused send keeps its text for retry"
+      ]
+    },
+    "T-CONTENT-01": {
+      "checks": [
+        "scraper::TestReservedAddressesAreBlocked",
+        "scraper::TestOpenGraphAndGIFParsing",
+        "web/tests/message-tokens.test.mjs::malicious markup stays inert inside and outside emphasis",
+        "web/tests/message-tokens.test.mjs::code is still literal: markers inside a fence and inside emphasis",
+        "release.spec.mjs::first setup, persistent chat, search and sign-out",
+        "release.spec.mjs::an Arabic message is composed, rendered and searched in its own direction"
+      ]
+    },
+    "T-MEDIA-01": {
+      "checks": [
+        "rtc::TestOneScreenPerRoomAndTwoOnTheServer",
+        "rtc::TestAnEmptyRoomLeavesNoRegistriesBehind",
+        "voice.spec.mjs::withdrawing voice.speak stops the forwarded audio, and returning it resumes",
+        "voice.spec.mjs::a shared screen reaches another browser and stops cleanly"
+      ],
+      "owed": [
+        "Phase D: ten participants in a room and twenty server-wide for two hours on real hardware — the resource bounds are proven, the duration is not."
+      ]
+    },
+    "T-MEDIA-02": {
+      "checks": [
+        "rtc::TestRemovingAPublicationRemovesItFromTheOrderToo",
+        "rtc::TestOneScreenPerRoomAndTwoOnTheServer",
+        "rtc::TestAViewerJoiningAfterAShareStartedIsToldAboutIt",
+        "rtc::TestAStoppedShareIsNotAnnouncedToAJoiner",
+        "voice.spec.mjs::a screen share is published to the room, and stopping it releases the track",
+        "voice.spec.mjs::a shared screen reaches another browser and stops cleanly"
+      ],
+      "owed": [
+        "Phase C/D: the hundred share start/stop cycles against a frozen candidate, and a device transfer on physical hardware."
+      ]
+    },
+    "T-MEDIA-03": {
+      "checks": [
+        "rtc::TestScreenAndMicrophoneAreCountedSeparately",
+        "rtc::TestAKeyframeRequestWithNoPublicationIsIgnored",
+        "rtc::TestAViewersKeyframeRequestReachesThePublisher",
+        "rtc::TestKeyframeRequestsAreRateLimited",
+        "voice.spec.mjs::withdrawing voice.speak stops the forwarded audio, and returning it resumes"
+      ]
+    },
+    "T-NET-01": {
+      "checks": [
+        "rtc::TestAForcedRelayCallIsCarriedByTheRelay",
+        "rtc::TestAnUnissuedCredentialGetsNoAllocation",
+        "rtc::TestTheRelayAdvertisesThePortItListensOn",
+        "voice.spec.mjs::a call survives a severed connection and resumes inside the budget"
+      ],
+      "owed": [
+        "Phase D: restrictive NAT, UDP blocked, an IPv6 policy and the ten-second loss profile on real networks — the client's recovery is measured here, the network is not."
+      ]
+    },
+    "T-DATA-01": {
+      "checks": [
+        "script:scripts/upgrade-recovery.mjs",
+        "script:scripts/upgrade-rollback.mjs",
+        "script:scripts/upgrade-recovery-private.mjs",
+        "db::TestMigrationsAndSearchTriggers"
+      ],
+      "owed": [
+        "Phase C: a full-disk and interruption run against every fixture generation — the schema path is rehearsed, the disk-exhaustion path is not."
+      ]
+    },
+    "T-DATA-02": {
+      "checks": [
+        "db::TestDurabilityPolicyIsExplicit",
+        "app::TestPublishRefusesToReplaceAnExistingFile",
+        "app::TestPublishLeavesNothingBehindWhenTheWriteFails",
+        "app::TestAbandonedTemporaryPublicationsAreReaped",
+        "script:scripts/upgrade-recovery.mjs"
+      ]
+    },
+    "T-BACKUP-01": {
+      "checks": [
+        "api::TestBackupCopyMustMatchTheArchiveItCopied",
+        "api::TestAMissingCopySourceIsNotReportedAsARepairedCopy",
+        "api::TestANonRegularCopySourceIsStillAFailedRepair",
+        "api::TestRetentionAlwaysKeepsTheRecoverableGeneration",
+        "script:scripts/backup-encrypted-rehearsal.mjs"
+      ]
+    },
+    "T-RESTORE-01": {
+      "checks": [
+        "script:scripts/upgrade-recovery.mjs",
+        "script:scripts/backup-encrypted-rehearsal.mjs"
+      ],
+      "owed": [
+        "Phase D: a restore onto a clean Windows host and a fresh Docker volume from an off-host encrypted copy — this needs the owner's hosts."
+      ]
+    },
+    "T-INSTALL-01": {
+      "checks": [
+        "app::TestDataLockAndEnvironmentFile",
+        "app::TestRejectUnsafeConfig",
+        "app::TestLocalCertificatesHaveTrustableCAAndPreserveRootOnRepair",
+        "app::TestManagedRenewalUpdatesExpiringLeafAndHostname"
+      ],
+      "owed": [
+        "Phase D: cancellation, reboot, failed-start rollback and uninstall/reinstall on each supported host."
+      ]
+    },
+    "T-PWA-01": {
+      "checks": [
+        "web/tests/service-worker.test.mjs::private API/upload requests bypass the service worker cache",
+        "release.spec.mjs::a message permalink opens the message, and an upload can be stopped"
+      ],
+      "owed": [
+        "Phase D: two builds with active voice, a pending send, an upload and open drafts on a physical device."
+      ]
+    },
+    "T-A11Y-01": {
+      "checks": [
+        "release.spec.mjs::the operator and member surfaces are free of detectable violations",
+        "release.spec.mjs::first setup, persistent chat, search and sign-out",
+        "voice.spec.mjs::a shared screen reaches another browser and stops cleanly",
+        "release.spec.mjs::Back and Forward walk the conversations visited, and a revoked one is not shown"
+      ],
+      "owed": [
+        "Phase D: the human review — selected screen readers, zoom, forced colours and physical virtual keyboards, by an independent tester."
+      ]
+    },
+    "T-SOAK-01": {
+      "checks": ["script:scripts/capacity-load.mjs"],
+      "owed": [
+        "Phase D: the frozen mixed-load and failure program on each required host, with the pilot and release-candidate observation."
+      ]
+    },
+    "T-RELEASE-01": {
+      "checks": ["script:scripts/release.go", "script:scripts/check-package.mjs"],
+      "owed": [
+        "Phase D: obtaining the actual published candidate on a clean consumer machine, verifying its provenance and digest, and installing it — this needs publication, which the owner controls."
+      ]
+    }
+  }
+}

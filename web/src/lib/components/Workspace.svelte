@@ -421,7 +421,12 @@
           onclick={() => toggleMembers(false)}><Icon name="close" /></button
         >
       </header>
-      {#each workspace.state?.settings.enable_presence ? [{ label: 'ONLINE', users: online }, { label: 'OFFLINE', users: offline }] : [{ label: 'MEMBERS', users: members }] as group}<h3
+      <!-- The groups are keyed, not only their members. Keying the inner list is not
+           enough: a presence change rebuilds the group array, so the *group* block was
+           recreated and the button inside it was destroyed and replaced. A member row
+           that can be focused is a row a keyboard user is standing on, and a presence
+           update must not take it out from under them. -->
+      {#each workspace.state?.settings.enable_presence ? [{ label: 'ONLINE', users: online }, { label: 'OFFLINE', users: offline }] : [{ label: 'MEMBERS', users: members }] as group (group.label)}<h3
         >
           {group.label} <span>— {group.users.length}</span>
         </h3>

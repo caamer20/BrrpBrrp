@@ -16,7 +16,11 @@ test: web
 	# measured sweep — a timeout that reports nothing about the code
 	# (0.4.0-alpha.8, review 17 handoff).
 	$(GO) test -race -count=1 -timeout 60m ./...
+# The acceptance matrix is checked here rather than by reading it: a scenario with no
+# evidence, a check that was renamed or deleted, and a plan id missing from the matrix all
+# fail the build. The frontend unit tests for the checks themselves live in web/tests.
 check: web
+	@node scripts/check-acceptance-matrix.mjs
 	$(GO) vet ./...
 	@unformatted="$$($(GOFMT) -l internal cmd scripts)"; \
 	if [ -n "$$unformatted" ]; then \

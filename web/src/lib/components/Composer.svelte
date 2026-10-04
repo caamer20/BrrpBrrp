@@ -293,6 +293,7 @@
         bind:this={textarea}
         bind:value={text}
         rows="1"
+        dir="auto"
         maxlength="4000"
         aria-label={thread ? 'Reply in thread' : `Message ${workspace.conversationName}`}
         aria-describedby={helpId}

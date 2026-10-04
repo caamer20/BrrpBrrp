@@ -50,6 +50,17 @@ export default defineConfig({
     // both modes. It depends on the release journey for the installation and its
     // channel, and it must precede the ownership ceremony, which cannot be undone.
     { name: 'threads', testMatch: 'threads.spec.mjs', dependencies: ['release'] },
+    // The long-thread scale proof (T-THREAD-01): a thousand replies seeded through the API
+    // from twenty-five accounts, walked in a real browser. It is gated like the Firefox
+    // pass — it seeds a thousand messages and takes about ten minutes — and it creates its
+    // own channel and accounts, so it depends only on the installation the release journey
+    // created. Run it with:
+    //
+    //   BRRP_E2E_SCALE=1 BRRP_E2E_BINARY=… npm run test:e2e -- --project=thread-scale
+    //
+    ...(process.env.BRRP_E2E_SCALE === '1'
+      ? [{ name: 'thread-scale', testMatch: 'thread-scale.spec.mjs', dependencies: ['release'] }]
+      : []),
     { name: 'voice', testMatch: 'voice.spec.mjs', dependencies: ['release'] },
     // The media journeys under a second engine, in their own invocation:
     //

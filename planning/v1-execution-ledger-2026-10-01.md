@@ -1532,6 +1532,89 @@ owner's decisions have already fixed and the ones with no external dependency.
   exercised here only through `openssl`, because neither tool is installed on this machine —
   the report records which one ran, and a host with either will exercise that path.
 
+### 11n. Phase C — the matrix that fails the build, and two rendered proofs it was owed
+
+- **The acceptance matrix is now machine-checked.** `planning/acceptance-matrix.json` maps
+  every one of the plan's twenty-nine §11.2 scenarios to the checks that prove it, and
+  `scripts/check-acceptance-matrix.mjs` reads the catalog out of the plan and fails when a
+  scenario is missing from the matrix, when a named check no longer exists (a Go test is
+  looked up where it lives, a journey title in its spec, a unit test in `web/tests`, a script
+  on disk), when a scenario names neither a check nor an owed item, or when a matrix id the
+  plan does not declare appears. `make check` and the CI `test` job both run it, and
+  `web/tests/acceptance-matrix.test.mjs` proves it can fail — eight tests over small trees of
+  its own, including the two silent defects it exists to catch: an id pattern that skipped
+  `T-A11Y-01` because it carries digits, and a reference reader that kept the second colon of
+  `kind::name` and reported every check as missing.
+  Today it reads **132 named checks across 29 scenarios, with 14 owed items in 14 scenarios**
+  — every owed item naming what is missing and which phase owns it. That list is the honest
+  answer to "what is left", and it is printed by every run rather than buried here.
+- **The right-to-left journey, and the bug it found.** `release.spec.mjs` now posts an Arabic
+  message that begins in Arabic and ends with an English URL, an Arabic display name, and
+  searches for Arabic text. It failed on its first run, and the reason was not the test: the
+  direction rule was written as `direction: auto` **which is not a CSS value at all**, so
+  every declaration was dropped and every Arabic message had rendered left-to-right since it
+  was added. The rule is `unicode-bidi: plaintext` plus `dir="auto"` on the message content,
+  the composer and the author's name; the journey asserts the *resolved* direction
+  (`getComputedStyle(node).direction === 'rtl'`), the rendered text with its line break, and
+  that search finds the message by its own script.
+- **The thousand-reply thread, walked in a browser.** `thread-scale.spec.mjs` (gated behind
+  `BRRP_E2E_SCALE=1`, like the Firefox pass, because it seeds a thousand messages and takes
+  about two minutes) creates its own channel, seeds 1,000 replies through the API from
+  twenty-five accounts paced to the product's own flood control — sixty a minute and ten in
+  five seconds, per account — and then opens the thread, walks back to its beginning, and
+  asserts what the plan asks for: every reply appears **once inside a window**, the window
+  never grows past its bound however many pages are loaded, and the **oldest** reply is
+  reachable and is the words that were written. Three of its assertions were wrong when they
+  were first written and each failure taught something the unit tests could not: the root
+  message is not inside the panel (it is the channel's), the panel's dialog is titled
+  "Thread" for every thread, and the reply list is deliberately bounded, so "content appears
+  once" means once per window rather than once in a growing list.
+- **Three harness defects found by the runs themselves, all in the release journeys and none
+  of them in the product.** The phone-width journey held a POST with `page.route` and
+  continued reads from the same handler; it failed twice in twenty runs with
+  `route.continue: Route is already handled!` while the accessibility sweep and the send were
+  racing. Reads now `fallback()` — passing the request on rather than claiming it — and the
+  contended `continue()` is guarded. The data-export journey waited five seconds for the
+  "your acknowledgement was lost" alert, but its own route handler fetches the real response
+  before aborting it, so the alert cannot appear until that chain finishes; the wait is now
+  twenty seconds and says in a comment that it is not a latency claim. And the Arabic
+  journey read `getComputedStyle` from the element it had captured a moment earlier — the
+  optimistic copy, which the server's reply then replaces. A detached node computes no CSS at
+  all, which is `direction: ltr`, so the assertion failed three times in twenty runs for a
+  reason that had nothing to do with Arabic. It waits for delivery to settle and polls the
+  resolved direction now. Six consecutive runs of the two tightened journeys pass.
+- **One flake found in my own new assertion, and fixed where it belonged.** The member-profile
+  journey's `expect(memberRow).toBeFocused()` failed twice in twenty runs: the member list's
+  presence groups were not keyed, so a presence update replaced the row a keyboard user was
+  standing on (now keyed), and `toBeFocused` also asserts that the *page* has focus, which a
+  headless page behind another context does not (now `bringToFront()` first). Twelve
+  consecutive runs of that journey pass; the twenty-run loop is the proof that matters and is
+  recorded below.
+- **Commands and results.** Acceptance matrix green (132 checks, 14 owed). 348/348 frontend
+  unit tests; `svelte-check` 0/0; formatting clean; the gated scale project green with the
+  release journeys beside it; both feature modes green afterwards (default mode **29
+  passed**, private mode **43 passed** — the Arabic journey runs in both, and the scale
+  journey is gated).
+- **The twenty-run criterion is not met yet, and the reason is recorded rather than smoothed
+  over.** Three loops were run. The first (before the harness fixes) went 19/20 with the
+  accessibility journey's focus assertion failing twice on 2 October's code; the second
+  18/20, its failures being the three harness defects above; the third 18/20, where runs 11
+  and 12 timed out — 3.2 minutes against a 180-second budget in the Back/Forward journey, and
+  2.3 minutes against 120 seconds in the first-setup journey — on a machine that was
+  demonstrably busy at that moment. Those two are environment timeouts, not product failures:
+  the same journeys pass six consecutive times when run alone. The evidence for the row is
+  therefore **not complete**; what is required is twenty consecutive green runs on a quiet
+  machine, and the honest reading of three loops is that the remaining flake rate is about
+  one in twenty, of which the product's share is zero as far as this session can show.
+  Playwright's default output directory is wiped per run, so the failing runs' traces were
+  overwritten before they could be read: the next attempt should run with a per-run artifact
+  directory so a failure can be post-mortemed rather than re-run and hoped about.
+- **What it does not prove.** The owed list above is the answer, and it is not empty: a
+  physical second device, a live call blocked mid-conversation, real NAT and IPv6 profiles,
+  a Windows restore, an independent accessibility review and the soak are all Phase D and
+  need infrastructure this machine does not have. The matrix makes that visible instead of
+  letting it read as done.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
@@ -1544,6 +1627,17 @@ limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), 
 layout), **ENG-06** (output selection and the measured rejoin budget), **ENG-14**
 (operator metrics and the external probe) and **ENG-15** (the encrypted off-host backup
 procedure and its rehearsal).
+
+**Phase B is complete**: every row from ENG-01 to ENG-15 has its code, its tests and its
+entry in the ledger. What is left is Phase C/D evidence and the owner's decisions:
+
+- `planning/acceptance-matrix.json` prints the owed list on every run — fourteen items in
+  fourteen scenarios, each naming what is missing and which phase owns it. Start there
+  rather than here: it is the same list the plan's §11.2 catalog implies, and it is checked
+  against the plan's own ids by `scripts/check-acceptance-matrix.mjs` in `make check` and CI.
+- The Phase D items need infrastructure this machine does not have: two real hosts
+  (Windows and Linux Docker), physical devices, an independent security and accessibility
+  review, the soak, and the owner's publication approval.
 
 Still open, in the order they are worth taking:
 

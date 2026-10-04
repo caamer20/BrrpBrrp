@@ -1,0 +1,21 @@
+package api
+import (
+ "fmt"
+ "sync"
+ "testing"
+)
+var reviewQuotaPassed=make(chan struct{},2)
+var reviewQuotaRelease=make(chan struct{})
+func TestReviewConcurrentUploadQuota(t *testing.T) {
+ t.Setenv("BRRP_STORAGE_QUOTA_BYTES", "10")
+ s,h:=testServer(t)
+ c:=setupAdmin(t,s,h)
+ var wg sync.WaitGroup
+ start:=make(chan struct{})
+ codes:=make([]int,2)
+ for i:=range 2 { wg.Add(1); go func(i int) { defer wg.Done(); <-start; w:=uploadBytes(t,s,h,c,fmt.Sprintf("%d.txt",i),[]byte("12345678"));codes[i]=w.Code }(i) }
+ close(start); <-reviewQuotaPassed; <-reviewQuotaPassed; close(reviewQuotaRelease);wg.Wait()
+ var used int
+ if err:=s.store.QueryRow(`SELECT COALESCE(SUM(file_size),0) FROM attachments`).Scan(&used); err!=nil {t.Fatal(err)}
+ if used>10 {t.Fatalf("quota 10 exceeded: committed=%d status=%v",used,codes)}
+}
