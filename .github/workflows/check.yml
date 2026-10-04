@@ -259,6 +259,12 @@ jobs:
       # plaintext, and restore only from the encrypted copy.
       - name: Fresh recovery rehearsal (encrypted off-host copy)
         run: node scripts/backup-encrypted-rehearsal.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/encrypted-backup.json
+      # A real full filesystem, so the disk guard's refusal is a fact about a filesystem
+      # rather than an injected number. Linux needs root for a loop mount, so the rehearsal
+      # reports a recorded skip here and runs fully on a developer's macOS machine; the
+      # product half is proven by the guard's own tests either way.
+      - name: Full-disk rehearsal
+        run: node scripts/full-disk-rehearsal.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/full-disk.json
       # The schema-13 rehearsal needs a schema-13 data directory, and only a real
       # schema-13 executable can write one: a current binary produces a current
       # database, and the rehearsal's own checks reject that. The seed is therefore

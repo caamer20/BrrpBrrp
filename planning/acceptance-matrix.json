@@ -211,10 +211,11 @@
         "script:scripts/upgrade-recovery.mjs",
         "script:scripts/upgrade-rollback.mjs",
         "script:scripts/upgrade-recovery-private.mjs",
+        "script:scripts/full-disk-rehearsal.mjs",
         "db::TestMigrationsAndSearchTriggers"
       ],
       "owed": [
-        "Phase C: a full-disk and interruption run against every fixture generation — the schema path is rehearsed, the disk-exhaustion path is not."
+        "Phase D: the interruption and full-disk run against every fixture generation on the reference hosts — the disk-exhaustion path is rehearsed here on a fresh installation with its own control volume."
       ]
     },
     "T-DATA-02": {

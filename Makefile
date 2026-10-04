@@ -82,6 +82,13 @@ rehearsal-encrypted:
 	$(GO) build -o dist/brrpbrrp-rehearsal ./cmd/brrpbrrp
 	node scripts/backup-encrypted-rehearsal.mjs --binary dist/brrpbrrp-rehearsal
 
+# The full-disk rehearsal: a real server on a filesystem of its own that really has no
+# room, so the disk guard's refusal is a fact about a filesystem rather than a number
+# injected into a function. Needs no root on macOS; reports a skip elsewhere.
+rehearsal-full-disk:
+	$(GO) build -o dist/brrpbrrp-rehearsal ./cmd/brrpbrrp
+	node scripts/full-disk-rehearsal.mjs --binary dist/brrpbrrp-rehearsal
+
 # An external probe for a deployment this repository does not control. Point it at the
 # hostname a member uses, not at localhost: what it checks is the edge — the proxy, the
 # certificate, the asset cache, the websocket upgrade.

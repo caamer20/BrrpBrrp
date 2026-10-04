@@ -1,0 +1,88 @@
+{
+  "rehearsal": "full-disk",
+  "passed": true,
+  "binary": "/Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-rehearsal",
+  "work_dir": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-full-disk-ghww50",
+  "filesystem_mb": 48,
+  "control_mb": 640,
+  "checks": [
+    {
+      "name": "setup succeeds on the small filesystem",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "sign-in succeeds",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the workspace is usable",
+      "ok": true,
+      "detail": "#general"
+    },
+    {
+      "name": "an upload that would fill the disk is refused with a reason",
+      "ok": true,
+      "detail": "HTTP 507 The server is low on disk space (it keeps 536870912 bytes free for backups and r"
+    },
+    {
+      "name": "the refused upload did not consume the volume",
+      "ok": true,
+      "detail": "47056 KB free before, 47056 KB after"
+    },
+    {
+      "name": "a message is still accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "the message is readable back",
+      "ok": true,
+      "detail": "1 messages"
+    },
+    {
+      "name": "the health endpoint still answers",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "the refusal names the headroom the server keeps",
+      "ok": true,
+      "detail": "The server is low on disk space (it keeps 536870912 bytes free for backups and recovery). Ask the operator to free space"
+    },
+    {
+      "name": "the server stops cleanly on a full disk",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "the control volume installs",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "an upload is accepted where there is room for it",
+      "ok": true,
+      "detail": "HTTP 201 with 624 MB free"
+    }
+  ],
+  "transcript": [
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-full-disk-ghww50",
+    "Data directory: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-full-disk-ghww50/small/data on a 47 MB filesystem",
+    "  ok    setup succeeds on the small filesystem — HTTP 201",
+    "  ok    sign-in succeeds — HTTP 200",
+    "  ok    the workspace is usable — #general",
+    "  ok    an upload that would fill the disk is refused with a reason — HTTP 507 The server is low on disk space (it keeps 536870912 bytes free for backups and r",
+    "  ok    the refused upload did not consume the volume — 47056 KB free before, 47056 KB after",
+    "  ok    a message is still accepted — HTTP 201",
+    "  ok    the message is readable back — 1 messages",
+    "  ok    the health endpoint still answers — HTTP 200",
+    "  ok    the refusal names the headroom the server keeps — The server is low on disk space (it keeps 536870912 bytes free for backups and recovery). Ask the operator to free space",
+    "  ok    the server stops cleanly on a full disk — exit 0",
+    "  ok    the control volume installs — HTTP 201",
+    "  ok    an upload is accepted where there is room for it — HTTP 201 with 624 MB free",
+    "",
+    "Rehearsal PASS: 12 checks."
+  ]
+}

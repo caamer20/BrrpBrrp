@@ -1661,6 +1661,32 @@ owner's decisions have already fixed and the ones with no external dependency.
   journey sweeps a *populated* member list — which is the point of running the sweep where
   the state actually exists.
 
+### 11p. The full-disk rehearsal — a real filesystem with no room
+
+- **Why a rehearsal and not another test.** The disk guard's *logic* is proven with an
+  injected free-space function, deliberately: a refusal proven by consuming a real disk is a
+  test nobody can run. What that leaves unproven is the operator's actual experience, and
+  T-DATA-01 asked for it. `scripts/full-disk-rehearsal.mjs` creates a filesystem of its own —
+  a sparse disk image attached with `hdiutil` on macOS, which needs no root; a loop-mounted
+  image on Linux, which does, so it reports a recorded skip there — installs a real server
+  with its data directory inside it, and asks the product what it does when there is no room.
+- **The result, twelve checks.** On a 47 MB volume: the installation works, an upload that
+  would fill the disk is refused **HTTP 507 with the headroom named** ("it keeps 536870912
+  bytes free for backups and recovery"), the refusal consumes none of the volume, a message
+  is still accepted and readable, the health endpoint still answers, and the server stops
+  cleanly. Then the control that makes the whole thing mean something: on a second volume of
+  640 MB — larger than the headroom the server reserves — **a small upload is accepted**
+  (HTTP 201 with 624 MB free). Without that control the rehearsal would only show that
+  uploads are refused on a tiny volume, which a product that refused every upload would also
+  show.
+- **One expectation of mine the rehearsal corrected.** The first version asserted that a
+  small upload still fits on the 47 MB volume. It does not, and it should not: the reservation
+  is 512 MB, the volume is smaller than that, so *nothing* may be uploaded. The product was
+  right and my assertion was wrong, which is the useful direction for that to go.
+- **Wired in.** `make rehearsal-full-disk`, the CI recovery job (with the Linux skip stated
+  rather than hidden), and the acceptance matrix — T-DATA-01 now carries the rehearsal as a
+  check, with the every-fixture-generation interruption run left owed to Phase D.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
