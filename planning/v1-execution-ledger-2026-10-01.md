@@ -1702,6 +1702,45 @@ owner's decisions have already fixed and the ones with no external dependency.
   written by every request; both are exactly the shapes a race detector exists for, and a
   plain `go test ./...` would not have noticed an unsynchronised one.
 
+### 11r. The negative matrix, driven from the route inventory
+
+- **What the plan asked for (phase C, item 1).** T-AUTH-01 as a *structural* gate: an
+  authenticated outsider holding valid identifiers must get nothing from any surface, and
+  adding a route without its outsider row must fail the build.
+- **What exists now.** `internal/api/negative_matrix_test.go` walks the live route inventory —
+  the same table `TestEveryRouteDeclaresItsPolicy` already forces every endpoint into — and
+  requires each of the **132 routes** to state *how an outsider is denied*, from a closed
+  vocabulary: `capability` (the middleware refuses without the grant — 68 routes, derived
+  automatically from the route's own policy), `self` (the answer is the caller's own account
+  state — 31), `conversation` (resolved before anything is read — 12), `channel` (role or
+  grant — 10), `audience` (computed per delivery, so an outsider's answer is empty — 6),
+  `recipient` (only the named recipient may act — 3) and `authorship` (only the author may act
+  — 2).
+- **Generated, and enforced.** `planning/negative-matrix.json` is written by
+  `go test ./internal/api -run TestEveryRouteDeclaresHowAnOutsiderIsDenied -update-negative-matrix`
+  and compared byte-for-byte on every ordinary test run, so a route whose policy changes — or
+  a new route at all — shows up as a failing test with a readable diff. The generator refuses
+  to write while any route is unclassified, the table is checked in both directions (a row for
+  a route that no longer exists fails too), and each row's `reason` must be a sentence rather
+  than a word.
+- **Evidence, named and verified.** Thirteen rows carry the tests that prove the refusal
+  (`api::TestPrivateChannelLifecycleReachesOnlyItsAudience`,
+  `api::TestRealtimeEventsAreAudienceScoped`,
+  `api::TestMemberExportIsOnlyTheAccountThatRequestedIt`,
+  `api::TestPrivateEvidenceDeniesEveryoneWithoutAcceptedReadAccess`,
+  `rtc::TestAViewLineIsAnsweredAndCannotPublish` and others, including the surfaces the plan
+  names: exports, activity, call presence and screen events). Each reference is resolved
+  against the package's test files at run time, so a renamed or deleted test fails this build
+  rather than leaving a row that claims support it no longer has.
+- **Proof that the gate bites.** Mutating one row's reason in the checked-in file makes the
+  test fail with "…is stale: a route's policy or the classification changed"; restoring it
+  passes. That is the whole point of the item — the matrix cannot rot.
+- **What it does not establish.** It is a *classification* gate: it proves every route has
+  said, in reviewable terms, which mechanism refuses an outsider, and that the tests it cites
+  exist. It does not itself make the requests — the runtime half is the named tests plus the
+  acceptance matrix's T-AUTH-01 row, and the plan's own full walk (a private channel, a thread
+  inside it, a DM and a group on a physical second device) remains owed to phase D.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,

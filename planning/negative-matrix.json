@@ -1,0 +1,949 @@
+[
+  {
+    "route": "/api/admin/accounts/summary",
+    "method": "GET",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/alerts",
+    "method": "GET",
+    "capability": "operator.backup",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without operator.backup before the handler runs"
+  },
+  {
+    "route": "/api/admin/audit-logs",
+    "method": "GET",
+    "capability": "audit.read",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without audit.read before the handler runs"
+  },
+  {
+    "route": "/api/admin/backup",
+    "method": "POST",
+    "capability": "operator.backup",
+    "fresh_auth": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without operator.backup before the handler runs"
+  },
+  {
+    "route": "/api/admin/backups/{id}",
+    "method": "GET",
+    "capability": "operator.backup",
+    "fresh_auth": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without operator.backup before the handler runs"
+  },
+  {
+    "route": "/api/admin/channels/{id}/purge",
+    "method": "POST",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/diagnostics",
+    "method": "GET",
+    "capability": "settings.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without settings.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/health",
+    "method": "GET",
+    "capability": "settings.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without settings.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/invitations",
+    "method": "GET",
+    "capability": "invite.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without invite.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/invitations",
+    "method": "POST",
+    "capability": "invite.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without invite.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/invitations/{id}",
+    "method": "DELETE",
+    "capability": "invite.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without invite.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/metrics",
+    "method": "GET",
+    "capability": "settings.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without settings.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/private-reports",
+    "method": "GET",
+    "capability": "report.review_private",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without report.review_private before the handler runs"
+  },
+  {
+    "route": "/api/admin/private-reports/audit",
+    "method": "GET",
+    "capability": "report.review_private",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without report.review_private before the handler runs"
+  },
+  {
+    "route": "/api/admin/private-reports/{id}",
+    "method": "PATCH",
+    "capability": "report.review_private",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without report.review_private before the handler runs"
+  },
+  {
+    "route": "/api/admin/reports",
+    "method": "GET",
+    "capability": "message.delete_any",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.delete_any before the handler runs"
+  },
+  {
+    "route": "/api/admin/reports/{id}",
+    "method": "PATCH",
+    "capability": "message.delete_any",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.delete_any before the handler runs"
+  },
+  {
+    "route": "/api/admin/reports/{id}/assign",
+    "method": "POST",
+    "capability": "message.delete_any",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.delete_any before the handler runs"
+  },
+  {
+    "route": "/api/admin/request-reports",
+    "method": "GET",
+    "capability": "report.review_private",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without report.review_private before the handler runs"
+  },
+  {
+    "route": "/api/admin/request-reports/{id}",
+    "method": "PATCH",
+    "capability": "report.review_private",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without report.review_private before the handler runs"
+  },
+  {
+    "route": "/api/admin/settings",
+    "method": "GET",
+    "capability": "settings.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without settings.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/settings",
+    "method": "PUT",
+    "capability": "settings.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without settings.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users",
+    "method": "GET",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users",
+    "method": "POST",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}",
+    "method": "DELETE",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}",
+    "method": "PATCH",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/anonymize",
+    "method": "POST",
+    "capability": "member.manage",
+    "fresh_auth": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/kick",
+    "method": "POST",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/mfa",
+    "method": "DELETE",
+    "capability": "operator.credential_recovery",
+    "fresh_auth": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without operator.credential_recovery before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/reset-password",
+    "method": "POST",
+    "capability": "operator.credential_recovery",
+    "fresh_auth": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without operator.credential_recovery before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/roles",
+    "method": "GET",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/roles",
+    "method": "PUT",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/timeout",
+    "method": "DELETE",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/admin/users/{id}/timeout",
+    "method": "POST",
+    "capability": "member.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without member.manage before the handler runs"
+  },
+  {
+    "route": "/api/categories",
+    "method": "GET",
+    "outsider_denied_by": "audience",
+    "reason": "categories are listed with the channels they hold that the caller may read"
+  },
+  {
+    "route": "/api/categories",
+    "method": "POST",
+    "capability": "category.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without category.manage before the handler runs"
+  },
+  {
+    "route": "/api/categories/{id}",
+    "method": "DELETE",
+    "capability": "category.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without category.manage before the handler runs"
+  },
+  {
+    "route": "/api/categories/{id}",
+    "method": "PATCH",
+    "capability": "category.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without category.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels",
+    "method": "GET",
+    "outsider_denied_by": "audience",
+    "reason": "only channels the caller's roles or grants admit are listed"
+  },
+  {
+    "route": "/api/channels",
+    "method": "POST",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}",
+    "method": "DELETE",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}",
+    "method": "PATCH",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}/access",
+    "method": "GET",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}/access",
+    "method": "PUT",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}/first-unread",
+    "method": "GET",
+    "mixed_conversation": true,
+    "outsider_denied_by": "channel",
+    "reason": "the marker is computed from a readable channel"
+  },
+  {
+    "route": "/api/channels/{id}/messages",
+    "method": "GET",
+    "mixed_conversation": true,
+    "outsider_denied_by": "channel",
+    "reason": "channel access is resolved before the history is read",
+    "evidence": [
+      "api::TestPrivateChannelLifecycleReachesOnlyItsAudience"
+    ]
+  },
+  {
+    "route": "/api/channels/{id}/messages",
+    "method": "POST",
+    "capability": "message.send",
+    "mixed_conversation": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}/move",
+    "method": "POST",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/channels/{id}/notifications",
+    "method": "PUT",
+    "outsider_denied_by": "channel",
+    "reason": "the preference is refused for a channel the caller cannot read"
+  },
+  {
+    "route": "/api/channels/{id}/pins",
+    "method": "GET",
+    "outsider_denied_by": "channel",
+    "reason": "pins are channel content and follow channel access"
+  },
+  {
+    "route": "/api/channels/{id}/read",
+    "method": "POST",
+    "outsider_denied_by": "channel",
+    "reason": "the cursor is written only for a readable channel"
+  },
+  {
+    "route": "/api/channels/{id}/threads",
+    "method": "GET",
+    "outsider_denied_by": "channel",
+    "reason": "the thread list follows the channel's access"
+  },
+  {
+    "route": "/api/channels/{id}/threads",
+    "method": "POST",
+    "capability": "message.send",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/conversations/{id}/first-unread",
+    "method": "GET",
+    "mixed_conversation": true,
+    "outsider_denied_by": "conversation",
+    "reason": "the marker is computed from a readable conversation"
+  },
+  {
+    "route": "/api/conversations/{id}/messages",
+    "method": "GET",
+    "mixed_conversation": true,
+    "outsider_denied_by": "conversation",
+    "reason": "participation is resolved before the history is read",
+    "evidence": [
+      "api::TestDirectMessagePipelinePreservesScopeAndBlocksOperatorBypass"
+    ]
+  },
+  {
+    "route": "/api/conversations/{id}/messages",
+    "method": "POST",
+    "capability": "message.send",
+    "mixed_conversation": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/conversations/{id}/pins",
+    "method": "GET",
+    "mixed_conversation": true,
+    "outsider_denied_by": "conversation",
+    "reason": "pins are conversation content and follow its access"
+  },
+  {
+    "route": "/api/conversations/{id}/read",
+    "method": "POST",
+    "mixed_conversation": true,
+    "outsider_denied_by": "conversation",
+    "reason": "the cursor is written only for a readable conversation"
+  },
+  {
+    "route": "/api/directs",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "only the caller's own requests and conversations are listed",
+    "evidence": [
+      "api::TestDirectConsentIsCanonicalExplicitAndNeverAdministrative"
+    ]
+  },
+  {
+    "route": "/api/directs",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the request is created between the caller and the named peer, and creates nothing without their acceptance"
+  },
+  {
+    "route": "/api/directs/{id}/accept",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "recipient",
+    "reason": "only the named recipient may accept a request"
+  },
+  {
+    "route": "/api/directs/{id}/reject",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "recipient",
+    "reason": "only the named recipient may reject a request"
+  },
+  {
+    "route": "/api/directs/{id}/report-and-block",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "recipient",
+    "reason": "only a participant may report and block, and the block acts on their own side"
+  },
+  {
+    "route": "/api/directs/{id}/report-preview",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "conversation",
+    "reason": "the preview requires accepted read access to the conversation"
+  },
+  {
+    "route": "/api/directs/{id}/visibility",
+    "method": "PUT",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the visibility preference belongs to the caller's own side of the conversation"
+  },
+  {
+    "route": "/api/group-invitations",
+    "method": "GET",
+    "capability": "message.send",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/group-invitations/{id}/accept",
+    "method": "POST",
+    "capability": "message.send",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/group-invitations/{id}/reject",
+    "method": "POST",
+    "capability": "message.send",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups",
+    "method": "GET",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups",
+    "method": "POST",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups/{id}/invite",
+    "method": "POST",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups/{id}/leave",
+    "method": "POST",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups/{id}/members",
+    "method": "GET",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups/{id}/members/{user}/remove",
+    "method": "POST",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/groups/{id}/transfer",
+    "method": "POST",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/logout",
+    "method": "POST",
+    "outsider_denied_by": "self",
+    "reason": "ends the caller's own session"
+  },
+  {
+    "route": "/api/me",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the response is the caller's own account record"
+  },
+  {
+    "route": "/api/me/activity",
+    "method": "GET",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/me/activity/acknowledge",
+    "method": "POST",
+    "capability": "message.send",
+    "beyond_community": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/me/blocks",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own block list"
+  },
+  {
+    "route": "/api/me/blocks/{id}",
+    "method": "DELETE",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own block list"
+  },
+  {
+    "route": "/api/me/blocks/{id}",
+    "method": "PUT",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own block list"
+  },
+  {
+    "route": "/api/me/channel-notifications",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own per-channel choices, filtered to channels it may read"
+  },
+  {
+    "route": "/api/me/contact-preferences",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own contact policy"
+  },
+  {
+    "route": "/api/me/contact-preferences",
+    "method": "PUT",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own contact policy"
+  },
+  {
+    "route": "/api/me/export",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "only the caller's own exports are listed",
+    "evidence": [
+      "api::TestMemberExportIsOnlyTheAccountThatRequestedIt",
+      "api::TestExportDeliveryReauthorizesEveryRequestAndEveryByte"
+    ]
+  },
+  {
+    "route": "/api/me/export",
+    "method": "POST",
+    "fresh_auth": true,
+    "outsider_denied_by": "self",
+    "reason": "an export is created for the caller and for nobody else"
+  },
+  {
+    "route": "/api/me/export/{id}",
+    "method": "DELETE",
+    "outsider_denied_by": "self",
+    "reason": "only the owner of the export may remove it"
+  },
+  {
+    "route": "/api/me/export/{id}",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "the export id is matched against the caller's own rows"
+  },
+  {
+    "route": "/api/me/mfa",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the caller's own enrolment state"
+  },
+  {
+    "route": "/api/me/mfa/disable",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "acts on the caller's own factor"
+  },
+  {
+    "route": "/api/me/mfa/enable",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "acts on the caller's own factor"
+  },
+  {
+    "route": "/api/me/mfa/setup",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "acts on the caller's own factor"
+  },
+  {
+    "route": "/api/me/notification-preferences",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the caller's own notification preferences"
+  },
+  {
+    "route": "/api/me/notification-preferences",
+    "method": "PUT",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the caller's own notification preferences"
+  },
+  {
+    "route": "/api/me/password",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "changes the caller's own credential after reauthentication"
+  },
+  {
+    "route": "/api/me/reauth",
+    "method": "POST",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "reauthenticates the caller's own account and changes nothing an outsider holds"
+  },
+  {
+    "route": "/api/me/report-receipt",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "the receipt belongs to the reporter"
+  },
+  {
+    "route": "/api/me/sessions",
+    "method": "DELETE",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "revokes the caller's own sessions"
+  },
+  {
+    "route": "/api/me/sessions",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "lists the caller's own sessions"
+  },
+  {
+    "route": "/api/me/sessions/{id}",
+    "method": "DELETE",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "the session id is matched against the caller's own rows"
+  },
+  {
+    "route": "/api/messages/{id}",
+    "method": "DELETE",
+    "outsider_denied_by": "authorship",
+    "reason": "only the author (or a capability that says otherwise) may delete"
+  },
+  {
+    "route": "/api/messages/{id}",
+    "method": "GET",
+    "outsider_denied_by": "conversation",
+    "reason": "the message's conversation access is resolved before anything is returned",
+    "evidence": [
+      "api::TestPrivateMessageEditDoesNotRevealExistenceToOutsiders",
+      "api::TestReplyContextPinsAndDeletion"
+    ]
+  },
+  {
+    "route": "/api/messages/{id}",
+    "method": "PATCH",
+    "outsider_denied_by": "authorship",
+    "reason": "only the author may edit, and the edit is re-authorized inside the transaction"
+  },
+  {
+    "route": "/api/messages/{id}/context",
+    "method": "GET",
+    "outsider_denied_by": "conversation",
+    "reason": "the surrounding window is read under the message's own conversation access"
+  },
+  {
+    "route": "/api/messages/{id}/pin",
+    "method": "PUT",
+    "capability": "message.pin",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.pin before the handler runs"
+  },
+  {
+    "route": "/api/messages/{id}/private-report",
+    "method": "POST",
+    "outsider_denied_by": "conversation",
+    "reason": "only a participant may submit private evidence, and only their own snapshot",
+    "evidence": [
+      "api::TestPrivateEvidenceDeniesEveryoneWithoutAcceptedReadAccess"
+    ]
+  },
+  {
+    "route": "/api/messages/{id}/private-report-preview",
+    "method": "GET",
+    "outsider_denied_by": "conversation",
+    "reason": "the preview is the server's own snapshot, shown only to an account that may read it",
+    "evidence": [
+      "api::TestPrivateEvidenceNeedsItsOwnCapabilityAndGrantsNoConversationAccess"
+    ]
+  },
+  {
+    "route": "/api/messages/{id}/reactions",
+    "method": "POST",
+    "capability": "message.react",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.react before the handler runs"
+  },
+  {
+    "route": "/api/messages/{id}/replies",
+    "method": "GET",
+    "outsider_denied_by": "conversation",
+    "reason": "the replies are read under the message's own conversation access"
+  },
+  {
+    "route": "/api/messages/{id}/report",
+    "method": "POST",
+    "outsider_denied_by": "conversation",
+    "reason": "the message's conversation access is resolved before a report is accepted"
+  },
+  {
+    "route": "/api/owner",
+    "method": "POST",
+    "capability": "operator.ownership_transfer",
+    "fresh_auth": true,
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without operator.ownership_transfer before the handler runs"
+  },
+  {
+    "route": "/api/push/devices",
+    "method": "GET",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own registered devices and nobody else's"
+  },
+  {
+    "route": "/api/push/subscribe",
+    "method": "DELETE",
+    "outsider_denied_by": "self",
+    "reason": "the caller's own registration, matched against its own rows"
+  },
+  {
+    "route": "/api/push/subscribe",
+    "method": "POST",
+    "outsider_denied_by": "self",
+    "reason": "the registration belongs to the caller"
+  },
+  {
+    "route": "/api/roles",
+    "method": "GET",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/roles",
+    "method": "POST",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/roles/{id}",
+    "method": "DELETE",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/roles/{id}",
+    "method": "PATCH",
+    "capability": "role.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without role.manage before the handler runs"
+  },
+  {
+    "route": "/api/search",
+    "method": "GET",
+    "outsider_denied_by": "audience",
+    "reason": "the query is scoped to conversations the caller may read; an outsider finds nothing",
+    "evidence": [
+      "api::TestRestrictedChannelPrivacyAcrossDeliverySurfaces"
+    ]
+  },
+  {
+    "route": "/api/state",
+    "method": "GET",
+    "beyond_community": true,
+    "outsider_denied_by": "audience",
+    "reason": "the snapshot is filtered to what the caller may read; an outsider's is empty",
+    "evidence": [
+      "api::TestPrivateChannelLifecycleReachesOnlyItsAudience",
+      "api::TestRestrictedChannelPrivacyAcrossDeliverySurfaces"
+    ]
+  },
+  {
+    "route": "/api/threads/{id}",
+    "method": "GET",
+    "outsider_denied_by": "channel",
+    "reason": "the thread resolves its channel access before returning anything (ADR 0017)",
+    "evidence": [
+      "api::TestRestrictedChannelPrivacyAcrossDeliverySurfaces"
+    ]
+  },
+  {
+    "route": "/api/threads/{id}/follow",
+    "method": "DELETE",
+    "outsider_denied_by": "self",
+    "reason": "unfollowing removes only the caller's own row, which an outsider does not have"
+  },
+  {
+    "route": "/api/threads/{id}/follow",
+    "method": "POST",
+    "outsider_denied_by": "channel",
+    "reason": "following requires the thread to be readable"
+  },
+  {
+    "route": "/api/threads/{id}/messages",
+    "method": "GET",
+    "outsider_denied_by": "channel",
+    "reason": "the channel's read rule applies to the thread's pages"
+  },
+  {
+    "route": "/api/threads/{id}/messages",
+    "method": "POST",
+    "capability": "message.send",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.send before the handler runs"
+  },
+  {
+    "route": "/api/threads/{id}/read",
+    "method": "POST",
+    "outsider_denied_by": "channel",
+    "reason": "a thread cursor is written only for a readable thread"
+  },
+  {
+    "route": "/api/threads/{id}/state",
+    "method": "PUT",
+    "capability": "channel.manage",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without channel.manage before the handler runs"
+  },
+  {
+    "route": "/api/unread",
+    "method": "GET",
+    "outsider_denied_by": "audience",
+    "reason": "counts are computed per account from what it may read",
+    "evidence": [
+      "api::TestActivityIsPrivateToItsOwnerAndGatedByTheFeature"
+    ]
+  },
+  {
+    "route": "/api/uploads",
+    "method": "POST",
+    "capability": "message.upload",
+    "outsider_denied_by": "capability",
+    "reason": "the middleware refuses an account without message.upload before the handler runs"
+  },
+  {
+    "route": "/api/uploads/{id}",
+    "method": "GET",
+    "outsider_denied_by": "conversation",
+    "reason": "the upload is served only to an account that may read the conversation it belongs to",
+    "evidence": [
+      "api::TestMemberExportContainsTheirOwnConversationsAndNothingElse"
+    ]
+  },
+  {
+    "route": "/ws",
+    "method": "GET",
+    "outsider_denied_by": "audience",
+    "reason": "every event is resolved against the account's own audience before delivery",
+    "evidence": [
+      "api::TestRealtimeEventsAreAudienceScoped",
+      "api::TestTheRevokedAudienceIsNotDeliveredOnARealSocket"
+    ]
+  }
+]

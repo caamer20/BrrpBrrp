@@ -473,6 +473,14 @@ Review 8 itself changed documentation only; the fixes above are the P8 tranche's
 No gate (G0–G8) has passed, and no capacity, latency, media or recovery target in
 section 10 is claimed.
 
+**The route inventory now carries a negative matrix.** `internal/api/negative_matrix_test.go`
+requires each of the 132 routes to state how an authenticated outsider is denied — a
+capability, the caller's own account, a resolved conversation or channel, authorship,
+recipiency, or an audience computed per delivery — and the classification is generated into
+`planning/negative-matrix.json` and compared on every test run, so adding a route without its
+row fails the build. Thirteen rows name the tests that prove the refusal, and each name is
+resolved at run time.
+
 **What is proved locally, as of 4 October.** Every Phase B row has its code, its tests and
 its ledger entry. The plan's own scenario catalog is machine-checked: twenty-nine scenarios,
 132 named checks, fourteen owed items — the owed list is printed by every `make check` and
