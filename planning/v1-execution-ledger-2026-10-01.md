@@ -1725,6 +1725,13 @@ entry in the ledger. What is left is Phase C/D evidence and the owner's decision
 - The Phase D items need infrastructure this machine does not have: two real hosts
   (Windows and Linux Docker), physical devices, an independent security and accessibility
   review, the soak, and the owner's publication approval.
+- **Two owner decisions are open, and one of them is the only thing protecting the work.**
+  There is still no git remote: one disk failure loses the entire history, and Phase A's first
+  item was to ask for a private repository URL or permission to create one. Nothing has been
+  pushed anywhere, deliberately. The second is the two feature gates —
+  `BRRP_ENABLE_RESTRICTED_CHANNELS` and `BRRP_ENABLE_PRIVATE_CONVERSATIONS` — which stay
+  default-off until the independent review and the deployment qualification pass, and only
+  the owner can flip them.
 
 Still open, in the order they are worth taking:
 
