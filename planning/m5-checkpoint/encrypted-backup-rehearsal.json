@@ -1,0 +1,149 @@
+{
+  "rehearsal": "backup-encrypted",
+  "passed": true,
+  "binary": "/Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-rehearsal",
+  "work_dir": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl",
+  "tool": "openssl",
+  "key_kind": "openssl passphrase (file held with the operator)",
+  "archive_bytes": 22467,
+  "encrypted_bytes": 22496,
+  "attachment_sha256": "f6930886026cd32932471ec7da2d3ae632bbba9b8ee15d7b411a759eab20e2c4",
+  "checks": [
+    {
+      "name": "a documented encryption tool is installed",
+      "ok": true,
+      "detail": "openssl"
+    },
+    {
+      "name": "first-time setup accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "owner can sign in",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "workspace has a text channel",
+      "ok": true,
+      "detail": "#general"
+    },
+    {
+      "name": "message accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "attachment accepted",
+      "ok": "01a10404-341c-78be-9071-119cd70a57a6",
+      "detail": "56 bytes"
+    },
+    {
+      "name": "backup produced an archive",
+      "ok": true,
+      "detail": "22467 bytes"
+    },
+    {
+      "name": "verify-backup accepts the archive",
+      "ok": true,
+      "detail": "Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks."
+    },
+    {
+      "name": "the documented encrypt command succeeds",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "an encrypted copy exists",
+      "ok": true,
+      "detail": "22496 bytes"
+    },
+    {
+      "name": "no plaintext copy remains off the host",
+      "ok": true,
+      "detail": "/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/off-host holds only the encrypted archive"
+    },
+    {
+      "name": "the documented decrypt command succeeds",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "the decrypted archive is byte-identical to the original",
+      "ok": true,
+      "detail": "sha256 2b9a30b793ba"
+    },
+    {
+      "name": "restore accepted the decrypted archive",
+      "ok": true,
+      "detail": "exit 0"
+    },
+    {
+      "name": "restored copy verifies",
+      "ok": true,
+      "detail": "Schema 25 verified: 1 users, 2 channels, 1 messages, 1 attachments"
+    },
+    {
+      "name": "restored copy keeps the account",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "restored copy serves the message",
+      "ok": true,
+      "detail": "1 messages"
+    },
+    {
+      "name": "attachment bytes are identical",
+      "ok": true,
+      "detail": "56 bytes, sha256 f6930886026c"
+    }
+  ],
+  "transcript": [
+    "Rehearsal workspace: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl",
+    "Binary: /Users/cameronamer/Documents/ChatGPT/BrrpBrrp/dist/brrpbrrp-rehearsal",
+    "  ok    a documented encryption tool is installed — openssl",
+    "Key material: openssl passphrase (file held with the operator)",
+    "",
+    "1. Install and write real content through the API",
+    "  ok    first-time setup accepted — HTTP 201",
+    "  ok    owner can sign in — HTTP 200",
+    "  ok    workspace has a text channel — #general",
+    "  ok    message accepted — HTTP 201",
+    "  ok    attachment accepted — 56 bytes",
+    "",
+    "2. Back up the stopped installation",
+    "$ brrpbrrp backup --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/source --out backups/rehearsal.zip",
+    "  Backup saved: /private/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/source/backups/rehearsal.zip",
+    "  ok    backup produced an archive — 22467 bytes",
+    "$ brrpbrrp verify-backup --file /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/source/backups/rehearsal.zip",
+    "  Archive: /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/source/backups/rehearsal.zip\n    format 2, created 2026-10-03T23:05:46.851573000Z, written by 0.4.0-alpha.8, schema 25\n    database 733184 bytes, 1 attachments, 56 attachment bytes\n    sha256 2b9a30b793ba97d1fb9414d8557256f639be71a2ab06a15fb1ca607d3cb6731a\n  Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "  ok    verify-backup accepts the archive — Verified: every entry matches its recorded size and digest, and the database passes its integrity and reference checks.",
+    "",
+    "3. Copy it off the host, encrypt it there, and remove the plaintext copy",
+    "$ openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -in /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/off-host/rehearsal.zip -out /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/off-host/rehearsal.zip.enc -pass file:/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/operator-keys/passphrase.txt",
+    "  ok    the documented encrypt command succeeds — exit 0",
+    "  ok    an encrypted copy exists — 22496 bytes",
+    "  ok    no plaintext copy remains off the host — /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/off-host holds only the encrypted archive",
+    "",
+    "4. Decrypt and restore into a second, empty destination, using only those commands",
+    "$ openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/off-host/rehearsal.zip.enc -out /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/restored/restore.zip -pass file:/var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/operator-keys/passphrase.txt",
+    "  ok    the documented decrypt command succeeds — exit 0",
+    "  ok    the decrypted archive is byte-identical to the original — sha256 2b9a30b793ba",
+    "$ brrpbrrp restore --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/restored --file restore.zip",
+    "  Restored. All users must sign in again.",
+    "  ok    restore accepted the decrypted archive — exit 0",
+    "$ brrpbrrp verify --data-dir /var/folders/tv/9cpqng650p9gdyr30kdgksqh0000gn/T/brrp-encrypted-AXEnBl/restored",
+    "  Schema 25 verified: 1 users, 2 channels, 1 messages, 1 attachments. No migration was applied and nothing was repaired.",
+    "  ok    restored copy verifies — Schema 25 verified: 1 users, 2 channels, 1 messages, 1 attachments",
+    "",
+    "5. Serve the restored copy and prove the data survived",
+    "  ok    restored copy keeps the account — HTTP 200",
+    "  ok    restored copy serves the message — 1 messages",
+    "  ok    attachment bytes are identical — 56 bytes, sha256 f6930886026c",
+    "",
+    "Rehearsal PASS: 18 checks.",
+    "Encryption tool exercised: openssl (openssl passphrase (file held with the operator))."
+  ]
+}

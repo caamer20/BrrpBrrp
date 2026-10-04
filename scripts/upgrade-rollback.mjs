@@ -37,7 +37,7 @@
 // dist/releases is used. Exit code 0 means every check passed. The work directory is
 // removed unless --keep is given, and on failure it is always kept for inspection.
 
-import { spawn } from 'node:child_process';
+import { spawn } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import {
   copyFileSync,
@@ -54,51 +54,31 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+  api,
+  buildBinary,
+  serverEnv,
+  trackChild,
+  untrackChild,
+  createRehearsal,
+  freePort,
+  installTeardown,
+  killLiveChildren,
+  multipart,
+  run,
+  startServer,
+  stopServer,
+} from "./rehearsal-kit.mjs";
+
+installTeardown((code) => process.exit(code));
+const { checks, transcript, say, check } = createRehearsal();
+// The rollback rehearsal keeps a coverage table of its own beside the check list: it runs
+// against two executables and has to record which of its assertions the older one could
+// even satisfy.
+const coverage = [];
 
 const options = parseOptions(process.argv.slice(2));
-const checks = [];
-const coverage = [];
-const transcript = [];
 let workDirForCleanup;
-
-// Every rehearsal server is tracked so the process tears its children down on every
-// exit path — a failed check throwing out of the run, a readiness loop throwing after
-// spawn, a signal — not only on the path that reaches stopServer. Ten servers from
-// aborted runs on 30 September and 1 October were still listening the next day
-// because a failed check threw straight past the stop calls.
-const liveChildren = new Set();
-
-function trackChild(child) {
-  liveChildren.add(child);
-}
-
-function untrackChild(child) {
-  liveChildren.delete(child);
-}
-
-function killLiveChildren() {
-  for (const child of liveChildren) {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      /* already exited */
-    }
-  }
-  liveChildren.clear();
-}
-
-process.on("exit", killLiveChildren);
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, async () => {
-    console.error(`Rehearsal interrupted (${signal}); stopping rehearsal servers.`);
-    // SIGTERM first so a server can close its database cleanly; the exit-handler
-    // backstop and killLiveChildren cover one that refuses.
-    for (const child of liveChildren) child.kill("SIGTERM");
-    await new Promise((done) => setTimeout(done, 1500));
-    killLiveChildren();
-    process.exit(1);
-  });
-}
 
 function parseOptions(argv) {
   const parsed = { keep: false };
@@ -106,23 +86,23 @@ function parseOptions(argv) {
     const flag = argv[index];
     const value = argv[index + 1];
     if (flag === "--keep") parsed.keep = true;
-    else if (flag === "--old-release" || flag === "--old-binary" || flag === "--binary" || flag === "--work-dir" || flag === "--report") {
+    else if (
+      flag === "--old-release" ||
+      flag === "--old-binary" ||
+      flag === "--binary" ||
+      flag === "--work-dir" ||
+      flag === "--report"
+    ) {
       if (!value) throw new Error(`${flag} needs a value`);
-      parsed[/--(.*)/.exec(flag)[1].replace(/-(.)/g, (_, letter) => letter.toUpperCase())] = value;
+      parsed[
+        /--(.*)/
+          .exec(flag)[1]
+          .replace(/-(.)/g, (_, letter) => letter.toUpperCase())
+      ] = value;
       index++;
     } else throw new Error(`unknown option ${flag}`);
   }
   return parsed;
-}
-
-function say(line) {
-  transcript.push(line);
-  console.log(line);
-}
-
-function check(name, ok, detail = "") {
-  checks.push({ name, ok: Boolean(ok), detail });
-  say(`  ${ok ? "ok   " : "FAIL "} ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
 // coverage records a fact about the baseline's API rather than an assertion about the
@@ -130,125 +110,21 @@ function check(name, ok, detail = "") {
 // that kind of data, and saying so keeps the dataset honest.
 function record(name, supported, detail = "") {
   coverage.push({ name, supported: Boolean(supported), detail });
-  say(`  ${supported ? "ok   " : "skip "} ${name}${detail ? ` — ${detail}` : ""}`);
-}
-
-function run(binary, args, cwd) {
-  return new Promise((resolve) => {
-    const child = spawn(binary, args, { cwd });
-    trackChild(child);
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => (stdout += chunk));
-    child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.once("error", (error) => {
-      untrackChild(child);
-      resolve({ status: 127, stdout, stderr: error.message });
-    });
-    child.once("exit", (code) => {
-      untrackChild(child);
-      resolve({ status: code ?? 1, stdout, stderr });
-    });
-  });
-}
-
-async function freePort() {
-  const listener = createServer();
-  await new Promise((done, reject) => {
-    listener.once("error", reject);
-    listener.listen(0, "127.0.0.1", done);
-  });
-  const port = listener.address().port;
-  await new Promise((done) => listener.close(done));
-  return port;
-}
-
-function serverEnv(dataDir, port) {
-  return {
-    ...process.env,
-    BRRP_DATA_DIR: dataDir,
-    BRRP_ADDR: `127.0.0.1:${port}`,
-    BRRP_BASE_URL: `http://127.0.0.1:${port}`,
-    BRRP_TLS_MODE: "http-local",
-  };
-}
-
-async function startServer(binary, dataDir, port, logFile) {
-  const child = spawn(binary, ["serve"], {
-    env: serverEnv(dataDir, port),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  trackChild(child);
-  let output = "";
-  child.stdout.on("data", (chunk) => (output += chunk));
-  child.stderr.on("data", (chunk) => (output += chunk));
-  const base = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (child.exitCode !== null) {
-      writeFileSync(logFile, output);
-      throw new Error(`server exited before it was ready:\n${output}`);
-    }
-    try {
-      const response = await fetch(`${base}/api/setup/status`);
-      if (response.ok) return { child, base, output: () => output };
-    } catch {
-      // still starting
-    }
-    await new Promise((done) => setTimeout(done, 200));
-  }
-  writeFileSync(logFile, output);
-  throw new Error(`server never became ready:\n${output}`);
-}
-
-async function stopServer(server) {
-  if (server.child.exitCode !== null || server.child.signalCode !== null) {
-    untrackChild(server.child);
-    return;
-  }
-  server.child.kill("SIGTERM");
-  await Promise.race([
-    new Promise((done) => {
-      if (server.child.exitCode !== null || server.child.signalCode !== null) done();
-      else server.child.once("exit", done);
-    }),
-    new Promise((done) => setTimeout(done, 5000)),
-  ]);
-  if (server.child.exitCode === null && server.child.signalCode === null) server.child.kill("SIGKILL");
-  untrackChild(server.child);
-  await new Promise((done) => setTimeout(done, 100));
-}
-
-async function api(base, method, route, { body, cookie, raw, contentType } = {}) {
-  // The prior release refuses a browser-shaped request without an allowed origin,
-  // which is the same protection the candidate applies, so the rehearsal speaks to
-  // both the way a browser does.
-  const headers = { origin: base };
-  if (cookie) headers.cookie = cookie;
-  let payload;
-  if (raw !== undefined) {
-    headers["content-type"] = contentType;
-    payload = raw;
-  } else if (body !== undefined) {
-    headers["content-type"] = "application/json";
-    payload = Buffer.from(JSON.stringify(body));
-  }
-  const response = await fetch(`${base}${route}`, { method, headers, body: payload });
-  const text = await response.text();
-  const setCookie = response.headers.getSetCookie().map((entry) => entry.split(";")[0]);
-  let parsed = null;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = text;
-  }
-  return { status: response.status, body: parsed, text, cookie: setCookie.join("; ") || null };
+  say(
+    `  ${supported ? "ok   " : "skip "} ${name}${detail ? ` — ${detail}` : ""}`,
+  );
 }
 
 // bytes returns the response body as it is on the wire, so an attachment can be
 // compared by digest instead of through a JSON decoder that would not survive it.
 async function bytes(base, route, cookie) {
-  const response = await fetch(`${base}${route}`, { headers: { origin: base, cookie } });
-  return { status: response.status, buffer: Buffer.from(await response.arrayBuffer()) };
+  const response = await fetch(`${base}${route}`, {
+    headers: { origin: base, cookie },
+  });
+  return {
+    status: response.status,
+    buffer: Buffer.from(await response.arrayBuffer()),
+  };
 }
 
 // totpCode is the same RFC 6238 code an authenticator app shows for a setup key, which
@@ -275,7 +151,9 @@ function decodeBase32(secret) {
 function totpCode(secret, at = Date.now()) {
   const message = Buffer.alloc(8);
   message.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / 30)));
-  const digest = createHmac("sha1", decodeBase32(secret)).update(message).digest();
+  const digest = createHmac("sha1", decodeBase32(secret))
+    .update(message)
+    .digest();
   const offset = digest[digest.length - 1] & 15;
   const number = digest.readUInt32BE(offset) & 0x7fffffff;
   return String(number % 1000000).padStart(6, "0");
@@ -286,7 +164,8 @@ function currentWindow() {
 }
 
 async function waitForWindow(target) {
-  while (currentWindow() < target) await new Promise((done) => setTimeout(done, 500));
+  while (currentWindow() < target)
+    await new Promise((done) => setTimeout(done, 500));
 }
 
 // loginWithFactor signs in the way an account with a second factor does: the password
@@ -296,8 +175,15 @@ async function waitForWindow(target) {
 // later step is not something the server accepts, and producing one would be a
 // rehearsal that passes for a reason the product does not offer.
 async function loginWithFactor(base, username, password, secret) {
-  const passwordOnly = await api(base, "POST", "/api/login", { body: { username, password } });
-  if (passwordOnly.cookie || passwordOnly.body?.second_factor_required !== true || !secret) return passwordOnly;
+  const passwordOnly = await api(base, "POST", "/api/login", {
+    body: { username, password },
+  });
+  if (
+    passwordOnly.cookie ||
+    passwordOnly.body?.second_factor_required !== true ||
+    !secret
+  )
+    return passwordOnly;
   let last = passwordOnly;
   for (let attempt = 0; attempt < 3; attempt++) {
     await waitForWindow(currentWindow() + attempt);
@@ -309,15 +195,6 @@ async function loginWithFactor(base, username, password, secret) {
   return last;
 }
 
-function multipart(filename, content) {
-  const boundary = `----brrpbrrp${Math.random().toString(16).slice(2)}`;
-  const head = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: text/plain\r\n\r\n`;
-  return {
-    contentType: `multipart/form-data; boundary=${boundary}`,
-    body: Buffer.concat([Buffer.from(head), Buffer.from(content), Buffer.from(`\r\n--${boundary}--\r\n`)]),
-  };
-}
-
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -327,14 +204,26 @@ function fileDigest(file) {
 }
 
 function hostPlatform() {
-  const os = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
+  const os = { darwin: "darwin", linux: "linux", win32: "windows" }[
+    process.platform
+  ];
   const arch = { x64: "amd64", arm64: "arm64" }[process.arch];
-  if (!os || !arch) throw new Error(`this rehearsal does not know ${process.platform}/${process.arch}`);
-  return { os, arch, executable: os === "windows" ? "brrpbrrp.exe" : "brrpbrrp" };
+  if (!os || !arch)
+    throw new Error(
+      `this rehearsal does not know ${process.platform}/${process.arch}`,
+    );
+  return {
+    os,
+    arch,
+    executable: os === "windows" ? "brrpbrrp.exe" : "brrpbrrp",
+  };
 }
 
 function compareVersions(left, right) {
-  const parts = (value) => value.split(/[.-]/).map((piece) => (/^\d+$/.test(piece) ? Number(piece) : piece));
+  const parts = (value) =>
+    value
+      .split(/[.-]/)
+      .map((piece) => (/^\d+$/.test(piece) ? Number(piece) : piece));
   const a = parts(left);
   const b = parts(right);
   for (let index = 0; index < Math.max(a.length, b.length); index++) {
@@ -343,7 +232,8 @@ function compareVersions(left, right) {
     if (one === other || (one === undefined && other === undefined)) continue;
     if (one === undefined) return -1;
     if (other === undefined) return 1;
-    if (typeof one === "number" && typeof other === "number") return one < other ? -1 : 1;
+    if (typeof one === "number" && typeof other === "number")
+      return one < other ? -1 : 1;
     return String(one) < String(other) ? -1 : 1;
   }
   return 0;
@@ -354,7 +244,9 @@ function compareVersions(left, right) {
 // newest one below the candidate is the combination an operator would actually hold.
 function discoverOldRelease(directory, candidateVersion, platform) {
   if (!existsSync(directory)) return null;
-  const pattern = new RegExp(`^brrpbrrp-(.+)-${platform.os}-${platform.arch}\\.zip$`);
+  const pattern = new RegExp(
+    `^brrpbrrp-(.+)-${platform.os}-${platform.arch}\\.zip$`,
+  );
   const found = [];
   for (const name of readdirSync(directory)) {
     const match = pattern.exec(name);
@@ -383,8 +275,15 @@ function goToolchain() {
 
 async function buildCandidate(destination) {
   const go = goToolchain();
-  const built = await run(go, ["build", "-trimpath", "-o", destination, "./cmd/brrpbrrp"]);
-  if (built.status !== 0) throw new Error(`building the candidate failed:\n${built.stderr}`);
+  const built = await run(go, [
+    "build",
+    "-trimpath",
+    "-o",
+    destination,
+    "./cmd/brrpbrrp",
+  ]);
+  if (built.status !== 0)
+    throw new Error(`building the candidate failed:\n${built.stderr}`);
 }
 
 async function versionOf(binary) {
@@ -396,13 +295,17 @@ async function main() {
   const platform = hostPlatform();
   const password = "correct horse battery staple";
   const attachmentText = "rollback rehearsal attachment\n";
-  const workDir = options.workDir ? path.resolve(options.workDir) : mkdtempSync(path.join(tmpdir(), "brrp-rollback-"));
+  const workDir = options.workDir
+    ? path.resolve(options.workDir)
+    : mkdtempSync(path.join(tmpdir(), "brrp-rollback-"));
   workDirForCleanup = workDir;
   mkdirSync(workDir, { recursive: true });
   say(`Rehearsal workspace: ${workDir}`);
   say(`Platform: ${platform.os}/${platform.arch}`);
 
-  let candidateBinary = options.binary ? path.resolve(options.binary) : path.join(workDir, "brrpbrrp-candidate");
+  let candidateBinary = options.binary
+    ? path.resolve(options.binary)
+    : path.join(workDir, "brrpbrrp-candidate");
   if (!options.binary || !existsSync(candidateBinary)) {
     say(`Building the candidate: ${candidateBinary}`);
     await buildCandidate(candidateBinary);
@@ -411,7 +314,8 @@ async function main() {
 
   let oldBinary = options.oldBinary ? path.resolve(options.oldBinary) : "";
   let oldSource = "an executable supplied with --old-binary";
-  let oldSourceDigest = oldBinary && existsSync(oldBinary) ? fileDigest(oldBinary) : "";
+  let oldSourceDigest =
+    oldBinary && existsSync(oldBinary) ? fileDigest(oldBinary) : "";
   if (!oldBinary) {
     const releases = path.resolve("dist/releases");
     const archived = options.oldRelease
@@ -420,22 +324,30 @@ async function main() {
     if (!archived) {
       throw new Error(
         `no archived release for ${platform.os}/${platform.arch} below ${candidateVersion} in dist/releases; ` +
-          "pass --old-release or --old-binary so the rehearsal tests a real prior executable"
+          "pass --old-release or --old-binary so the rehearsal tests a real prior executable",
       );
     }
-    if (!existsSync(archived.path)) throw new Error(`old release not found: ${archived.path}`);
+    if (!existsSync(archived.path))
+      throw new Error(`old release not found: ${archived.path}`);
     oldSource = archived.path;
     const extraction = path.join(workDir, "old-release");
     mkdirSync(extraction, { recursive: true });
-    const unzip = await run("unzip", ["-q", "-o", archived.path, "-d", extraction]);
+    const unzip = await run("unzip", [
+      "-q",
+      "-o",
+      archived.path,
+      "-d",
+      extraction,
+    ]);
     if (unzip.status !== 0) {
       throw new Error(
         `could not extract ${archived.path} (${unzip.stderr?.trim() || "unzip unavailable"}); ` +
-          "extract it yourself and pass --old-binary"
+          "extract it yourself and pass --old-binary",
       );
     }
     oldBinary = path.join(extraction, platform.executable);
-    if (!existsSync(oldBinary)) throw new Error(`the archive has no ${platform.executable}`);
+    if (!existsSync(oldBinary))
+      throw new Error(`the archive has no ${platform.executable}`);
     oldSourceDigest = fileDigest(archived.path);
   }
   const oldVersion = await versionOf(oldBinary);
@@ -449,29 +361,69 @@ async function main() {
   const upgradeDir = path.join(workDir, "upgraded");
   const refusedDir = path.join(workDir, "candidate-archive-target");
   const restoredDir = path.join(workDir, "restored-old");
-  for (const directory of [rollbackDir, upgradeDir, refusedDir, restoredDir]) mkdirSync(directory, { recursive: true });
+  for (const directory of [rollbackDir, upgradeDir, refusedDir, restoredDir])
+    mkdirSync(directory, { recursive: true });
 
-  say("1. Install with the archived prior release and write a representative dataset");
+  say(
+    "1. Install with the archived prior release and write a representative dataset",
+  );
   const oldPort = await freePort();
-  let server = await startServer(oldBinary, rollbackDir, oldPort, path.join(workDir, "old.log"));
-  const setupToken = readFileSync(path.join(rollbackDir, "setup-token"), "utf8").trim();
+  let server = await startServer(
+    oldBinary,
+    rollbackDir,
+    oldPort,
+    path.join(workDir, "old.log"),
+  );
+  const setupToken = readFileSync(
+    path.join(rollbackDir, "setup-token"),
+    "utf8",
+  ).trim();
   const setup = await api(server.base, "POST", "/api/setup", {
-    body: { token: setupToken, server_name: "Rollback rehearsal", username: "owner", password },
+    body: {
+      token: setupToken,
+      server_name: "Rollback rehearsal",
+      username: "owner",
+      password,
+    },
   });
-  check("the prior release accepted first-time setup", setup.status === 201, `HTTP ${setup.status}`);
-  const ownerSession = await api(server.base, "POST", "/api/login", { body: { username: "owner", password } });
-  check("the prior release signs the owner in", ownerSession.status === 200 && ownerSession.cookie !== null, `HTTP ${ownerSession.status}`);
+  check(
+    "the prior release accepted first-time setup",
+    setup.status === 201,
+    `HTTP ${setup.status}`,
+  );
+  const ownerSession = await api(server.base, "POST", "/api/login", {
+    body: { username: "owner", password },
+  });
+  check(
+    "the prior release signs the owner in",
+    ownerSession.status === 200 && ownerSession.cookie !== null,
+    `HTTP ${ownerSession.status}`,
+  );
   const owner = ownerSession.cookie;
   const state = await api(server.base, "GET", "/api/state", { cookie: owner });
-  const channel = (state.body.channels ?? []).find((entry) => entry.type === "text");
-  check("the prior release has a text channel", Boolean(channel), channel ? `#${channel.name}` : "none");
+  const channel = (state.body.channels ?? []).find(
+    (entry) => entry.type === "text",
+  );
+  check(
+    "the prior release has a text channel",
+    Boolean(channel),
+    channel ? `#${channel.name}` : "none",
+  );
 
   const marker = `rollback rehearsal ${Date.now().toString(16)}`;
   const memberCreated = await api(server.base, "POST", "/api/admin/users", {
     cookie: owner,
-    body: { username: "member", password: "member passphrase here", display_name: "Member" },
+    body: {
+      username: "member",
+      password: "member passphrase here",
+      display_name: "Member",
+    },
   });
-  check("the prior release created a member account", memberCreated.status === 201, `HTTP ${memberCreated.status}`);
+  check(
+    "the prior release created a member account",
+    memberCreated.status === 201,
+    `HTTP ${memberCreated.status}`,
+  );
   const memberID = memberCreated.body?.id ?? "";
 
   const upload = multipart("note.txt", attachmentText);
@@ -480,267 +432,707 @@ async function main() {
     raw: upload.body,
     contentType: upload.contentType,
   });
-  check("the prior release accepted an uploaded file", uploaded.status === 201 && uploaded.body?.id, `HTTP ${uploaded.status}`);
+  check(
+    "the prior release accepted an uploaded file",
+    uploaded.status === 201 && uploaded.body?.id,
+    `HTTP ${uploaded.status}`,
+  );
   const uploadID = uploaded.body?.id ?? "";
 
-  const first = await api(server.base, "POST", `/api/channels/${channel.id}/messages`, {
-    cookie: owner,
-    body: { content: marker, idempotency_key: "rollback-rehearsal-1" },
-  });
-  check("the prior release accepted a message", first.status === 201, `HTTP ${first.status}`);
-  const second = await api(server.base, "POST", `/api/channels/${channel.id}/messages`, {
-    cookie: owner,
-    body: { content: `${marker} with a file`, idempotency_key: "rollback-rehearsal-2", attachment_ids: [uploadID] },
-  });
-  check("the prior release accepted a message with an attachment", second.status === 201, `HTTP ${second.status}`);
+  const first = await api(
+    server.base,
+    "POST",
+    `/api/channels/${channel.id}/messages`,
+    {
+      cookie: owner,
+      body: { content: marker, idempotency_key: "rollback-rehearsal-1" },
+    },
+  );
+  check(
+    "the prior release accepted a message",
+    first.status === 201,
+    `HTTP ${first.status}`,
+  );
+  const second = await api(
+    server.base,
+    "POST",
+    `/api/channels/${channel.id}/messages`,
+    {
+      cookie: owner,
+      body: {
+        content: `${marker} with a file`,
+        idempotency_key: "rollback-rehearsal-2",
+        attachment_ids: [uploadID],
+      },
+    },
+  );
+  check(
+    "the prior release accepted a message with an attachment",
+    second.status === 201,
+    `HTTP ${second.status}`,
+  );
 
-  const reply = await api(server.base, "POST", `/api/channels/${channel.id}/messages`, {
-    cookie: owner,
-    body: { content: `${marker} reply`, idempotency_key: "rollback-rehearsal-3", reply_to_id: first.body?.id ?? "" },
-  });
-  record("a reply is part of the dataset", reply.status === 201, `HTTP ${reply.status}`);
+  const reply = await api(
+    server.base,
+    "POST",
+    `/api/channels/${channel.id}/messages`,
+    {
+      cookie: owner,
+      body: {
+        content: `${marker} reply`,
+        idempotency_key: "rollback-rehearsal-3",
+        reply_to_id: first.body?.id ?? "",
+      },
+    },
+  );
+  record(
+    "a reply is part of the dataset",
+    reply.status === 201,
+    `HTTP ${reply.status}`,
+  );
 
-  const pinned = await api(server.base, "PUT", `/api/messages/${first.body?.id ?? ""}/pin`, { cookie: owner, body: { pinned: true } });
-  record("a pinned message is part of the dataset", pinned.status === 200, `HTTP ${pinned.status}`);
+  const pinned = await api(
+    server.base,
+    "PUT",
+    `/api/messages/${first.body?.id ?? ""}/pin`,
+    { cookie: owner, body: { pinned: true } },
+  );
+  record(
+    "a pinned message is part of the dataset",
+    pinned.status === 200,
+    `HTTP ${pinned.status}`,
+  );
 
   // A single-use invitation carrying a role is authority promised for later, so it is
   // part of what a migration must not quietly drop. The prior release decides which
   // shape it accepts.
-  let invitation = await api(server.base, "POST", "/api/admin/invitations", { cookie: owner, body: { hours: 24 } });
+  let invitation = await api(server.base, "POST", "/api/admin/invitations", {
+    cookie: owner,
+    body: { hours: 24 },
+  });
   if (invitation.status !== 201) {
-    invitation = await api(server.base, "POST", "/api/admin/invitations", { cookie: owner, body: { hours: 24, role_ids: [] } });
+    invitation = await api(server.base, "POST", "/api/admin/invitations", {
+      cookie: owner,
+      body: { hours: 24, role_ids: [] },
+    });
   }
-  record("an invitation is part of the dataset", invitation.status === 201, `HTTP ${invitation.status}`);
+  record(
+    "an invitation is part of the dataset",
+    invitation.status === 201,
+    `HTTP ${invitation.status}`,
+  );
 
   const roles = await api(server.base, "GET", "/api/roles", { cookie: owner });
-  record("the prior release has a role API", roles.status === 200, `HTTP ${roles.status} (roles arrive with schema 3)`);
+  record(
+    "the prior release has a role API",
+    roles.status === 200,
+    `HTTP ${roles.status} (roles arrive with schema 3)`,
+  );
 
   // An enrolled second factor is a credential, and credentials have to survive a
   // migration: nothing may silently re-enroll an account or accept a factor whose
   // secret no longer verifies. The prior release allows an administrator to enroll
   // one, which is the account this rehearsal signs in as.
   let ownerFactor = "";
-  const setupFactor = await api(server.base, "POST", "/api/me/mfa/setup", { cookie: owner, body: { password } });
+  const setupFactor = await api(server.base, "POST", "/api/me/mfa/setup", {
+    cookie: owner,
+    body: { password },
+  });
   const factorSecret = setupFactor.body?.secret ?? "";
   if (setupFactor.status === 200 && factorSecret) {
     const enable = await api(server.base, "POST", "/api/me/mfa/enable", {
       cookie: owner,
       body: { code: totpCode(factorSecret) },
     });
-    check("the prior release enrolled a second factor", enable.status === 200, `HTTP ${enable.status}`);
+    check(
+      "the prior release enrolled a second factor",
+      enable.status === 200,
+      `HTTP ${enable.status}`,
+    );
     if (enable.status === 200) ownerFactor = factorSecret;
   } else {
-    record("an enrolled second factor is part of the dataset", false,
-      `the baseline refused enrollment with HTTP ${setupFactor.status}`);
+    record(
+      "an enrolled second factor is part of the dataset",
+      false,
+      `the baseline refused enrollment with HTTP ${setupFactor.status}`,
+    );
   }
 
   const originalDigest = sha256(attachmentText);
   // The dataset is read back rather than assumed: a write that answered 2xx but did
   // not persist would otherwise be recorded as evidence it survived a migration.
-  const readBack = await api(server.base, "GET", `/api/channels/${channel.id}/messages`, { cookie: owner });
-  const readBackPins = await api(server.base, "GET", `/api/channels/${channel.id}/pins`, { cookie: owner });
-  const readBackInvitations = await api(server.base, "GET", "/api/admin/invitations", { cookie: owner });
-  const readBackUpload = await bytes(server.base, `/api/uploads/${uploadID}`, owner);
+  const readBack = await api(
+    server.base,
+    "GET",
+    `/api/channels/${channel.id}/messages`,
+    { cookie: owner },
+  );
+  const readBackPins = await api(
+    server.base,
+    "GET",
+    `/api/channels/${channel.id}/pins`,
+    { cookie: owner },
+  );
+  const readBackInvitations = await api(
+    server.base,
+    "GET",
+    "/api/admin/invitations",
+    { cookie: owner },
+  );
+  const readBackUpload = await bytes(
+    server.base,
+    `/api/uploads/${uploadID}`,
+    owner,
+  );
   const observedMessages = Array.isArray(readBack.body) ? readBack.body : [];
   const dataset = {
     users: 2,
     channels: (state.body.channels ?? []).length,
     messages: observedMessages.length,
-    replies: observedMessages.filter((message) => message.reply_count > 0).length,
+    replies: observedMessages.filter((message) => message.reply_count > 0)
+      .length,
     pins: Array.isArray(readBackPins.body) ? readBackPins.body.length : 0,
-    invitations: Array.isArray(readBackInvitations.body) ? readBackInvitations.body.length : 0,
-    attachments: observedMessages.filter((message) => (message.attachments ?? []).length > 0).length,
+    invitations: Array.isArray(readBackInvitations.body)
+      ? readBackInvitations.body.length
+      : 0,
+    attachments: observedMessages.filter(
+      (message) => (message.attachments ?? []).length > 0,
+    ).length,
     second_factor: ownerFactor !== "",
     attachment_sha256: originalDigest,
   };
-  check("the prior release's dataset is what the rehearsal wrote",
-    dataset.messages === 3 && dataset.replies === 1 && dataset.pins === 1 && dataset.attachments === 1,
-    JSON.stringify(dataset));
-  check("the attachment the dataset references is readable", readBackUpload.status === 200 && sha256(readBackUpload.buffer) === originalDigest,
-    `HTTP ${readBackUpload.status}, ${readBackUpload.buffer.length} bytes`);
+  check(
+    "the prior release's dataset is what the rehearsal wrote",
+    dataset.messages === 3 &&
+      dataset.replies === 1 &&
+      dataset.pins === 1 &&
+      dataset.attachments === 1,
+    JSON.stringify(dataset),
+  );
+  check(
+    "the attachment the dataset references is readable",
+    readBackUpload.status === 200 &&
+      sha256(readBackUpload.buffer) === originalDigest,
+    `HTTP ${readBackUpload.status}, ${readBackUpload.buffer.length} bytes`,
+  );
   say(`  dataset: ${JSON.stringify(dataset)}`);
   await stopServer(server);
 
   say("");
-  say("2. Snapshot the installation with the prior release (the rollback source)");
-  const preflightBefore = await run(candidateBinary, ["preflight", "--data-dir", rollbackDir]);
-  const beforeReport = JSON.parse((preflightBefore.stdout ?? "{}").replace(/^[^{]*/, ""));
-  check("the baseline schema is known before either snapshot",
-    preflightBefore.status === 0 && Number.isInteger(beforeReport.schema_version) && beforeReport.schema_version > 0,
-    `schema ${beforeReport.schema_version} of ${beforeReport.supported_schema_version}`);
-  const oldBackup = await run(oldBinary, ["backup", "--data-dir", rollbackDir, "--out", "backups/rollback.zip"]);
+  say(
+    "2. Snapshot the installation with the prior release (the rollback source)",
+  );
+  const preflightBefore = await run(candidateBinary, [
+    "preflight",
+    "--data-dir",
+    rollbackDir,
+  ]);
+  const beforeReport = JSON.parse(
+    (preflightBefore.stdout ?? "{}").replace(/^[^{]*/, ""),
+  );
+  check(
+    "the baseline schema is known before either snapshot",
+    preflightBefore.status === 0 &&
+      Number.isInteger(beforeReport.schema_version) &&
+      beforeReport.schema_version > 0,
+    `schema ${beforeReport.schema_version} of ${beforeReport.supported_schema_version}`,
+  );
+  const oldBackup = await run(oldBinary, [
+    "backup",
+    "--data-dir",
+    rollbackDir,
+    "--out",
+    "backups/rollback.zip",
+  ]);
   const rollbackArchive = path.join(rollbackDir, "backups/rollback.zip");
-  check("the prior release wrote an archive", oldBackup.status === 0 && existsSync(rollbackArchive),
-    existsSync(rollbackArchive) ? `${statSync(rollbackArchive).size} bytes` : (oldBackup.stderr ?? "").trim());
-  const rollbackDigest = existsSync(rollbackArchive) ? fileDigest(rollbackArchive) : "";
-  const readRollback = await run(candidateBinary, ["verify-backup", "--file", rollbackArchive]);
+  check(
+    "the prior release wrote an archive",
+    oldBackup.status === 0 && existsSync(rollbackArchive),
+    existsSync(rollbackArchive)
+      ? `${statSync(rollbackArchive).size} bytes`
+      : (oldBackup.stderr ?? "").trim(),
+  );
+  const rollbackDigest = existsSync(rollbackArchive)
+    ? fileDigest(rollbackArchive)
+    : "";
+  const readRollback = await run(candidateBinary, [
+    "verify-backup",
+    "--file",
+    rollbackArchive,
+  ]);
   const rollbackFormat = /format (\d+)/.exec(readRollback.stdout ?? "");
   const rollbackSchema = /schema (\d+)/.exec(readRollback.stdout ?? "");
-  check("the candidate reads the old archive", readRollback.status === 0, `${(readRollback.stdout ?? "").split("\n")[1]?.trim() ?? (readRollback.stderr ?? "").trim()}`);
-  check("the old archive reports its backup format", rollbackFormat && Number(rollbackFormat[1]) > 0,
-    rollbackFormat ? `format ${rollbackFormat[1]}` : "format not reported");
-  check("the old archive's schema metadata agrees with the baseline",
-    rollbackSchema ? Number(rollbackSchema[1]) === beforeReport.schema_version : rollbackFormat?.[1] === "1",
-    rollbackSchema ? `schema ${rollbackSchema[1]}` : `format 1 omits schema metadata; preflight measured schema ${beforeReport.schema_version}`);
+  check(
+    "the candidate reads the old archive",
+    readRollback.status === 0,
+    `${(readRollback.stdout ?? "").split("\n")[1]?.trim() ?? (readRollback.stderr ?? "").trim()}`,
+  );
+  check(
+    "the old archive reports its backup format",
+    rollbackFormat && Number(rollbackFormat[1]) > 0,
+    rollbackFormat ? `format ${rollbackFormat[1]}` : "format not reported",
+  );
+  check(
+    "the old archive's schema metadata agrees with the baseline",
+    rollbackSchema
+      ? Number(rollbackSchema[1]) === beforeReport.schema_version
+      : rollbackFormat?.[1] === "1",
+    rollbackSchema
+      ? `schema ${rollbackSchema[1]}`
+      : `format 1 omits schema metadata; preflight measured schema ${beforeReport.schema_version}`,
+  );
 
   say("");
-  say("3. Check the candidate snapshot's schema and prior-reader compatibility");
-  const candidateBackup = await run(candidateBinary, ["backup", "--data-dir", rollbackDir, "--out", "backups/candidate.zip"]);
+  say(
+    "3. Check the candidate snapshot's schema and prior-reader compatibility",
+  );
+  const candidateBackup = await run(candidateBinary, [
+    "backup",
+    "--data-dir",
+    rollbackDir,
+    "--out",
+    "backups/candidate.zip",
+  ]);
   const candidateArchive = path.join(rollbackDir, "backups/candidate.zip");
-  check("the candidate wrote an archive", candidateBackup.status === 0 && existsSync(candidateArchive),
-    existsSync(candidateArchive) ? `${statSync(candidateArchive).size} bytes` : (candidateBackup.stderr ?? "").trim());
-  const readCandidateArchive = await run(candidateBinary, ["verify-backup", "--file", candidateArchive]);
-  const candidateHeader = (readCandidateArchive.stdout ?? "").split("\n")[1]?.trim() ?? "";
+  check(
+    "the candidate wrote an archive",
+    candidateBackup.status === 0 && existsSync(candidateArchive),
+    existsSync(candidateArchive)
+      ? `${statSync(candidateArchive).size} bytes`
+      : (candidateBackup.stderr ?? "").trim(),
+  );
+  const readCandidateArchive = await run(candidateBinary, [
+    "verify-backup",
+    "--file",
+    candidateArchive,
+  ]);
+  const candidateHeader =
+    (readCandidateArchive.stdout ?? "").split("\n")[1]?.trim() ?? "";
   const candidateFormat = /format (\d+)/.exec(candidateHeader);
   const candidateSnapshotSchema = /schema (\d+)/.exec(candidateHeader);
-  check("the candidate verifies its own archive and reports its format",
-    readCandidateArchive.status === 0 && candidateFormat && Number(candidateFormat[1]) > 0,
-    candidateHeader || (readCandidateArchive.stderr ?? "").trim());
-  check("snapshotting an un-migrated installation did not migrate it",
-    candidateSnapshotSchema !== null && Number(candidateSnapshotSchema[1]) === beforeReport.schema_version,
-    candidateSnapshotSchema ? `recorded schema ${candidateSnapshotSchema[1]}` : "schema not reported");
-  const preflightAfterSnapshots = await run(candidateBinary, ["preflight", "--data-dir", rollbackDir]);
-  const afterSnapshots = JSON.parse((preflightAfterSnapshots.stdout ?? "{}").replace(/^[^{]*/, ""));
-  check("the installation is still at the prior schema",
-    preflightAfterSnapshots.status === 0 && afterSnapshots.schema_version === beforeReport.schema_version &&
+  check(
+    "the candidate verifies its own archive and reports its format",
+    readCandidateArchive.status === 0 &&
+      candidateFormat &&
+      Number(candidateFormat[1]) > 0,
+    candidateHeader || (readCandidateArchive.stderr ?? "").trim(),
+  );
+  check(
+    "snapshotting an un-migrated installation did not migrate it",
+    candidateSnapshotSchema !== null &&
+      Number(candidateSnapshotSchema[1]) === beforeReport.schema_version,
+    candidateSnapshotSchema
+      ? `recorded schema ${candidateSnapshotSchema[1]}`
+      : "schema not reported",
+  );
+  const preflightAfterSnapshots = await run(candidateBinary, [
+    "preflight",
+    "--data-dir",
+    rollbackDir,
+  ]);
+  const afterSnapshots = JSON.parse(
+    (preflightAfterSnapshots.stdout ?? "{}").replace(/^[^{]*/, ""),
+  );
+  check(
+    "the installation is still at the prior schema",
+    preflightAfterSnapshots.status === 0 &&
+      afterSnapshots.schema_version === beforeReport.schema_version &&
       afterSnapshots.schema_version < afterSnapshots.supported_schema_version,
-    `schema ${afterSnapshots.schema_version} of ${afterSnapshots.supported_schema_version}, ${afterSnapshots.pending_migrations?.length ?? 0} pending`);
+    `schema ${afterSnapshots.schema_version} of ${afterSnapshots.supported_schema_version}, ${afterSnapshots.pending_migrations?.length ?? 0} pending`,
+  );
   copyFileSync(candidateArchive, path.join(refusedDir, "candidate.zip"));
-  const oldRestoreOfCandidate = await run(oldBinary, ["restore", "--data-dir", refusedDir, "--file", "candidate.zip"]);
-  const newerCandidateFormat = candidateFormat && rollbackFormat && Number(candidateFormat[1]) > Number(rollbackFormat[1]);
+  const oldRestoreOfCandidate = await run(oldBinary, [
+    "restore",
+    "--data-dir",
+    refusedDir,
+    "--file",
+    "candidate.zip",
+  ]);
+  const newerCandidateFormat =
+    candidateFormat &&
+    rollbackFormat &&
+    Number(candidateFormat[1]) > Number(rollbackFormat[1]);
   if (newerCandidateFormat) {
-    check("the prior release refuses the candidate's newer backup format",
-      oldRestoreOfCandidate.status !== 0 && /unsupported backup format/i.test((oldRestoreOfCandidate.stderr ?? "") + (oldRestoreOfCandidate.stdout ?? "")),
-      (oldRestoreOfCandidate.stderr ?? "").trim().split("\n")[0] || "no refusal reported");
+    check(
+      "the prior release refuses the candidate's newer backup format",
+      oldRestoreOfCandidate.status !== 0 &&
+        /unsupported backup format/i.test(
+          (oldRestoreOfCandidate.stderr ?? "") +
+            (oldRestoreOfCandidate.stdout ?? ""),
+        ),
+      (oldRestoreOfCandidate.stderr ?? "").trim().split("\n")[0] ||
+        "no refusal reported",
+    );
   } else {
-    check("the prior release restores the candidate's compatible pre-upgrade archive",
-      candidateFormat && rollbackFormat && Number(candidateFormat[1]) === Number(rollbackFormat[1]) && oldRestoreOfCandidate.status === 0,
-      `exit ${oldRestoreOfCandidate.status}, formats ${rollbackFormat?.[1]} -> ${candidateFormat?.[1]}`);
-    const compatiblePreflight = await run(candidateBinary, ["preflight", "--data-dir", refusedDir]);
-    const compatibleReport = JSON.parse((compatiblePreflight.stdout ?? "{}").replace(/^[^{]*/, ""));
-    check("the compatible candidate archive restores the unchanged baseline schema",
-      compatiblePreflight.status === 0 && compatibleReport.schema_version === beforeReport.schema_version,
-      `schema ${compatibleReport.schema_version}`);
-    const compatibleVerify = await run(oldBinary, ["verify", "--data-dir", refusedDir]);
-    check("the prior release verifies the compatible candidate archive's restored data",
+    check(
+      "the prior release restores the candidate's compatible pre-upgrade archive",
+      candidateFormat &&
+        rollbackFormat &&
+        Number(candidateFormat[1]) === Number(rollbackFormat[1]) &&
+        oldRestoreOfCandidate.status === 0,
+      `exit ${oldRestoreOfCandidate.status}, formats ${rollbackFormat?.[1]} -> ${candidateFormat?.[1]}`,
+    );
+    const compatiblePreflight = await run(candidateBinary, [
+      "preflight",
+      "--data-dir",
+      refusedDir,
+    ]);
+    const compatibleReport = JSON.parse(
+      (compatiblePreflight.stdout ?? "{}").replace(/^[^{]*/, ""),
+    );
+    check(
+      "the compatible candidate archive restores the unchanged baseline schema",
+      compatiblePreflight.status === 0 &&
+        compatibleReport.schema_version === beforeReport.schema_version,
+      `schema ${compatibleReport.schema_version}`,
+    );
+    const compatibleVerify = await run(oldBinary, [
+      "verify",
+      "--data-dir",
+      refusedDir,
+    ]);
+    check(
+      "the prior release verifies the compatible candidate archive's restored data",
       compatibleVerify.status === 0,
-      (compatibleVerify.stdout || compatibleVerify.stderr).trim().split("\n").at(-1));
+      (compatibleVerify.stdout || compatibleVerify.stderr)
+        .trim()
+        .split("\n")
+        .at(-1),
+    );
   }
 
   say("");
   say("4. Upgrade with the candidate and prove the dataset survived");
   const upgradedPort = await freePort();
-  server = await startServer(candidateBinary, rollbackDir, upgradedPort, path.join(workDir, "upgraded.log"));
+  server = await startServer(
+    candidateBinary,
+    rollbackDir,
+    upgradedPort,
+    path.join(workDir, "upgraded.log"),
+  );
   await stopServer(server);
-  const verify = await run(candidateBinary, ["verify", "--data-dir", rollbackDir]);
-  const verified = /Schema (\d+) verified: (\d+) users, (\d+) channels, (\d+) messages, (\d+) attachments/.exec(verify.stdout ?? "");
-  check("the upgraded installation verifies", verify.status === 0 && verified !== null, verified ? verified[0] : (verify.stderr ?? "").trim());
+  const verify = await run(candidateBinary, [
+    "verify",
+    "--data-dir",
+    rollbackDir,
+  ]);
+  const verified =
+    /Schema (\d+) verified: (\d+) users, (\d+) channels, (\d+) messages, (\d+) attachments/.exec(
+      verify.stdout ?? "",
+    );
+  check(
+    "the upgraded installation verifies",
+    verify.status === 0 && verified !== null,
+    verified ? verified[0] : (verify.stderr ?? "").trim(),
+  );
   if (verified) {
-    check("the upgrade reached the candidate's schema", Number(verified[1]) === beforeReport.supported_schema_version,
-      `schema ${verified[1]}`);
-    check("the upgrade preserved every account", Number(verified[2]) === dataset.users, `${verified[2]} users`);
-    check("the upgrade preserved every message, including the reply",
-      Number(verified[4]) >= dataset.messages, `${verified[4]} messages`);
-    check("the upgrade preserved the attachment", Number(verified[5]) === dataset.attachments, `${verified[5]} attachments`);
+    check(
+      "the upgrade reached the candidate's schema",
+      Number(verified[1]) === beforeReport.supported_schema_version,
+      `schema ${verified[1]}`,
+    );
+    check(
+      "the upgrade preserved every account",
+      Number(verified[2]) === dataset.users,
+      `${verified[2]} users`,
+    );
+    check(
+      "the upgrade preserved every message, including the reply",
+      Number(verified[4]) >= dataset.messages,
+      `${verified[4]} messages`,
+    );
+    check(
+      "the upgrade preserved the attachment",
+      Number(verified[5]) === dataset.attachments,
+      `${verified[5]} attachments`,
+    );
   }
   copyFileSync(rollbackArchive, path.join(upgradeDir, "unused.zip"));
   say("");
 
   const upgradedPort2 = await freePort();
-  server = await startServer(candidateBinary, rollbackDir, upgradedPort2, path.join(workDir, "served.log"));
-  const upgradedLogin = await loginWithFactor(server.base, "owner", password, ownerFactor);
-  check("the upgraded installation signs the owner in", upgradedLogin.status === 200 && upgradedLogin.cookie !== null, `HTTP ${upgradedLogin.status}`);
+  server = await startServer(
+    candidateBinary,
+    rollbackDir,
+    upgradedPort2,
+    path.join(workDir, "served.log"),
+  );
+  const upgradedLogin = await loginWithFactor(
+    server.base,
+    "owner",
+    password,
+    ownerFactor,
+  );
+  check(
+    "the upgraded installation signs the owner in",
+    upgradedLogin.status === 200 && upgradedLogin.cookie !== null,
+    `HTTP ${upgradedLogin.status}`,
+  );
   const upgradedCookie = upgradedLogin.cookie;
-  const history = await api(server.base, "GET", `/api/channels/${channel.id}/messages`, { cookie: upgradedCookie });
+  const history = await api(
+    server.base,
+    "GET",
+    `/api/channels/${channel.id}/messages`,
+    { cookie: upgradedCookie },
+  );
   const contents = (history.body ?? []).map((message) => message.content ?? "");
-  check("the upgraded installation serves the message", contents.some((text) => text.includes(marker)), `${contents.length} messages`);
-  const parent = (history.body ?? []).find((message) => message.id === first.body?.id);
-  check("the reply still belongs to its parent", !dataset.replies || (parent?.reply_count ?? 0) >= 1,
-    `reply_count ${parent?.reply_count ?? 0}`);
-  check("the pin survived", !dataset.pins || (parent?.pinned ?? false) === true, `pinned ${parent?.pinned}`);
-  const pins = await api(server.base, "GET", `/api/channels/${channel.id}/pins`, { cookie: upgradedCookie });
-  check("the pin is listed", !dataset.pins || (Array.isArray(pins.body) && pins.body.length >= 1), `${pins.body?.length ?? 0} pins`);
-  const search = await api(server.base, "GET", `/api/search?q=${encodeURIComponent(marker)}`, { cookie: upgradedCookie });
-  check("search finds the pre-upgrade message", Array.isArray(search.body) && search.body.length >= 1, `${search.body?.length ?? 0} hits`);
-  const download = await bytes(server.base, `/api/uploads/${uploadID}`, upgradedCookie);
+  check(
+    "the upgraded installation serves the message",
+    contents.some((text) => text.includes(marker)),
+    `${contents.length} messages`,
+  );
+  const parent = (history.body ?? []).find(
+    (message) => message.id === first.body?.id,
+  );
+  check(
+    "the reply still belongs to its parent",
+    !dataset.replies || (parent?.reply_count ?? 0) >= 1,
+    `reply_count ${parent?.reply_count ?? 0}`,
+  );
+  check(
+    "the pin survived",
+    !dataset.pins || (parent?.pinned ?? false) === true,
+    `pinned ${parent?.pinned}`,
+  );
+  const pins = await api(
+    server.base,
+    "GET",
+    `/api/channels/${channel.id}/pins`,
+    { cookie: upgradedCookie },
+  );
+  check(
+    "the pin is listed",
+    !dataset.pins || (Array.isArray(pins.body) && pins.body.length >= 1),
+    `${pins.body?.length ?? 0} pins`,
+  );
+  const search = await api(
+    server.base,
+    "GET",
+    `/api/search?q=${encodeURIComponent(marker)}`,
+    { cookie: upgradedCookie },
+  );
+  check(
+    "search finds the pre-upgrade message",
+    Array.isArray(search.body) && search.body.length >= 1,
+    `${search.body?.length ?? 0} hits`,
+  );
+  const download = await bytes(
+    server.base,
+    `/api/uploads/${uploadID}`,
+    upgradedCookie,
+  );
   const downloadDigest = sha256(download.buffer);
-  check("attachment bytes are identical after the upgrade", download.status === 200 && downloadDigest === originalDigest,
-    `HTTP ${download.status}, sha256 ${downloadDigest.slice(0, 12)}`);
+  check(
+    "attachment bytes are identical after the upgrade",
+    download.status === 200 && downloadDigest === originalDigest,
+    `HTTP ${download.status}, sha256 ${downloadDigest.slice(0, 12)}`,
+  );
   if (dataset.second_factor) {
-    const passwordOnly = await api(server.base, "POST", "/api/login", { body: { username: "owner", password } });
-    check("the upgraded installation still answers with a second-factor step",
-      passwordOnly.body?.second_factor_required === true, `HTTP ${passwordOnly.status}`);
-    const withCode = await loginWithFactor(server.base, "owner", password, ownerFactor);
-    check("the enrolled factor still verifies after the upgrade",
-      withCode.status === 200 && withCode.cookie !== null, `HTTP ${withCode.status} ${withCode.text.slice(0, 120)}`);
+    const passwordOnly = await api(server.base, "POST", "/api/login", {
+      body: { username: "owner", password },
+    });
+    check(
+      "the upgraded installation still answers with a second-factor step",
+      passwordOnly.body?.second_factor_required === true,
+      `HTTP ${passwordOnly.status}`,
+    );
+    const withCode = await loginWithFactor(
+      server.base,
+      "owner",
+      password,
+      ownerFactor,
+    );
+    check(
+      "the enrolled factor still verifies after the upgrade",
+      withCode.status === 200 && withCode.cookie !== null,
+      `HTTP ${withCode.status} ${withCode.bytes.toString().slice(0, 120)}`,
+    );
   } else {
-    say("  note: the baseline did not enroll a factor, so the credential half of the upgrade is not rehearsed here");
+    say(
+      "  note: the baseline did not enroll a factor, so the credential half of the upgrade is not rehearsed here",
+    );
   }
 
   say("");
   say("5. Record what changed after the snapshot (the data-loss boundary)");
   const divergence = [];
   const lateMessage = `${marker} after the snapshot`;
-  const late = await api(server.base, "POST", `/api/channels/${channel.id}/messages`, {
-    cookie: upgradedCookie,
-    body: { content: lateMessage, idempotency_key: "rollback-rehearsal-4" },
-  });
+  const late = await api(
+    server.base,
+    "POST",
+    `/api/channels/${channel.id}/messages`,
+    {
+      cookie: upgradedCookie,
+      body: { content: lateMessage, idempotency_key: "rollback-rehearsal-4" },
+    },
+  );
   if (late.status === 201) divergence.push("a message sent after the snapshot");
-  const banned = await api(server.base, "PATCH", `/api/admin/users/${memberID}`, {
-    cookie: upgradedCookie,
-    body: { confirm: "member", is_banned: true, ban_reason: "after the snapshot" },
-  });
-  if (banned.status === 200) divergence.push("a ban applied after the snapshot");
-  check("the rehearsal recorded post-snapshot changes", divergence.length > 0, divergence.join(", "));
+  const banned = await api(
+    server.base,
+    "PATCH",
+    `/api/admin/users/${memberID}`,
+    {
+      cookie: upgradedCookie,
+      body: {
+        confirm: "member",
+        is_banned: true,
+        ban_reason: "after the snapshot",
+      },
+    },
+  );
+  if (banned.status === 200)
+    divergence.push("a ban applied after the snapshot");
+  check(
+    "the rehearsal recorded post-snapshot changes",
+    divergence.length > 0,
+    divergence.join(", "),
+  );
   await stopServer(server);
-  const oldOnMigrated = await startServerFailure(oldBinary, rollbackDir, path.join(workDir, "old-on-migrated.log"));
-  check("the prior release refuses to serve the migrated installation",
+  const oldOnMigrated = await startServerFailure(
+    oldBinary,
+    rollbackDir,
+    path.join(workDir, "old-on-migrated.log"),
+  );
+  check(
+    "the prior release refuses to serve the migrated installation",
     oldOnMigrated.failed && /schema/i.test(oldOnMigrated.output),
-    oldOnMigrated.output.trim().split("\n").at(-1)?.trim() || "no refusal reported");
+    oldOnMigrated.output.trim().split("\n").at(-1)?.trim() ||
+      "no refusal reported",
+  );
 
   say("");
   say("6. Roll back with the prior release and prove the data-loss boundary");
   copyFileSync(rollbackArchive, path.join(restoredDir, "rollback.zip"));
-  const oldRestore = await run(oldBinary, ["restore", "--data-dir", restoredDir, "--file", "rollback.zip"]);
-  check("the prior release restored its own archive", oldRestore.status === 0, `exit ${oldRestore.status}`);
-  const restoredPreflight = await run(candidateBinary, ["preflight", "--data-dir", restoredDir]);
-  const restoredReport = JSON.parse((restoredPreflight.stdout ?? "{}").replace(/^[^{]*/, ""));
-  check("the rollback folder is at the prior schema", restoredReport.schema_version === beforeReport.schema_version,
-    `schema ${restoredReport.schema_version} of ${restoredReport.supported_schema_version}`);
+  const oldRestore = await run(oldBinary, [
+    "restore",
+    "--data-dir",
+    restoredDir,
+    "--file",
+    "rollback.zip",
+  ]);
+  check(
+    "the prior release restored its own archive",
+    oldRestore.status === 0,
+    `exit ${oldRestore.status}`,
+  );
+  const restoredPreflight = await run(candidateBinary, [
+    "preflight",
+    "--data-dir",
+    restoredDir,
+  ]);
+  const restoredReport = JSON.parse(
+    (restoredPreflight.stdout ?? "{}").replace(/^[^{]*/, ""),
+  );
+  check(
+    "the rollback folder is at the prior schema",
+    restoredReport.schema_version === beforeReport.schema_version,
+    `schema ${restoredReport.schema_version} of ${restoredReport.supported_schema_version}`,
+  );
   const restoredPort = await freePort();
-  server = await startServer(oldBinary, restoredDir, restoredPort, path.join(workDir, "restored.log"));
-  const restoredLogin = await loginWithFactor(server.base, "owner", password, ownerFactor);
-  check("the rollback folder signs the owner in", restoredLogin.status === 200 && restoredLogin.cookie !== null, `HTTP ${restoredLogin.status}`);
+  server = await startServer(
+    oldBinary,
+    restoredDir,
+    restoredPort,
+    path.join(workDir, "restored.log"),
+  );
+  const restoredLogin = await loginWithFactor(
+    server.base,
+    "owner",
+    password,
+    ownerFactor,
+  );
+  check(
+    "the rollback folder signs the owner in",
+    restoredLogin.status === 200 && restoredLogin.cookie !== null,
+    `HTTP ${restoredLogin.status}`,
+  );
   const restoredCookie = restoredLogin.cookie;
-  const restoredHistory = await api(server.base, "GET", `/api/channels/${channel.id}/messages`, { cookie: restoredCookie });
-  const restoredTexts = (restoredHistory.body ?? []).map((message) => message.content ?? "");
-  check("the rollback folder serves the snapshot's messages", restoredTexts.some((text) => text.includes(marker)),
-    `${restoredTexts.length} messages`);
-  check("the rollback folder does not contain the later message",
-    divergence.includes("a message sent after the snapshot") ? !restoredTexts.includes(lateMessage) : true,
-    "the rollback boundary is the snapshot, not the current installation");
-  const restoredAttachment = await bytes(server.base, `/api/uploads/${uploadID}`, restoredCookie);
-  check("the rollback folder serves the same attachment bytes",
-    restoredAttachment.status === 200 && sha256(restoredAttachment.buffer) === originalDigest,
-    `HTTP ${restoredAttachment.status}, sha256 ${sha256(restoredAttachment.buffer).slice(0, 12)}`);
-  const restoredUsers = await api(server.base, "GET", "/api/admin/users", { cookie: restoredCookie });
-  const restoredMember = (restoredUsers.body ?? []).find((entry) => entry.username === "member");
-  check("the rollback folder keeps the member account", Boolean(restoredMember), `HTTP ${restoredUsers.status}`);
-  check("the rollback folder does not contain the later ban",
-    divergence.includes("a ban applied after the snapshot") ? restoredMember?.is_banned === false : true,
-    `is_banned ${restoredMember?.is_banned}`);
-  const restoredPins = await api(server.base, "GET", `/api/channels/${channel.id}/pins`, { cookie: restoredCookie });
-  check("the rollback folder keeps the pin", (restoredPins.body?.length ?? 0) === dataset.pins,
-    `${restoredPins.body?.length ?? 0} pins`);
-  const restoredInvitations = await api(server.base, "GET", "/api/admin/invitations", { cookie: restoredCookie });
-  check("the rollback folder keeps the invitation", (restoredInvitations.body?.length ?? 0) === dataset.invitations,
-    `${restoredInvitations.body?.length ?? 0} invitations`);
+  const restoredHistory = await api(
+    server.base,
+    "GET",
+    `/api/channels/${channel.id}/messages`,
+    { cookie: restoredCookie },
+  );
+  const restoredTexts = (restoredHistory.body ?? []).map(
+    (message) => message.content ?? "",
+  );
+  check(
+    "the rollback folder serves the snapshot's messages",
+    restoredTexts.some((text) => text.includes(marker)),
+    `${restoredTexts.length} messages`,
+  );
+  check(
+    "the rollback folder does not contain the later message",
+    divergence.includes("a message sent after the snapshot")
+      ? !restoredTexts.includes(lateMessage)
+      : true,
+    "the rollback boundary is the snapshot, not the current installation",
+  );
+  const restoredAttachment = await bytes(
+    server.base,
+    `/api/uploads/${uploadID}`,
+    restoredCookie,
+  );
+  check(
+    "the rollback folder serves the same attachment bytes",
+    restoredAttachment.status === 200 &&
+      sha256(restoredAttachment.buffer) === originalDigest,
+    `HTTP ${restoredAttachment.status}, sha256 ${sha256(restoredAttachment.buffer).slice(0, 12)}`,
+  );
+  const restoredUsers = await api(server.base, "GET", "/api/admin/users", {
+    cookie: restoredCookie,
+  });
+  const restoredMember = (restoredUsers.body ?? []).find(
+    (entry) => entry.username === "member",
+  );
+  check(
+    "the rollback folder keeps the member account",
+    Boolean(restoredMember),
+    `HTTP ${restoredUsers.status}`,
+  );
+  check(
+    "the rollback folder does not contain the later ban",
+    divergence.includes("a ban applied after the snapshot")
+      ? restoredMember?.is_banned === false
+      : true,
+    `is_banned ${restoredMember?.is_banned}`,
+  );
+  const restoredPins = await api(
+    server.base,
+    "GET",
+    `/api/channels/${channel.id}/pins`,
+    { cookie: restoredCookie },
+  );
+  check(
+    "the rollback folder keeps the pin",
+    (restoredPins.body?.length ?? 0) === dataset.pins,
+    `${restoredPins.body?.length ?? 0} pins`,
+  );
+  const restoredInvitations = await api(
+    server.base,
+    "GET",
+    "/api/admin/invitations",
+    { cookie: restoredCookie },
+  );
+  check(
+    "the rollback folder keeps the invitation",
+    (restoredInvitations.body?.length ?? 0) === dataset.invitations,
+    `${restoredInvitations.body?.length ?? 0} invitations`,
+  );
   if (dataset.second_factor) {
-    const restoredFactorStep = await api(server.base, "POST", "/api/login", { body: { username: "owner", password } });
-    check("the rollback folder still requires the enrolled factor",
-      restoredFactorStep.body?.second_factor_required === true, `HTTP ${restoredFactorStep.status}`);
-    check("the rollback folder accepts the factor the baseline enrolled",
-      restoredLogin.cookie !== null, "the sign-in above used the baseline's own code");
+    const restoredFactorStep = await api(server.base, "POST", "/api/login", {
+      body: { username: "owner", password },
+    });
+    check(
+      "the rollback folder still requires the enrolled factor",
+      restoredFactorStep.body?.second_factor_required === true,
+      `HTTP ${restoredFactorStep.status}`,
+    );
+    check(
+      "the rollback folder accepts the factor the baseline enrolled",
+      restoredLogin.cookie !== null,
+      "the sign-in above used the baseline's own code",
+    );
   }
   await stopServer(server);
 
@@ -753,7 +1145,11 @@ async function main() {
   // timing and would be evidence of the machine's speed rather than of the product.
   const sqlite = await run("sqlite3", ["-version"]);
   if (sqlite.status !== 0) {
-    record("an interrupted upgrade is repaired and verified", false, "sqlite3 is not available on this host");
+    record(
+      "an interrupted upgrade is repaired and verified",
+      false,
+      "sqlite3 is not available on this host",
+    );
   } else {
     const interruptedDir = path.join(workDir, "interrupted");
     cpSync(rollbackDir, interruptedDir, { recursive: true });
@@ -765,12 +1161,22 @@ async function main() {
       `INSERT INTO settings(key,value,updated_at) VALUES('upgrade-state','${upgradeState}','${new Date().toISOString()}')` +
         " ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
     ]);
-    check("the interrupted upgrade state was injected", injected.status === 0, (injected.stderr ?? "").trim());
-    const refused = await run(candidateBinary, ["verify", "--data-dir", interruptedDir]);
+    check(
+      "the interrupted upgrade state was injected",
+      injected.status === 0,
+      (injected.stderr ?? "").trim(),
+    );
+    const refused = await run(candidateBinary, [
+      "verify",
+      "--data-dir",
+      interruptedDir,
+    ]);
     const refusal = `${refused.stdout ?? ""}${refused.stderr ?? ""}`;
-    check("verification refuses an unfinished upgrade instead of reporting it as done",
+    check(
+      "verification refuses an unfinished upgrade instead of reporting it as done",
       refused.status !== 0 && /has not finished/.test(refusal),
-      refusal.trim().split("\n").at(-1)?.trim() || "no refusal reported");
+      refusal.trim().split("\n").at(-1)?.trim() || "no refusal reported",
+    );
     // The search index is derived data, so an interruption can leave it stale as well as
     // owed. It is emptied here so the repair is observable: a postcondition that ran but
     // did nothing would otherwise look the same as one that worked. Counting rows is not
@@ -782,41 +1188,89 @@ async function main() {
       databaseFile,
       `SELECT count(*) FROM message_fts WHERE message_fts MATCH 'rehearsal';`,
     ]);
-    check("the injected index damage is real", (damaged.stdout ?? "").trim() === "0",
-      `${(damaged.stdout ?? "").trim()} matches for the indexed word`);
+    check(
+      "the injected index damage is real",
+      (damaged.stdout ?? "").trim() === "0",
+      `${(damaged.stdout ?? "").trim()} matches for the indexed word`,
+    );
     const repairPort = await freePort();
-    server = await startServer(candidateBinary, interruptedDir, repairPort, path.join(workDir, "repair.log"));
-    const repairedLogin = await loginWithFactor(server.base, "owner", password, ownerFactor);
-    const repairedSearch = await api(server.base, "GET", `/api/search?q=${encodeURIComponent(marker)}`, {
-      cookie: repairedLogin.cookie,
-    });
-    check("the repaired installation searches the pre-upgrade content again",
+    server = await startServer(
+      candidateBinary,
+      interruptedDir,
+      repairPort,
+      path.join(workDir, "repair.log"),
+    );
+    const repairedLogin = await loginWithFactor(
+      server.base,
+      "owner",
+      password,
+      ownerFactor,
+    );
+    const repairedSearch = await api(
+      server.base,
+      "GET",
+      `/api/search?q=${encodeURIComponent(marker)}`,
+      {
+        cookie: repairedLogin.cookie,
+      },
+    );
+    check(
+      "the repaired installation searches the pre-upgrade content again",
       Array.isArray(repairedSearch.body) && repairedSearch.body.length >= 1,
-      `sign-in HTTP ${repairedLogin.status}, search HTTP ${repairedSearch.status}, ${Array.isArray(repairedSearch.body) ? repairedSearch.body.length : repairedSearch.text.slice(0, 80)}`);
+      `sign-in HTTP ${repairedLogin.status}, search HTTP ${repairedSearch.status}, ${Array.isArray(repairedSearch.body) ? repairedSearch.body.length : repairedSearch.bytes.toString().slice(0, 80)}`,
+    );
     await stopServer(server);
     const rebuilt = await run("sqlite3", [
       databaseFile,
       `SELECT count(*) FROM message_fts WHERE message_fts MATCH 'rehearsal';`,
     ]);
-    check("the postconditions rebuilt the search index from the messages that survived",
+    check(
+      "the postconditions rebuilt the search index from the messages that survived",
       Number((rebuilt.stdout ?? "").trim()) >= dataset.messages,
-      `${(rebuilt.stdout ?? "").trim()} matches after the repair`);
-    const repaired = await run(candidateBinary, ["verify", "--data-dir", interruptedDir]);
-    check("starting the server completes and verifies the upgrade", repaired.status === 0,
-      (repaired.stdout ?? repaired.stderr ?? "").trim().split("\n").at(-1)?.trim());
-    const remaining = await run("sqlite3", [databaseFile, "SELECT count(*) FROM settings WHERE key='upgrade-state';"]);
-    check("the marker is cleared once the postconditions pass", (remaining.stdout ?? "").trim() === "0",
-      `rows ${(remaining.stdout ?? "").trim()}`);
-    record("an interrupted upgrade is repaired and verified", true,
-      "marker state injected between the migration and its postconditions");
+      `${(rebuilt.stdout ?? "").trim()} matches after the repair`,
+    );
+    const repaired = await run(candidateBinary, [
+      "verify",
+      "--data-dir",
+      interruptedDir,
+    ]);
+    check(
+      "starting the server completes and verifies the upgrade",
+      repaired.status === 0,
+      (repaired.stdout ?? repaired.stderr ?? "")
+        .trim()
+        .split("\n")
+        .at(-1)
+        ?.trim(),
+    );
+    const remaining = await run("sqlite3", [
+      databaseFile,
+      "SELECT count(*) FROM settings WHERE key='upgrade-state';",
+    ]);
+    check(
+      "the marker is cleared once the postconditions pass",
+      (remaining.stdout ?? "").trim() === "0",
+      `rows ${(remaining.stdout ?? "").trim()}`,
+    );
+    record(
+      "an interrupted upgrade is repaired and verified",
+      true,
+      "marker state injected between the migration and its postconditions",
+    );
   }
 
   say("");
   const failed = checks.filter((entry) => !entry.ok);
-  say(`Rehearsal ${failed.length === 0 ? "PASS" : "FAIL"}: ${checks.length} checks, ${failed.length} failed.`);
-  say(`Compatibility: ${oldVersion} (schema ${beforeReport.schema_version}, backup format ${rollbackFormat?.[1] ?? "?"}) -> ` +
-    `${candidateVersion} (schema ${beforeReport.supported_schema_version}, backup format ${candidateFormat?.[1] ?? "?"}).`);
-  say(`Rollback source: ${platform.os}/${platform.arch} archive of ${oldVersion}, sha256 ${rollbackDigest.slice(0, 16)}…`);
+  say(
+    `Rehearsal ${failed.length === 0 ? "PASS" : "FAIL"}: ${checks.length} checks, ${failed.length} failed.`,
+  );
+  say(
+    `Compatibility: ${oldVersion} (schema ${beforeReport.schema_version}, backup format ${rollbackFormat?.[1] ?? "?"}) -> ` +
+      `${candidateVersion} (schema ${beforeReport.supported_schema_version}, backup format ${candidateFormat?.[1] ?? "?"}).`,
+  );
+  say(
+    `Rollback source: ${platform.os}/${platform.arch} archive of ${oldVersion}, sha256 ${rollbackDigest.slice(0, 16)}…`,
+  );
 
   const summary = {
     rehearsal: "upgrade-rollback",
@@ -846,17 +1300,25 @@ async function main() {
         written_by: "the prior release, from the un-migrated installation",
       },
       candidate: {
-        bytes: existsSync(candidateArchive) ? statSync(candidateArchive).size : 0,
-        sha256: existsSync(candidateArchive) ? fileDigest(candidateArchive) : "",
+        bytes: existsSync(candidateArchive)
+          ? statSync(candidateArchive).size
+          : 0,
+        sha256: existsSync(candidateArchive)
+          ? fileDigest(candidateArchive)
+          : "",
         format: candidateFormat ? Number(candidateFormat[1]) : null,
-        schema: candidateSnapshotSchema ? Number(candidateSnapshotSchema[1]) : null,
-        prior_reader_compatible: !newerCandidateFormat && oldRestoreOfCandidate.status === 0,
+        schema: candidateSnapshotSchema
+          ? Number(candidateSnapshotSchema[1])
+          : null,
+        prior_reader_compatible:
+          !newerCandidateFormat && oldRestoreOfCandidate.status === 0,
         written_by: "the candidate, from the same un-migrated installation",
       },
     },
     dataset,
     boundary: {
-      snapshot: "the prior release's archive is the only supported rollback source",
+      snapshot:
+        "the prior release's archive is the only supported rollback source",
       divergence,
       consequence:
         "a rollback returns the installation to the snapshot: the recorded changes above are lost, and " +
@@ -866,7 +1328,11 @@ async function main() {
     checks,
     transcript,
   };
-  if (options.report) writeFileSync(path.resolve(options.report), `${JSON.stringify(summary, null, 2)}\n`);
+  if (options.report)
+    writeFileSync(
+      path.resolve(options.report),
+      `${JSON.stringify(summary, null, 2)}\n`,
+    );
   return { summary, workDir };
 }
 
@@ -875,7 +1341,10 @@ async function main() {
 // behaviour, and it must print a reason rather than start anyway.
 async function startServerFailure(binary, dataDir, logFile) {
   const port = await freePort();
-  const child = spawn(binary, ["serve"], { env: serverEnv(dataDir, port), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, ["serve"], {
+    env: serverEnv(dataDir, port),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   trackChild(child);
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk));
@@ -895,7 +1364,8 @@ async function startServerFailure(binary, dataDir, logFile) {
     }
     await new Promise((done) => setTimeout(done, 200));
   }
-  if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  if (child.exitCode === null && child.signalCode === null)
+    child.kill("SIGTERM");
   await Promise.race([
     new Promise((done) => {
       if (child.exitCode !== null || child.signalCode !== null) done();
@@ -913,10 +1383,13 @@ try {
   outcome = await main();
 } catch (error) {
   console.error(`\nRehearsal stopped: ${error.message}`);
-  console.error(`Workspace kept for inspection: ${workDirForCleanup ?? "(not created)"}`);
+  console.error(
+    `Workspace kept for inspection: ${workDirForCleanup ?? "(not created)"}`,
+  );
   killLiveChildren();
   process.exit(1);
 }
-if (!options.keep && outcome.summary.passed) rmSync(outcome.workDir, { recursive: true, force: true });
+if (!options.keep && outcome.summary.passed)
+  rmSync(outcome.workDir, { recursive: true, force: true });
 else say(`Workspace kept: ${outcome.workDir}`);
 process.exitCode = outcome.summary.passed ? 0 : 1;

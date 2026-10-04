@@ -71,6 +71,13 @@ capacity-load:
 	node scripts/capacity-load.mjs --base '$(CAPACITY_BASE)' --cookie '$(COOKIE)' \
 		--clients $(or $(CLIENTS),100) --duration $(or $(DURATION),7200) \
 		--report '$(or $(REPORT),planning/m5-checkpoint/load.json)' --label '$(or $(LABEL),make)' 
+# Runs the documented encrypted off-host backup procedure end to end on disposable data
+# directories: back up, encrypt off the host, delete the plaintext, restore only from the
+# encrypted copy, and prove the message and attachment bytes survived.
+rehearsal-encrypted:
+	$(GO) build -o dist/brrpbrrp-rehearsal ./cmd/brrpbrrp
+	node scripts/backup-encrypted-rehearsal.mjs --binary dist/brrpbrrp-rehearsal
+
 # An external probe for a deployment this repository does not control. Point it at the
 # hostname a member uses, not at localhost: what it checks is the edge — the proxy, the
 # certificate, the asset cache, the websocket upgrade.

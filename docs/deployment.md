@@ -117,6 +117,69 @@ The `production-check --config PATH` command is safe while the service is runnin
 | `BRRP_VOICE_PORT_MIN` / `BRRP_VOICE_PORT_MAX` | UDP 50000–50100 |
 | `BRRP_BACKUP_COPY_DIR` | Optional absolute destination for extra copies; grant the service account write access |
 
+## Keeping a copy that is not on the server
+
+`BRRP_BACKUP_COPY_DIR` copies each verified backup to a second destination, and a second
+folder on the same disk is not disaster recovery: the disaster that takes the server takes
+that folder with it. The copy that matters is encrypted and off the host.
+
+The server cannot do this part itself, because it must not hold the key that opens it. So
+the procedure is three steps, and the key custody rules are the ones that matter:
+
+1. **The server writes a verified archive.** Scheduled backups (or
+   `brrpbrrp backup --data-dir … --out backups/name.zip`) and every archive is verified
+   entry-by-entry against its manifest. `BRRP_BACKUP_COPY_DIR` can carry it to a staging
+   folder on a separate disk.
+2. **Something that is not the server encrypts it before it leaves.** The recommended tool
+   is [age](https://age-encryption.org/), because the server only ever needs a *public*
+   recipient key:
+
+   ```console
+   $ age-keygen -o ~/brrp-backup-identity.txt          # on the operator's own machine, once
+   # the public key is printed; put only that in /etc/brrpbrrp/backup-recipient.txt on the server
+   $ age --encrypt --recipients-file /etc/brrpbrrp/backup-recipient.txt \
+         --output "$STAGING/brrp-$(date +%F).zip.age" "$STAGING/brrp-$(date +%F).zip"
+   $ rm "$STAGING/brrp-$(date +%F).zip"
+   ```
+
+   `gpg --encrypt --recipient <keyid>` with a keyring of its own works the same way. If
+   neither is installed, `openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt` with the
+   passphrase read from a file (`-pass file:…`) is the fallback that is on every host —
+   with one trade-off to know: `openssl enc` has no authenticated mode, so a corrupted or
+   wrong-key ciphertext is not detected by the tool itself. The archive's own manifest is
+   what catches it, when `brrpbrrp verify-backup` runs after decryption.
+3. **The encrypted copy is the copy.** Delete the plaintext staging file in the same step
+   that encrypts it, or the procedure is theatre.
+
+**Key custody.** The private key — the age identity, the gpg keyring, the openssl
+passphrase — never lives on the server: the server holds only the public recipient, which
+can encrypt and cannot decrypt. Keep at least two copies of the private key, in two places
+that do not fail together (a password manager and an offline copy held by a second person),
+and record who holds them in the recovery plan. The backups are only as recoverable as that
+key is findable by somebody other than the one person who set it up.
+
+**If the key is lost**, the encrypted copies are unrecoverable — there is no recovery path
+and no backdoor, by design. What remains is the most recent archive that is still on the
+host and any plaintext copy still inside the retention window; the encrypted copies stay
+useless forever. Treat a lost key as an incident: rotate to a new key pair, keep the old
+ciphertext in case the key resurfaces, and take a fresh backup immediately.
+
+**To restore**, on the new host:
+
+```console
+$ age --decrypt --identity ~/brrp-backup-identity.txt --output restore.zip brrp-2026-10-03.zip.age
+$ brrpbrrp restore --data-dir /var/lib/brrpbrrp --file restore.zip
+$ brrpbrrp verify --data-dir /var/lib/brrpbrrp
+```
+
+Then start the server and prove it: sign in, search for a known message, download an
+attachment and compare its bytes.
+
+`node scripts/backup-encrypted-rehearsal.mjs` runs exactly those steps against a real
+installation — including deleting the plaintext and restoring only from the encrypted copy —
+and reports which tool it exercised. It is part of the release evidence, not a suggestion:
+a procedure nobody has run is a procedure that does not work.
+
 ## Watching a running server
 
 Two things answer "is this installation healthy", and they answer different questions.

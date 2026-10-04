@@ -1481,6 +1481,57 @@ owner's decisions have already fixed and the ones with no external dependency.
   storage of these numbers — the endpoint answers "is it healthy now", and trending needs a
   scraper the operator supplies.
 
+### 11m. ENG-15 — the encrypted copy that is not on the server, and a rehearsal that runs the documented steps
+
+- **What the row asks for.** An encrypted off-host backup procedure using established
+  operator tooling, with key custody and key-loss handling written down, and a *second
+  directory that restores from the encrypted copy using only the documented steps*.
+- **The procedure.** `docs/deployment.md` now has a section that names three tools in
+  order: **age** first, because the server only ever needs a public recipient key and the
+  identity never leaves the operator's machine; **gpg** next, driven through a keyring of
+  its own; and **openssl** last, because `enc -aes-256-cbc -pbkdf2 -iter 600000` is on
+  every host but has **no authenticated mode** — the trade-off is stated, and the archive's
+  own manifest (which `verify-backup` checks) is what catches a corrupted or wrong-key
+  ciphertext afterwards. The document is explicit that the encrypted copy is the copy: the
+  plaintext staging file is deleted in the same step that encrypts it, or the procedure is
+  theatre.
+- **Key custody and key loss.** The private key never lives on the server — the server holds
+  only a public recipient. Two copies of the key, in two places that do not fail together,
+  with the holder recorded in the recovery plan. If the key is lost the encrypted copies are
+  unrecoverable, with no backdoor, by design: the page says what remains (the most recent
+  on-host archive and anything still inside the retention window), and treats a lost key as
+  an incident with a rotation step.
+- **`scripts/backup-encrypted-rehearsal.mjs`** runs exactly those steps against a real
+  installation: install, write a message and an attachment through the API, back up and
+  verify, copy the archive to a second directory, encrypt it there with the documented
+  command, **delete the plaintext**, then decrypt into a fresh destination and restore from
+  that — proving the decrypted archive is byte-identical to the original, the restored
+  database verifies, and the message and attachment bytes survived. It generates its key
+  material rather than writing a made-up recipient, since a rehearsal that would fail on a
+  machine that actually has `age` proves the opposite of what it claims, and it records in
+  its report which tool it exercised. On this machine that is `openssl`; `make
+  rehearsal-encrypted` runs it.
+- **The scaffolding is now shared.** Three rehearsals had grown their own copies of the
+  server lifecycle, the teardown backstop and the API client — including the teardown fix
+  that stopped ten orphaned servers from a previous session. They now import
+  `scripts/rehearsal-kit.mjs`; migrating them found three real drifts that the copies had
+  hidden: the private rehearsal's server environment (the private gate and the raised
+  sign-in throttle) would have been silently dropped by the kit's defaults, the rollback
+  rehearsal's `api` returned the body as text where the kit returns bytes, and its
+  expected-failure path needed the kit's `serverEnv`. Each is fixed where it belongs, and
+  all three rehearsals were re-run to prove the migration rather than to assume it.
+- **Commands and results.** Encrypted rehearsal **18 checks, 0 failed** (openssl path);
+  community rehearsal **23 checks, 0 failed**; private rehearsal **172 checks, 0 failed**;
+  rollback rehearsal **57 checks, 0 failed** (0.4.0-alpha.7 → alpha.8, schema 21 → 25);
+  frontend unit tests and `svelte-check` clean. `planning/m5-checkpoint/encrypted-backup-rehearsal.json`
+  is the report.
+- **What it does not prove, and the row cannot yet claim.** Two directories and one machine
+  are still not off-host recovery: a *separate host* (or object storage) holding the
+  encrypted copy, with retrieval over the network, is Phase D and needs the owner's
+  infrastructure. The `age` and `gpg` paths are implemented in the rehearsal but were
+  exercised here only through `openssl`, because neither tool is installed on this machine —
+  the report records which one ran, and a host with either will exercise that path.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
@@ -1490,8 +1541,9 @@ limit), **ENG-11** (the reconnect policy), **ENG-12** (the protocol handshake), 
 (the storage quota, the disk guard and the single-sourced limits), **ENG-08**
 (emphasis and block quotes), **ENG-09** (the member profile surface), **ENG-10**
 (Back and Forward between conversations), **ENG-04** (viewer controls and the phone
-layout), **ENG-06** (output selection and the measured rejoin budget) and **ENG-14**
-(operator metrics and the external probe).
+layout), **ENG-06** (output selection and the measured rejoin budget), **ENG-14**
+(operator metrics and the external probe) and **ENG-15** (the encrypted off-host backup
+procedure and its rehearsal).
 
 Still open, in the order they are worth taking:
 
