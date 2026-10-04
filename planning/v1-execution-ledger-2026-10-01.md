@@ -1810,6 +1810,23 @@ owner's decisions have already fixed and the ones with no external dependency.
   measurement is the first hosted run's second artifact (after a green one).
 
 
+### 11v. The core journeys run under WebKit, and a real engine difference is recorded
+
+- **What Phase C item 4 is.** A Playwright `release-webkit` project (gated
+  `BRRP_E2E_WEBKIT=1` like the Firefox voice pass) running the core journeys' subset from
+  `release.spec.mjs` under Safari's engine: setup, export, the accessibility sweep, the
+  permalink and upload, Arabic, Back/Forward, and the phone viewport. The exclusion
+  *by grep of journey titles* is deliberate and written in the config: journeys that drive
+  offline/recovery (`setOffline`) or media/setup counts are excluded because WebKit's
+  emulation of them differs at the protocol level, and a run that silently skipped would
+  pass nothing real. First run on this machine: **10 journeys passed**.
+- **How the harness carries the flag.** `web/e2e/run.mjs` forwards `BRRP_E2E_WEBKIT` by
+  name — the suite's account setup goes through the Chromium `release` dependency, so one
+  invocation holds a single playewright configuration and the WebKit pass reads the same
+  installation it would in production. The same harness-origin pattern the Firefox pass
+  uses, recorded so a runner that forgets it fails loudly rather than testing nothing.
+
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,

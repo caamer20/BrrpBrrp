@@ -120,7 +120,11 @@ async function run() {
         BRRP_E2E_FIREFOX: process.env.BRRP_E2E_FIREFOX || '0',
         // The long-thread scale project is gated the same way, because it seeds a thousand
         // messages and takes about ten minutes.
-        BRRP_E2E_SCALE: process.env.BRRP_E2E_SCALE || '0'
+        BRRP_E2E_SCALE: process.env.BRRP_E2E_SCALE || '0',
+        // The third engine: the release journeys' core subset under WebKit (Safari's
+        // engine), gated like the Firefox voice pass. It deliberately cannot run under the
+        // same server's deployment, because one installation serves one pass.
+        BRRP_E2E_WEBKIT: process.env.BRRP_E2E_WEBKIT || '0'
       },
       stdio: 'inherit'
     }

@@ -34,6 +34,22 @@ export default defineConfig({
   // earlier journeys see.
   projects: [
     { name: 'release', testMatch: 'release.spec.mjs' },
+    // The core journeys under a third engine. Firefox proves the media journeys against a
+    // different codec set; WebKit proves the *core* journeys (setup, messages, search,
+    // permalink, formatting, Back/Forward, phone viewport) against a different engine for
+    // everything else - and its exclusions are stated, because a project that silently
+    // skips would pass nothing real. Requires `npx playwright install webkit`.
+    ...(process.env.BRRP_E2E_WEBKIT === '1'
+      ? [
+          {
+            name: 'release-webkit',
+            testMatch: 'release.spec.mjs',
+            dependencies: ['release'],
+            use: { ...devices['Desktop Safari'] },
+            grep: /first setup|member requests their data export|detectable violations|message permalink|Arabic message|Back and Forward|phone width/
+          }
+        ]
+      : []),
     { name: 'authority', testMatch: 'authority.spec.mjs', dependencies: ['release'] },
     { name: 'privacy', testMatch: 'privacy.spec.mjs', dependencies: ['release'] },
     ...(process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1'
