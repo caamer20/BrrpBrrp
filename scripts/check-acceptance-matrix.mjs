@@ -84,6 +84,18 @@ function unescapeQuotes(text) {
   return text.replace(/\\'/g, "'");
 }
 
+/** The journey ids the plan's §3.3 catalog declares. */
+export function journeyCatalogFromPlan(planText) {
+  const ids = new Set();
+  const section = planText.slice(planText.indexOf("### 3.3"));
+  for (const line of section.split("\n")) {
+    const match = /^\|\s*(J-\d\d)\b/.exec(line);
+    if (match) ids.add(match[1]);
+    if (line.startsWith("## ")) break;
+  }
+  return ids;
+}
+
 export function checkMatrix({ planText, matrix, base = root }) {
   const problems = [];
   const catalog = catalogFromPlan(planText);
@@ -93,6 +105,54 @@ export function checkMatrix({ planText, matrix, base = root }) {
   for (const id of catalog) {
     if (!(id in scenarios))
       problems.push(`${id} is in the plan and absent from the matrix`);
+  }
+  // The journey half: J-01..J-10 are the plan's §3.3 required end-to-end journeys, and a
+  // matrix of scenario tests without them proves the parts separately from the walks.
+  const journeyCatalog = journeyCatalogFromPlan(planText);
+  const journeyRows = matrix.journeys ?? {};
+  for (const id of journeyCatalog) {
+    if (!(id in journeyRows))
+      problems.push(
+        `${id} is in the plan's journey catalog and absent from the matrix`,
+      );
+  }
+  for (const id of Object.keys(journeyRows)) {
+    if (!journeyCatalog.has(id))
+      problems.push(
+        `${id} is in the matrix and not in the plan's journey catalog`,
+      );
+    const entry = journeyRows[id] ?? {};
+    const checks = entry.checks ?? [];
+    const owed = entry.owed ?? [];
+    if (checks.length === 0 && owed.length === 0)
+      problems.push(
+        `${id} names no check and nothing owed: a journey cannot be empty`,
+      );
+    for (const reference of checks) {
+      const problem = checkExists(reference, base);
+      if (problem) problems.push(`${id}: ${problem}`);
+    }
+    for (const item of owed) {
+      if (typeof item !== "string" || item.length < 20)
+        problems.push(
+          `${id}: an owed entry must say what is missing and where it belongs`,
+        );
+    }
+  }
+  const stamp = matrix.measured_over;
+  if (!stamp) {
+    problems.push(
+      "the matrix has no measured_over stamp recording when the gate set last ran and at which commit",
+    );
+  } else {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stamp.at ?? ""))
+      problems.push("measured_over.at must be an ISO date (YYYY-MM-DD)");
+    if (!/^[0-9a-f]{7,40}$/.test(stamp.commit ?? ""))
+      problems.push("measured_over.commit must be a git commit id");
+    if (typeof stamp.note !== "string" || stamp.note.length < 20)
+      problems.push(
+        "measured_over.note must say what the stamp's coverage does not claim",
+      );
   }
   for (const id of Object.keys(scenarios)) {
     if (!catalog.has(id))
@@ -132,6 +192,14 @@ export function checkMatrix({ planText, matrix, base = root }) {
     owedScenarios: Object.entries(scenarios)
       .filter(([, entry]) => (entry.owed ?? []).length > 0)
       .map(([id]) => id),
+    journeys: journeyCatalog.size,
+    journeysWith: Object.values(journeyRows).filter(
+      (entry) => (entry.checks ?? []).length > 0,
+    ).length,
+    journeysOwed: Object.entries(journeyRows).reduce(
+      (total, [, entry]) => total + (entry.owed ?? []).length,
+      0,
+    ),
   };
 }
 
@@ -149,8 +217,8 @@ export async function main(argv, base = root) {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `Acceptance matrix: ${result.scenarios} scenarios, ${result.checks} named checks, ` +
-        `${result.owed} owed item(s) across ${result.owedScenarios.length} scenario(s).`,
+      `Acceptance matrix: ${result.scenarios} scenarios with ${result.checks} named checks (${result.owed} owed item(s) across ${result.owedScenarios.length} scenario(s)); ` +
+        `${result.journeys} journeys, ${result.journeysWith} with named coverage, ${result.journeysOwed} owed journey item(s).`,
     );
     for (const id of result.owedScenarios) {
       const entry = matrix.scenarios[id];

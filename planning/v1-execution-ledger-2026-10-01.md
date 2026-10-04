@@ -1772,6 +1772,22 @@ owner's decisions have already fixed and the ones with no external dependency.
   Phase C item waiting on the owner's remote.
 
 
+### 11t. The acceptance matrix covers the J-01–J-10 journeys and carries its own measurement stamp
+
+- **What phase C, item 2 asks for beyond the scenario half:** the journeys. The matrix now
+  has a `journeys` section for J-01–J-10 (read from the plan's §3.3 catalog, so a journey
+  the plan doesn't declare fails too), each with named checks and the same owed-item rule;
+  ten journeys, ten with named coverage, eight with owed items that name what physical
+  work remains (a real second device for where-you-left-off, a human reviewer for evidence
+  review, the owner's remote for the contributor route). A `measured_over` stamp records
+  when the gate set last ran and at which commit, with its note that the stamp measures,
+  not passes.
+- **Self-test coverage grew with the gate's own failure modes:** a missing journey row, a
+  journey the plan doesn't declare, an empty journey, a malformed stamp, and the anchor
+  between the two catalogs (a J- id must never read as a scenario). 13 self-tests, 356
+  frontend tests green.
+
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,

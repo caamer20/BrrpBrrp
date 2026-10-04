@@ -1,6 +1,6 @@
 {
-  "$comment": "Machine-checked by scripts/check-acceptance-matrix.mjs, which runs in make check and in CI. Every id is from docs/v1-implementation-plan.md §11.2; every check named here is looked up where it lives, so a renamed or deleted test fails the build. `owed` says what is missing and which phase owns it — the plan's G0-G8 gates and phases A-I.",
-  "generated_from": "docs/v1-implementation-plan.md §11.2 (Mandatory scenario catalog)",
+  "$comment": "Machine-checked by scripts/check-acceptance-matrix.mjs, which runs in make check and in CI. Every id is from docs/v1-implementation-plan.md \u00a711.2; every check named here is looked up where it lives, so a renamed or deleted test fails the build. `owed` says what is missing and which phase owns it \u2014 the plan's G0-G8 gates and phases A-I.",
+  "generated_from": "docs/v1-implementation-plan.md \u00a711.2 (Mandatory scenario catalog)",
   "scenarios": {
     "T-AUTH-01": {
       "checks": [
@@ -70,7 +70,7 @@
         "directs.spec.mjs::two members talk in a group through the interface without reloading"
       ],
       "owed": [
-        "Phase D: blocking during a live private call on physical devices — the server half is proven, the media half needs two real clients."
+        "Phase D: blocking during a live private call on physical devices \u2014 the server half is proven, the media half needs two real clients."
       ]
     },
     "T-GROUP-01": {
@@ -93,7 +93,7 @@
         "privacy.spec.mjs::refused sends offer complete recoverable text without retrying or replacing drafts"
       ],
       "owed": [
-        "Phase C: the 1,000-send scale run itself — concurrency and idempotency are proven at the operation level, and the plan's figure needs a load run recorded against a frozen candidate."
+        "Phase C: the 1,000-send scale run itself \u2014 concurrency and idempotency are proven at the operation level, and the plan's figure needs a load run recorded against a frozen candidate."
       ]
     },
     "T-CHAT-02": {
@@ -131,7 +131,7 @@
         "release.spec.mjs::the service worker claims one notice per event across tabs and sweeps its keys"
       ],
       "owed": [
-        "Phase D: a closed PWA on a physical phone — the retained store and the claim are proven, the operating system's delivery is not."
+        "Phase D: a closed PWA on a physical phone \u2014 the retained store and the claim are proven, the operating system's delivery is not."
       ]
     },
     "T-NOTIFY-02": {
@@ -170,7 +170,7 @@
         "voice.spec.mjs::a shared screen reaches another browser and stops cleanly"
       ],
       "owed": [
-        "Phase D: ten participants in a room and twenty server-wide for two hours on real hardware — the resource bounds are proven, the duration is not."
+        "Phase D: ten participants in a room and twenty server-wide for two hours on real hardware \u2014 the resource bounds are proven, the duration is not."
       ]
     },
     "T-MEDIA-02": {
@@ -203,7 +203,7 @@
         "voice.spec.mjs::a call survives a severed connection and resumes inside the budget"
       ],
       "owed": [
-        "Phase D: restrictive NAT, UDP blocked, an IPv6 policy and the ten-second loss profile on real networks — the client's recovery is measured here, the network is not."
+        "Phase D: restrictive NAT, UDP blocked, an IPv6 policy and the ten-second loss profile on real networks \u2014 the client's recovery is measured here, the network is not."
       ]
     },
     "T-DATA-01": {
@@ -215,7 +215,7 @@
         "db::TestMigrationsAndSearchTriggers"
       ],
       "owed": [
-        "Phase D: the interruption and full-disk run against every fixture generation on the reference hosts — the disk-exhaustion path is rehearsed here on a fresh installation with its own control volume."
+        "Phase D: the interruption and full-disk run against every fixture generation on the reference hosts \u2014 the disk-exhaustion path is rehearsed here on a fresh installation with its own control volume."
       ]
     },
     "T-DATA-02": {
@@ -242,7 +242,7 @@
         "script:scripts/backup-encrypted-rehearsal.mjs"
       ],
       "owed": [
-        "Phase D: a restore onto a clean Windows host and a fresh Docker volume from an off-host encrypted copy — this needs the owner's hosts."
+        "Phase D: a restore onto a clean Windows host and a fresh Docker volume from an off-host encrypted copy \u2014 this needs the owner's hosts."
       ]
     },
     "T-INSTALL-01": {
@@ -273,20 +273,149 @@
         "release.spec.mjs::Back and Forward walk the conversations visited, and a revoked one is not shown"
       ],
       "owed": [
-        "Phase D: the human review — selected screen readers, zoom, forced colours and physical virtual keyboards, by an independent tester."
+        "Phase D: the human review \u2014 selected screen readers, zoom, forced colours and physical virtual keyboards, by an independent tester."
       ]
     },
     "T-SOAK-01": {
-      "checks": ["script:scripts/capacity-load.mjs"],
+      "checks": [
+        "script:scripts/capacity-load.mjs"
+      ],
       "owed": [
         "Phase D: the frozen mixed-load and failure program on each required host, with the pilot and release-candidate observation."
       ]
     },
     "T-RELEASE-01": {
-      "checks": ["script:scripts/release.go", "script:scripts/check-package.mjs"],
+      "checks": [
+        "script:scripts/release.go",
+        "script:scripts/check-package.mjs"
+      ],
       "owed": [
-        "Phase D: obtaining the actual published candidate on a clean consumer machine, verifying its provenance and digest, and installing it — this needs publication, which the owner controls."
+        "Phase D: obtaining the actual published candidate on a clean consumer machine, verifying its provenance and digest, and installing it \u2014 this needs publication, which the owner controls."
       ]
     }
+  },
+  "journeys": {
+    "J-01": {
+      "checks": [
+        "script:scripts/upgrade-recovery.mjs",
+        "installer::TestDataLockAndEnvironmentFile",
+        "app::TestLocalCertificatesHaveTrustableCAAndPreserveRootOnRepair",
+        "ownership.spec.mjs::ownership designation and transfer move the operator surface",
+        "api::TestBoundedInvitationAdmitsExactlyItsUses"
+      ],
+      "owed": [
+        "Phase D: trusted-HTTPS establishment with the local CA on the reference Windows and Docker hosts, and the 'no undocumented shell repair' audit on both."
+      ]
+    },
+    "J-02": {
+      "checks": [
+        "api::TestInvitationSingleUseAndDeactivation",
+        "api::TestAcknowledgmentIsDurableAndMonotonic",
+        "release.spec.mjs::first setup, persistent chat, search and sign-out",
+        "release.spec.mjs::the service worker claims one notice per event across tabs and sweeps its keys",
+        "api::TestMFAEnrollmentRecoveryAndSessionRevocation"
+      ],
+      "owed": [
+        "Phase D: a real second device session, so 'return on another device' is physical rather than two browser profiles."
+      ]
+    },
+    "J-03": {
+      "checks": [
+        "api::TestDirectConsentIsCanonicalExplicitAndNeverAdministrative",
+        "api::TestGroupMembershipRequiresTheRecipientsOwnAcceptance",
+        "api::TestGroupRemovalRevokesForwardAndKeepsThePastReadable",
+        "directs.spec.mjs::two members talk in a group through the interface without reloading",
+        "threads.spec.mjs::a thread a reader cannot reach is not found rather than forbidden"
+      ],
+      "owed": [
+        "Phase D: removal while a member is actively streaming a download or in a call on physical devices."
+      ]
+    },
+    "J-04": {
+      "checks": [
+        "threads.spec.mjs::a named thread is started, answered, listed and locked",
+        "threads.spec.mjs::a thread reply moves only the thread, and archiving closes replies until reopened",
+        "thread-scale.spec.mjs::a thousand replies are navigable, each appearing once, with the oldest reachable",
+        "api::TestReplyContextPinsAndDeletion"
+      ],
+      "owed": []
+    },
+    "J-05": {
+      "checks": [
+        "api::TestReportAssignmentIsAClaimNotAGrant",
+        "api::TestTimeoutSuspendsAndLiftsAtExpiryLeavingRolesAlone",
+        "privacy.spec.mjs::member reports reach permitted moderators and revoked report evidence cannot return",
+        "directs.spec.mjs::a recipient can report a request and block without accepting it",
+        "api::TestPrivateEvidenceNeedsItsOwnCapabilityAndGrantsNoConversationAccess"
+      ],
+      "owed": [
+        "Phase D: evidence review exercised by the independent reviewer, not only by the reporter's own journey."
+      ]
+    },
+    "J-06": {
+      "checks": [
+        "voice.spec.mjs::a shared screen reaches another browser and stops cleanly",
+        "voice.spec.mjs::a call survives a severed connection and resumes inside the budget",
+        "voice.spec.mjs::withdrawing voice.speak stops the forwarded audio, and returning it resumes",
+        "rtc::TestAViewersKeyframeRequestReachesThePublisher",
+        "rtc::TestBindingAViewersOutputRequestsAKeyframe"
+      ],
+      "owed": [
+        "Phase D: a physical microphone, a real network with a ten-second loss profile, and a phone's screen-share picker."
+      ]
+    },
+    "J-07": {
+      "checks": [
+        "privacy.spec.mjs::an unconfirmed send survives a reload and is reconciled by its own key",
+        "privacy.spec.mjs::refused sends offer complete recoverable text without retrying or replacing drafts",
+        "account-switch.spec.mjs::a channel move held across a sign-in cannot reorder the next account",
+        "release.spec.mjs::a severed connection reconnects on its own within the budget",
+        "api::TestAnOperationKeyIsBoundToItsIntent"
+      ],
+      "owed": []
+    },
+    "J-08": {
+      "checks": [
+        "script:scripts/backup-encrypted-rehearsal.mjs",
+        "script:scripts/full-disk-rehearsal.mjs",
+        "script:scripts/upgrade-recovery.mjs",
+        "api::TestAnAlertIsDeliveredToARealRecipient",
+        "api::TestAConfiguredAlertThatCannotDeliverIsVisibleAsUndelivered"
+      ],
+      "owed": [
+        "Phase D: the alert delivered to an operator's own receiver on a live deployment, and the restore onto a clean separate host."
+      ]
+    },
+    "J-09": {
+      "checks": [
+        "script:scripts/upgrade-rollback.mjs",
+        "script:scripts/upgrade-recovery.mjs",
+        "script:scripts/upgrade-schema13-private.mjs",
+        "db::TestUpgradeVersionOneAndRejectFutureSchema",
+        "db::TestAnIncompleteUpgradeCannotBeSkipped",
+        "script:scripts/check-package.mjs"
+      ],
+      "owed": [
+        "Phase D: a rollback exercised on a separate host from a published archive digested by the same chain."
+      ]
+    },
+    "J-10": {
+      "checks": [
+        "script:scripts/check-source-package.mjs",
+        "script:scripts/check-acceptance-matrix.mjs",
+        "script:scripts/check-doc-links.mjs",
+        "script:scripts/check-schema-docs.mjs",
+        "script:scripts/check-docker-inputs.mjs",
+        "script:scripts/licenses.mjs"
+      ],
+      "owed": [
+        "Phase D/P: the reviewed-change route needs the git remote, code review and release identity the owner supplies; the fresh-clone make check is proven and recorded in the ledger."
+      ]
+    }
+  },
+  "measured_over": {
+    "at": "2026-10-04",
+    "commit": "f810f0c82762e6ff0d47d36a4dce8a97c6058384",
+    "note": "The full local gate set was run at this commit for the alpha.9 record (unit, svelte-check, both feature modes, rehearsals, race sweep, 20-run voice loop). Per-check last-run detail lives in the release record and ledger; dimensions are the same each run, and a stale entry here is a review failure, so it is not a build failure."
   }
 }
