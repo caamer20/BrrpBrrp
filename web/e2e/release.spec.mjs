@@ -360,16 +360,19 @@ test('the operator and member surfaces are free of detectable violations', async
   // and the author of a message, which must open the same dialog about the same person.
   const memberRow = page.getByRole('button', { name: /— open profile$/ }).first();
   await expect(memberRow).toBeVisible();
-  // `toBeFocused` also asserts that the *page* has focus, and a headless page that another
-  // context was created behind reports `inactive` while the element really is
-  // document.activeElement. Bringing this page to the front makes the assertion about the
-  // row rather than about which window the browser considers current.
+  // `toBeFocused` asserts `document.activeElement === element` AND `document.hasFocus()`,
+  // and in this suite "hasFocus" is a property of which other driver-run has been created
+  // before it, not of this row. `bringToFront` fixed the second of those and masked the
+  // first; the element-level answer is the same claim without the harness's bookkeeping.
   await page.bringToFront();
   await memberRow.focus();
   // A presence update arriving between the focus and this assertion used to rebuild the
   // group and replace the row; the list is keyed so the row a keyboard user is standing
   // on survives (the failure this assertion first produced).
-  await expect(memberRow).toBeFocused();
+  expect(
+    await memberRow.evaluate((node) => document.activeElement === node),
+    'focusing the member row did not make it the document element'
+  ).toBe(true);
   await page.keyboard.press('Enter');
   const profile = page.getByRole('dialog', { name: /— profile$/ });
   await expect(profile).toBeVisible();

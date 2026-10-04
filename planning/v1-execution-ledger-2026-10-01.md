@@ -1827,6 +1827,40 @@ owner's decisions have already fixed and the ones with no external dependency.
   uses, recorded so a runner that forgets it fails loudly rather than testing nothing.
 
 
+### 11w. The first convergence round: two P1s fixed as defence, and the round survives its own harness
+
+- **What it proved.** Four fresh-context reviewers read the newest surfaces from this
+  session (metrics+probe, Back/Forward, screen/viewer, the two matrices and the two new
+  rehearsals). Two found a P1 each, verified as a current-state failure instead of a claim:
+  - **The refused-share hold (voice.svelte.ts).** A refused screen publication stopped the
+    capture yet left `capture` set and the capture-ended watch registered; `attachScreen`'s
+    guard then refused every later share for the rest of the call — the exact blindness the
+    file's comments had been written to prevent. Two failing-first tests in
+    `web/tests/voice-state.test.mjs` pin the refusal path, and the fix clears the capture and
+    watch inside the same branch. Both pass; the full 361-test suite went green first, so
+    there was no unrelated breakage to blame.
+  - **A broken matrix row (planning/acceptance-matrix.json:301).** The J-01 journey named a
+    test in the wrong package, and the gate was failing red at HEAD — which proved two
+    things in one go: the matrix *does* bite, and my earlier "make check green on a fresh
+    clone" ran before the row existed, so the in-flight evidence was older than the change
+    it was claimed to cover. Renamed to `app::TestDataLockAndEnvironmentFile`; the gate is
+    now green and its web/tests self-test set keeps proving each failure shape.
+- **The reviewers' infra failed loudly, which is itself a finding.** One agent hit a
+  rate-limited model ten times straight; one was forced-yielded mid-review with partial
+  notes; one returned a plain verdict after the retries; one returned nothing twice. That
+  is exactly the shape of a tool failure the matrix's evidence classes would call out: "we
+  ran a review" is not evidence; the two fixes the *attempt* produced are. The round's trace
+  survives in this entry, and a fresh-context review remains owed before a release-candidate
+  tag rather than assumed.
+- **Acknowledged-but-not-addressed this round, recorded as debt:** the screen-audio slot
+  lands on the voice-in-slot path with a NaN route key (plays, but never distinguished or
+  volume-managed per user); and `screenRequested` is only reset on leave/stop — after a
+  stop mid-rewait, a view-line restart relies on the server reusing its negotiated m-line,
+  which the journeys show it does. Neither has a failing test yet, and neither should be
+  "fixed" speculatively in this tree; the records exist so a later round can tell whether
+  either ever matters.
+
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,

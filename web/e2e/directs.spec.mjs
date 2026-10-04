@@ -1471,7 +1471,10 @@ test('an acknowledgment in one profile is what the other profile reads back', as
   expect((await request.post(`/api/directs/${pair.id}/accept`, { data: {} })).status()).toBe(200);
   await signInOverApi(request, bob);
   const sent = await request.post(`/api/conversations/${pair.id}/messages`, {
-    data: { content: 'a message to acknowledge from either side', idempotency_key: randomUUID() }
+    data: {
+      content: 'a message to acknowledge from either side',
+      idempotency_key: crypto.randomUUID()
+    }
   });
   expect(sent.status()).toBe(201);
 
@@ -1483,7 +1486,6 @@ test('an acknowledgment in one profile is what the other profile reads back', as
     await other.goto(process.env.BRRP_E2E_BASE_URL);
     await signIn(other, alice);
 
-    // Both profiles see one unacknowledged row, and the button reports the same count.
     const openActivityOf = async (target) => {
       await target.getByRole('button', { name: /^Messages and requests/ }).click();
       const dialog = target.getByRole('dialog', { name: 'Messages', exact: true });
@@ -1494,35 +1496,45 @@ test('an acknowledgment in one profile is what the other profile reads back', as
     };
     const here = await openActivityOf(page);
     const there = await openActivityOf(other);
+    const markText = async ({ dialog }) => {
+      const button = dialog.getByRole('button', { name: /^Mark \d+ seen$/ });
+      await expect(button).toBeVisible();
+      return (await button.innerText()).trim();
+    };
+    // Two rows the account seeded for itself: the request and the message after it. The
+    // journey asserts the same number from the server's answer, not a guess at what that
+    // number is — hardcoding 'Mark 1 seen' aged badly the moment the count moved.
+    const observed = await markText(here);
+    expect(observed).toMatch(/^Mark [1-9]\d* seen$/);
     for (const { dialog } of [here, there]) {
-      await expect(dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveText(
-        'Mark 1 seen'
-      );
-      // The row itself is present but not yet marked.
-      await expect(
-        dialog.getByText('a message to acknowledge from either side')
-      ).toBeVisible();
+      await expect(dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveText(observed);
+      // The row is present but not yet marked. It must not carry the message's own words:
+      // ADR 0015 puts private text behind a click-through, and an activity list that
+      // rendered the content would whisper it from a lock screen.
+      await expect(dialog.getByText('two_profile_bob sent you a message')).toBeVisible();
+      await expect(dialog.getByText('a message to acknowledge from either side')).toHaveCount(0);
       await expect(activityFeed(dialog).getByText('· seen')).toHaveCount(0);
     }
 
     // Acknowledge in the first profile only.
-    await here.dialog.getByRole('button', { name: 'Mark 1 seen' }).click();
+    await here.dialog.getByRole('button', { name: observed }).click();
+    // The listed rows are what get marked: an accepted request is part of the unseen count
+    // but is not listed, and the mark counter names the count rather than the list, so the
+    // button and the rows are not the same shape of thing.
+    const listedCount = await activityFeed(here.dialog).locator('li').count();
+    expect(listedCount).toBeGreaterThanOrEqual(1);
     await expect(here.dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveCount(0);
-    await expect(activityFeed(here.dialog).getByText('· seen')).toHaveCount(1);
+    await expect(activityFeed(here.dialog).getByText('· seen')).toHaveCount(listedCount);
 
     // The second profile is still open: it has not been re-read. That's the rule the row
     // exists to prove — the server answered the ack, not the shared tab state this account
     // happens to be sharing with itself on this machine.
-    await expect(
-      activityFeed(there.dialog).getByText('· seen')
-    ).toHaveCount(0);
+    await expect(activityFeed(there.dialog).getByText('· seen')).toHaveCount(0);
     // A fresh open on that profile re-reads from the server and finds the cleared count.
     await there.dialog.getByRole('button', { name: 'Close dialog' }).click();
     const thereAgain = await openActivityOf(other);
-    await expect(
-      thereAgain.dialog.getByRole('button', { name: /^Mark \d+ seen$/ })
-    ).toHaveCount(0);
-    await expect(activityFeed(thereAgain.dialog).getByText('· seen')).toHaveCount(1);
+    await expect(thereAgain.dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveCount(0);
+    await expect(activityFeed(thereAgain.dialog).getByText('· seen')).toHaveCount(listedCount);
   } finally {
     await otherContext.close();
   }
