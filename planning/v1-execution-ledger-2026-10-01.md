@@ -1620,6 +1620,47 @@ owner's decisions have already fixed and the ones with no external dependency.
   need infrastructure this machine does not have. The matrix makes that visible instead of
   letting it read as done.
 
+### 11o. The six-run browser evidence, and one more real defect it found
+
+- **The plan asks for six consecutive clean runs across the browser projects, freshest
+  first.** Two attempts are on the record, because the first one is the interesting one: it
+  ran 9 of its 12 runs before the harness's own time cap, and one of them (default mode,
+  iteration 4) failed on two things. One was a **real contrast defect** in the product — the
+  accessibility sweep inside the screen-share journey found a deleted member's avatar drawing
+  its initials in the stylesheet's constant ink on the grey `#808080`: **4.0:1**, under the
+  4.5:1 minimum, on the avatar of the one account that cannot complain about it. The ink now
+  comes from the background (whichever of a dark and a light ink contrasts better), and a
+  saturated mid-tone like `#aa44dd` — for which *no* ink clears the minimum at that size —
+  has its background moved just far enough toward one end for its ink to pass, so the hue
+  survives and the letters are legible. Three tests: both shorthand forms and rubbish
+  refused, the product's own ten colours, and a coarse sweep of the whole RGB cube that
+  reports its worst pair (which is how `#aa44dd` was found, after a luminance threshold
+  turned out not to be the right rule). The other failure was a **page-setup timeout** — the
+  browser context took more than sixty seconds to create on a busy machine — which is an
+  environment fact rather than a product one.
+- **The second attempt** runs the same six iterations in two halves so neither exceeds the
+  harness's time cap. Iterations 1–3 are **six for six green** (default 29 journeys, private
+  43, in each). Iterations 4–6 are **three for three green in default mode** and **three
+  timeouts in private mode**: two runs exceeded the 60-second context-setup budget and one the
+  120-second journey budget, with no assertion failing — page setup, on a machine that was
+  also running the agent that produced this work. The attribution is not a guess: the same
+  private suite, run alone immediately afterwards, **passes 43/43 in 3.8 minutes**, and the
+  same mode passed 6 of 6 earlier in the day. Every run wrote its artifacts to its own
+  directory, so the failing runs' traces are retained rather than overwritten.
+- **Where that leaves the item.** Default mode has **six consecutive clean runs** and so does
+  a default-plus-private *pair* three times over; the private mode's remaining three runs are
+  environment timeouts with the suite proven green in isolation. The item is recorded as
+  **substantially met, with the caveat stated** rather than as clean — a machine that is not
+  also running a language model will meet it.
+- **What the loops together establish.** Every failure found across four twenty-run loops and
+  two six-run loops was one of: a defect in a *new* assertion of mine, a defect in the
+  *harness* (a double-owned route, a too-short wait for an alert the handler itself delays, a
+  computed style read from an element the server replaces), an *environment* timeout on a
+  busy machine, or the avatar contrast defect above. None was a product behaviour failure in
+  the shipped paths, and the avatar defect was only reachable because the screen-share
+  journey sweeps a *populated* member list — which is the point of running the sweep where
+  the state actually exists.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
