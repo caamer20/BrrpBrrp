@@ -14,11 +14,20 @@
 //
 // Usage: node scripts/check-docker-inputs.mjs [Dockerfile] [context]
 
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { dirname, join, posix, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { dirname, join, posix, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // --- Self-test --------------------------------------------------------------
 //
@@ -27,35 +36,47 @@ import { fileURLToPath } from 'node:url';
 // had the incomplete notices stage, and the current form. The first must fail with
 // each specific complaint, the second must pass. Without this, a later edit that
 // silently stops detecting the problem would look like a passing check.
-if (process.argv.includes('--self-test')) {
+if (process.argv.includes("--self-test")) {
   const script = fileURLToPath(import.meta.url);
   const repository = dirname(dirname(script));
-  const workspace = mkdtempSync(join(tmpdir(), 'brrpbrrp-docker-audit-'));
+  const workspace = mkdtempSync(join(tmpdir(), "brrpbrrp-docker-audit-"));
   try {
-    const context = join(workspace, 'context');
-    for (const directory of ['cmd/brrpbrrp', 'internal/app', 'scripts', 'web/src', 'web/public', 'web/dist', 'web/node_modules/dep']) {
+    const context = join(workspace, "context");
+    for (const directory of [
+      "cmd/brrpbrrp",
+      "internal/app",
+      "scripts",
+      "web/src",
+      "web/public",
+      "web/dist",
+      "web/node_modules/dep",
+    ]) {
       mkdirSync(join(context, directory), { recursive: true });
     }
     const files = {
-      'go.mod': 'module brrpbrrp\n',
-      'go.sum': '',
-      'LICENSE': 'MIT\n',
-      'cmd/brrpbrrp/main.go': 'package main\n',
-      'internal/app/app.go': 'package app\n',
-      'scripts/release.go': '//go:build ignore\n\npackage main\n',
-      'scripts/licenses.mjs': '// fixture\n',
-      'web/assets.go': 'package web\n',
-      'web/index.html': '<!doctype html>\n',
-      'web/package.json': '{}\n',
-      'web/package-lock.json': '{}\n',
-      'web/src/main.ts': '\n',
-      'web/public/robots.txt': '\n',
-      'web/dist/index.html': '<!doctype html>\n',
-      'web/node_modules/dep/package.json': '{}\n',
-      'web/node_modules/dep/LICENSE': 'MIT\n',
+      "go.mod": "module brrpbrrp\n",
+      "go.sum": "",
+      LICENSE: "MIT\n",
+      "cmd/brrpbrrp/main.go": "package main\n",
+      "internal/app/app.go": "package app\n",
+      "scripts/release.go": "//go:build ignore\n\npackage main\n",
+      "scripts/licenses.mjs": "// fixture\n",
+      "web/assets.go": "package web\n",
+      "web/index.html": "<!doctype html>\n",
+      "web/package.json": "{}\n",
+      "web/package-lock.json": "{}\n",
+      "web/src/main.ts": "\n",
+      "web/public/robots.txt": "\n",
+      "web/dist/index.html": "<!doctype html>\n",
+      "web/node_modules/dep/package.json": "{}\n",
+      "web/node_modules/dep/LICENSE": "MIT\n",
     };
-    for (const [path, content] of Object.entries(files)) writeFileSync(join(context, path), content);
-    writeFileSync(join(context, '.dockerignore'), readFileSync(join(repository, '.dockerignore')));
+    for (const [path, content] of Object.entries(files))
+      writeFileSync(join(context, path), content);
+    writeFileSync(
+      join(context, ".dockerignore"),
+      readFileSync(join(repository, ".dockerignore")),
+    );
 
     const head = `ARG NODE_IMAGE=node:24.21.0-alpine3.24
 ARG GO_IMAGE=golang:1.27.1-alpine3.24
@@ -85,22 +106,25 @@ FROM scratch AS runtime
 COPY --from=build /out/brrpbrrp /usr/local/bin/brrpbrrp
 COPY --from=build /out/THIRD_PARTY_NOTICES.txt /usr/share/licenses/brrpbrrp/THIRD_PARTY_NOTICES.txt
 `;
-    const fixed = readFileSync(join(repository, 'Dockerfile'), 'utf8');
-    writeFileSync(join(workspace, 'Dockerfile.broken'), broken);
-    writeFileSync(join(workspace, 'Dockerfile.fixed'), fixed);
+    const fixed = readFileSync(join(repository, "Dockerfile"), "utf8");
+    writeFileSync(join(workspace, "Dockerfile.broken"), broken);
+    writeFileSync(join(workspace, "Dockerfile.fixed"), fixed);
 
-    const run = (dockerfile) => spawnSync(process.execPath, [script, dockerfile, context], { encoding: 'utf8' });
+    const run = (dockerfile) =>
+      spawnSync(process.execPath, [script, dockerfile, context], {
+        encoding: "utf8",
+      });
     const complaints = [
-      'has no Node runtime',
-      'without copying scripts/licenses.mjs',
-      'without copying web/package.json',
-      'without the bundled frontend packages',
-      'does not copy the project LICENSE',
+      "has no Node runtime",
+      "without copying scripts/licenses.mjs",
+      "without copying web/package.json",
+      "without the bundled frontend packages",
+      "does not copy the project LICENSE",
     ];
     let failures = 0;
-    const brokenRun = run(join(workspace, 'Dockerfile.broken'));
+    const brokenRun = run(join(workspace, "Dockerfile.broken"));
     if (brokenRun.status === 0) {
-      console.error('self-test: the incomplete notices stage was not detected');
+      console.error("self-test: the incomplete notices stage was not detected");
       failures += 1;
     }
     for (const complaint of complaints) {
@@ -109,25 +133,31 @@ COPY --from=build /out/THIRD_PARTY_NOTICES.txt /usr/share/licenses/brrpbrrp/THIR
         failures += 1;
       }
     }
-    const fixedRun = run(join(workspace, 'Dockerfile.fixed'));
+    const fixedRun = run(join(workspace, "Dockerfile.fixed"));
     if (fixedRun.status !== 0) {
-      console.error(`self-test: the current Dockerfile did not pass: ${fixedRun.stderr}`);
+      console.error(
+        `self-test: the current Dockerfile did not pass: ${fixedRun.stderr}`,
+      );
       failures += 1;
     }
     if (failures > 0) {
-      console.error(`Docker input audit self-test failed (${failures} problem(s)).`);
+      console.error(
+        `Docker input audit self-test failed (${failures} problem(s)).`,
+      );
       process.exit(1);
     }
-    console.log(`Docker input audit self-test passed: the incomplete notices stage produced ${complaints.length} expected complaints and the current Dockerfile passed.`);
+    console.log(
+      `Docker input audit self-test passed: the incomplete notices stage produced ${complaints.length} expected complaints and the current Dockerfile passed.`,
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
   process.exit(0);
 }
 
-const dockerfilePath = process.argv[2] || 'Dockerfile';
-const context = process.argv[3] || '.';
-const dockerfile = readFileSync(dockerfilePath, 'utf8');
+const dockerfilePath = process.argv[2] || "Dockerfile";
+const context = process.argv[3] || ".";
+const dockerfile = readFileSync(dockerfilePath, "utf8");
 
 const problems = [];
 const fail = (message) => problems.push(message);
@@ -136,10 +166,10 @@ const fail = (message) => problems.push(message);
 
 // Join line continuations, then keep only instructions (comments and blanks drop).
 const lines = dockerfile
-  .replace(/\\\r?\n\s*/g, ' ')
+  .replace(/\\\r?\n\s*/g, " ")
   .split(/\r?\n/)
   .map((line) => line.trim())
-  .filter((line) => line && !line.startsWith('#'));
+  .filter((line) => line && !line.startsWith("#"));
 
 const globalArgs = new Map();
 const stages = [];
@@ -151,7 +181,7 @@ for (const line of lines) {
   }
   const from = line.match(/^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?$/i);
   if (from) {
-    const base = globalArgs.get(from[1].replace(/^\$\{|\}$/g, '')) || from[1];
+    const base = globalArgs.get(from[1].replace(/^\$\{|\}$/g, "")) || from[1];
     stages.push({
       name: from[2] || `stage${stages.length}`,
       base,
@@ -165,9 +195,10 @@ for (const line of lines) {
 
 if (stages.length === 0) fail(`${dockerfilePath}: no FROM instruction found`);
 
-const expandedBase = (stage) => globalArgs.get(stage.base.replace(/^\$\{|\}$/g, '')) || stage.base;
-const nodeBase = globalArgs.get('NODE_IMAGE') || 'node';
-const goBase = globalArgs.get('GO_IMAGE') || 'golang';
+const expandedBase = (stage) =>
+  globalArgs.get(stage.base.replace(/^\$\{|\}$/g, "")) || stage.base;
+const nodeBase = globalArgs.get("NODE_IMAGE") || "node";
+const goBase = globalArgs.get("GO_IMAGE") || "golang";
 
 // A stage has a runtime if its base image provides it, if an ancestor stage does,
 // or if the stage installs it before the instruction that needs it.
@@ -177,42 +208,64 @@ function providesRuntime(stage, kind, beforeLine) {
     if (!current || seen.has(current.name)) return false;
     seen.add(current.name);
     const base = expandedBase(current);
-    const has = kind === 'node' ? /(^|\/)node(:|@|$)/.test(base) : /(^|\/)golang(:|@|$)/.test(base);
+    const has =
+      kind === "node"
+        ? /(^|\/)node(:|@|$)/.test(base)
+        : /(^|\/)golang(:|@|$)/.test(base);
     if (has) return true;
-    if (!current.baseIsStage && !stages.some((value) => value.name === current.base)) return false;
+    if (
+      !current.baseIsStage &&
+      !stages.some((value) => value.name === current.base)
+    )
+      return false;
     return search(stages.find((value) => value.name === current.base));
   };
   if (search(stage)) return true;
-  const install = kind === 'node' ? /apk add[^\n]*\b(nodejs|node|npm)\b/ : /apk add[^\n]*\bgolang\b/;
+  const install =
+    kind === "node"
+      ? /apk add[^\n]*\b(nodejs|node|npm)\b/
+      : /apk add[^\n]*\bgolang\b/;
   // The instruction that needs the runtime counts too: a stage may install Node and
   // use it in the same RUN line.
-  const relevant = beforeLine === undefined ? stage.lines : stage.lines.slice(0, beforeLine + 1);
-  return relevant.some((line) => line.startsWith('RUN ') && install.test(line));
+  const relevant =
+    beforeLine === undefined
+      ? stage.lines
+      : stage.lines.slice(0, beforeLine + 1);
+  return relevant.some((line) => line.startsWith("RUN ") && install.test(line));
 }
 
 // --- .dockerignore ----------------------------------------------------------
 
 // Docker matches rules in order and the last matching rule wins, with `!` taking a
 // path back out of the excluded set.
-const ignoreRules = readFileSync(join(context, '.dockerignore'), 'utf8')
+const ignoreRules = readFileSync(join(context, ".dockerignore"), "utf8")
   .split(/\r?\n/)
   .map((line) => line.trim())
-  .filter((line) => line && !line.startsWith('#'))
+  .filter((line) => line && !line.startsWith("#"))
   .map((rule) => {
-    const negated = rule.startsWith('!');
-    const pattern = (negated ? rule.slice(1) : rule).replace(/^\//, '').replace(/\/$/, '');
+    const negated = rule.startsWith("!");
+    const pattern = (negated ? rule.slice(1) : rule)
+      .replace(/^\//, "")
+      .replace(/\/$/, "");
     const source = pattern
-      .split('/')
-      .map((part) => (part === '**' ? '.*' : part.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')))
-      .join('/');
+      .split("/")
+      .map((part) =>
+        part === "**"
+          ? ".*"
+          : part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"),
+      )
+      .join("/");
     return { negated, pattern, regex: new RegExp(`^${source}$`) };
   });
 
 const excluded = (path) => {
-  const normalized = path.replace(/^\.\//, '');
+  const normalized = path.replace(/^\.\//, "");
   let isExcluded = false;
   for (const rule of ignoreRules) {
-    if (rule.regex.test(normalized) || rule.regex.test(normalized.replace(/\/.*$/, ''))) {
+    if (
+      rule.regex.test(normalized) ||
+      rule.regex.test(normalized.replace(/\/.*$/, ""))
+    ) {
       isExcluded = !rule.negated;
     }
   }
@@ -225,36 +278,44 @@ const copiedSources = [];
 for (const stage of stages) {
   for (const line of stage.lines) {
     if (!/^(COPY|ADD)\s/i.test(line)) continue;
-    const tokens = line.replace(/^(COPY|ADD)\s+/i, '').split(/\s+/);
-    const flags = tokens.filter((token) => token.startsWith('--'));
-    const args = tokens.filter((token) => !token.startsWith('--'));
+    const tokens = line.replace(/^(COPY|ADD)\s+/i, "").split(/\s+/);
+    const flags = tokens.filter((token) => token.startsWith("--"));
+    const args = tokens.filter((token) => !token.startsWith("--"));
     if (args.length < 2) {
       fail(`${dockerfilePath}: ${line} has no destination`);
       continue;
     }
-    const from = flags.find((flag) => flag.startsWith('--from='))?.slice('--from='.length);
+    const from = flags
+      .find((flag) => flag.startsWith("--from="))
+      ?.slice("--from=".length);
     for (const source of args.slice(0, -1)) {
       copiedSources.push({ stage: stage.name, source, from, line });
       if (from !== undefined) {
         if (!stages.some((value) => value.name === from)) {
-          fail(`stage ${stage.name}: "COPY --from=${from}" names no stage in this Dockerfile`);
+          fail(
+            `stage ${stage.name}: "COPY --from=${from}" names no stage in this Dockerfile`,
+          );
         }
         continue;
       }
       // A directory source copies its whole tree, so the context only needs one
       // included file beneath it.
-      const candidates = source.includes('*')
+      const candidates = source.includes("*")
         ? (() => {
-            const directory = source.replace(/\/[^/]*$/, '') || '.';
-            const suffix = source.split('/').pop().replace(/\*/g, '');
+            const directory = source.replace(/\/[^/]*$/, "") || ".";
+            const suffix = source.split("/").pop().replace(/\*/g, "");
             if (!existsSync(join(context, directory))) return [];
             return readdirSync(join(context, directory))
               .filter((entry) => !suffix || entry.endsWith(suffix))
-              .map((entry) => posix.join(directory === '.' ? '' : directory, entry));
+              .map((entry) =>
+                posix.join(directory === "." ? "" : directory, entry),
+              );
           })()
         : [source];
       if (candidates.length === 0) {
-        fail(`stage ${stage.name}: "${line}" matches no file on this host (${source})`);
+        fail(
+          `stage ${stage.name}: "${line}" matches no file on this host (${source})`,
+        );
         continue;
       }
       const included = candidates.some((candidate) => {
@@ -268,14 +329,16 @@ for (const stage of stages) {
         const walk = (directory) =>
           readdirSync(directory).some((entry) => {
             const child = join(directory, entry);
-            const childPath = relative(context, child).replace(/\\/g, '/');
+            const childPath = relative(context, child).replace(/\\/g, "/");
             if (excluded(childPath)) return false;
             return statSync(child).isDirectory() ? walk(child) : true;
           });
         return walk(path);
       });
       if (!included) {
-        fail(`stage ${stage.name}: "${line}" source ${source} is excluded by .dockerignore (or absent)`);
+        fail(
+          `stage ${stage.name}: "${line}" source ${source} is excluded by .dockerignore (or absent)`,
+        );
       }
     }
   }
@@ -285,38 +348,75 @@ for (const stage of stages) {
 
 for (const stage of stages) {
   stage.lines.forEach((line, index) => {
-    if (!line.startsWith('RUN ')) return;
+    if (!line.startsWith("RUN ")) return;
     // The notices generator reads the linked module set with the Go toolchain and
     // the bundled frontend packages with Node, whether it is invoked directly or
     // through scripts/release.go -notices. Both runtimes and all three inputs must
     // be in the stage that runs it: this is the defect class the audit exists for.
     const generatesNotices =
-      /scripts\/licenses\.mjs/.test(line) || /scripts\/release\.go\b[^\n]*-notices\b/.test(line);
+      /scripts\/licenses\.mjs/.test(line) ||
+      /scripts\/release\.go\b[^\n]*-notices\b/.test(line);
     if (generatesNotices) {
-      if (!providesRuntime(stage, 'node', index)) {
-        fail(`stage ${stage.name}: generates notices but has no Node runtime in its base image or a prior install`);
+      if (!providesRuntime(stage, "node", index)) {
+        fail(
+          `stage ${stage.name}: generates notices but has no Node runtime in its base image or a prior install`,
+        );
       }
-      if (!providesRuntime(stage, 'go', index)) {
-        fail(`stage ${stage.name}: generates notices but has no Go toolchain in its base image or a prior install`);
+      if (!providesRuntime(stage, "go", index)) {
+        fail(
+          `stage ${stage.name}: generates notices but has no Go toolchain in its base image or a prior install`,
+        );
       }
-      for (const input of ['scripts/licenses.mjs', 'web/package.json']) {
-        if (!copiedSources.some((value) => value.stage === stage.name && value.source === input)) {
-          fail(`stage ${stage.name}: generates notices without copying ${input} into the stage`);
+      for (const input of ["scripts/licenses.mjs", "web/package.json"]) {
+        if (
+          !copiedSources.some(
+            (value) => value.stage === stage.name && value.source === input,
+          )
+        ) {
+          fail(
+            `stage ${stage.name}: generates notices without copying ${input} into the stage`,
+          );
         }
       }
-      if (!copiedSources.some((value) => value.stage === stage.name && value.source.includes('node_modules'))) {
-        fail(`stage ${stage.name}: generates notices without the bundled frontend packages (web/node_modules)`);
+      if (
+        !copiedSources.some(
+          (value) =>
+            value.stage === stage.name && value.source.includes("node_modules"),
+        )
+      ) {
+        fail(
+          `stage ${stage.name}: generates notices without the bundled frontend packages (web/node_modules)`,
+        );
       }
-      if (!copiedSources.some((value) => value.stage === stage.name && value.source.includes('dist'))) {
-        fail(`stage ${stage.name}: generates notices without the served web build (web/dist), which the inspected Go package embeds`);
+      if (
+        !copiedSources.some(
+          (value) =>
+            value.stage === stage.name && value.source.includes("dist"),
+        )
+      ) {
+        fail(
+          `stage ${stage.name}: generates notices without the served web build (web/dist), which the inspected Go package embeds`,
+        );
       }
       return;
     }
-    if (/\b(node|npm|npx)\b[^]*?\b(scripts\/[\w.-]+\.mjs|npm (ci|run|test)|npx )/.test(line) && !providesRuntime(stage, 'node', index)) {
-      fail(`stage ${stage.name}: runs Node (${line.slice(0, 60)}...) but neither its base image nor the stage provides node`);
+    if (
+      /\b(node|npm|npx)\b[^]*?\b(scripts\/[\w.-]+\.mjs|npm (ci|run|test)|npx )/.test(
+        line,
+      ) &&
+      !providesRuntime(stage, "node", index)
+    ) {
+      fail(
+        `stage ${stage.name}: runs Node (${line.slice(0, 60)}...) but neither its base image nor the stage provides node`,
+      );
     }
-    if (/\bgo (list|build|run|mod|env|vet|tool)\b/.test(line) && !providesRuntime(stage, 'go', index)) {
-      fail(`stage ${stage.name}: runs Go (${line.slice(0, 60)}...) but neither its base image nor the stage provides the toolchain`);
+    if (
+      /\bgo (list|build|run|mod|env|vet|tool)\b/.test(line) &&
+      !providesRuntime(stage, "go", index)
+    ) {
+      fail(
+        `stage ${stage.name}: runs Go (${line.slice(0, 60)}...) but neither its base image nor the stage provides the toolchain`,
+      );
     }
   });
 }
@@ -324,21 +424,33 @@ for (const stage of stages) {
 // --- The runtime image carries the distribution license and notices ---------
 
 const final = stages[stages.length - 1];
-const finalSources = copiedSources.filter((value) => value.stage === final.name);
+const finalSources = copiedSources.filter(
+  (value) => value.stage === final.name,
+);
 if (!finalSources.some((value) => /(^|\/)LICENSE$/.test(value.source))) {
-  fail(`final stage ${final.name}: does not copy the project LICENSE into the image`);
+  fail(
+    `final stage ${final.name}: does not copy the project LICENSE into the image`,
+  );
 }
 if (!finalSources.some((value) => /THIRD_PARTY_NOTICES/i.test(value.source))) {
-  fail(`final stage ${final.name}: does not copy THIRD_PARTY_NOTICES into the image`);
+  fail(
+    `final stage ${final.name}: does not copy THIRD_PARTY_NOTICES into the image`,
+  );
 }
 
 // --- Result -----------------------------------------------------------------
 
 if (problems.length > 0) {
-  console.error(`Docker input audit failed for ${dockerfilePath} (${problems.length} problem(s)):`);
+  console.error(
+    `Docker input audit failed for ${dockerfilePath} (${problems.length} problem(s)):`,
+  );
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
 }
-const stagesList = stages.map((stage) => stage.name).join(', ');
-console.log(`Docker input audit passed: ${copiedSources.length} COPY sources across stages ${stagesList} are present and included in the build context; the final stage ships LICENSE and THIRD_PARTY_NOTICES.`);
-console.log('This is a static audit. It is not an image build; run scripts/check-docker.mjs on a Docker host for that.');
+const stagesList = stages.map((stage) => stage.name).join(", ");
+console.log(
+  `Docker input audit passed: ${copiedSources.length} COPY sources across stages ${stagesList} are present and included in the build context; the final stage ships LICENSE and THIRD_PARTY_NOTICES.`,
+);
+console.log(
+  "This is a static audit. It is not an image build; run scripts/check-docker.mjs on a Docker host for that.",
+);

@@ -15,31 +15,40 @@
 //
 // Usage: node scripts/check-doc-links.mjs [--list|--self-test]
 
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // The documents a reader is sent to. A link inside a historical record is not this
 // gate's business: those records are kept for what they decided, and a renamed file
 // referenced from one of them is history rather than a route into the product.
 const DOCUMENTS = [
-  'README.md',
-  'docs/community-guide.md',
-  'docs/installation.md',
-  'docs/deployment.md',
-  'docs/host-qualification.md',
-  'docs/v1-progress.md',
-  'docs/production-readiness.md',
-  ...['0.4.0-alpha.7', '0.4.0-alpha.6'].map((release) => `docs/releases/${release}.md`)
+  "README.md",
+  "docs/community-guide.md",
+  "docs/installation.md",
+  "docs/deployment.md",
+  "docs/host-qualification.md",
+  "docs/v1-progress.md",
+  "docs/production-readiness.md",
+  ...["0.4.0-alpha.7", "0.4.0-alpha.6"].map(
+    (release) => `docs/releases/${release}.md`,
+  ),
 ];
 
 // Deliberately untracked operator notes (.gitignore). A clone does not have them, so
 // their absence is not a failure — but when one is present, its links are checked like
 // any other document's, because somebody is reading it.
-const OPTIONAL_DOCUMENTS = ['docs/next-release.md'];
+const OPTIONAL_DOCUMENTS = ["docs/next-release.md"];
 
 // A relative link: no scheme, no host, no fragment-only target. Absolute and
 // protocol links are somebody else's problem.
@@ -52,7 +61,9 @@ const LINK = /\]\(([^)\s]+?)(?:\s+"[^"]*")?\)/g;
 // than by the person who happens to run it on the right machine.
 export function checkDocuments(tree, documents, optional = new Set()) {
   const failures = [];
-  const optionalTargets = new Set([...optional].map((document) => resolve(tree, document)));
+  const optionalTargets = new Set(
+    [...optional].map((document) => resolve(tree, document)),
+  );
   for (const document of documents) {
     if (!existsSync(join(tree, document))) {
       // An optional document that is absent is a document this reader does not have.
@@ -60,11 +71,11 @@ export function checkDocuments(tree, documents, optional = new Set()) {
       failures.push(`${document} is listed here but does not exist`);
       continue;
     }
-    const text = readFileSync(join(tree, document), 'utf8');
+    const text = readFileSync(join(tree, document), "utf8");
     for (const [, target] of text.matchAll(LINK)) {
       if (/^(https?:|mailto:|#)/.test(target)) continue;
       // A link's target is relative to the document that contains it.
-      const withoutFragment = target.split('#')[0].split('?')[0];
+      const withoutFragment = target.split("#")[0].split("?")[0];
       if (!withoutFragment) continue;
       const resolved = resolve(dirname(join(tree, document)), withoutFragment);
       if (existsSync(resolved)) continue;
@@ -79,58 +90,80 @@ export function checkDocuments(tree, documents, optional = new Set()) {
 }
 
 function selfTest() {
-  const tree = mkdtempSync(join(tmpdir(), 'brrp-doc-links-'));
+  const tree = mkdtempSync(join(tmpdir(), "brrp-doc-links-"));
   let failures = 0;
   const expect = (name, condition) => {
-    console.log(`  ${condition ? 'ok  ' : 'FAIL'}  ${name}`);
+    console.log(`  ${condition ? "ok  " : "FAIL"}  ${name}`);
     if (!condition) failures += 1;
   };
   try {
-    mkdirSync(join(tree, 'docs', 'releases'), { recursive: true });
-    writeFileSync(join(tree, 'docs', 'installation.md'), 'Install.\n');
-    writeFileSync(join(tree, 'README.md'), 'See [install](docs/installation.md) and [notes](docs/next-release.md).\n');
-    const documents = ['README.md', 'docs/installation.md', 'docs/next-release.md'];
-    const optional = new Set(['docs/next-release.md']);
+    mkdirSync(join(tree, "docs", "releases"), { recursive: true });
+    writeFileSync(join(tree, "docs", "installation.md"), "Install.\n");
+    writeFileSync(
+      join(tree, "README.md"),
+      "See [install](docs/installation.md) and [notes](docs/next-release.md).\n",
+    );
+    const documents = [
+      "README.md",
+      "docs/installation.md",
+      "docs/next-release.md",
+    ];
+    const optional = new Set(["docs/next-release.md"]);
 
     // A fresh clone: the required documents resolve, the untracked note does not exist,
     // and a link to it from a tracked document is not a failure — that is exactly the
     // state a reader who cloned the repository is in.
     expect(
-      'a tree without the untracked note passes',
-      checkDocuments(tree, documents, optional).length === 0
+      "a tree without the untracked note passes",
+      checkDocuments(tree, documents, optional).length === 0,
     );
 
     // A broken link in a tracked document still fails.
-    writeFileSync(join(tree, 'README.md'), 'See [gone](docs/nowhere.md).\n');
+    writeFileSync(join(tree, "README.md"), "See [gone](docs/nowhere.md).\n");
     expect(
-      'a broken link in a tracked document fails',
-      checkDocuments(tree, documents, optional).some((failure) => failure.includes('docs/nowhere.md'))
+      "a broken link in a tracked document fails",
+      checkDocuments(tree, documents, optional).some((failure) =>
+        failure.includes("docs/nowhere.md"),
+      ),
     );
 
     // A required document that is missing still fails: optional means those three
     // words, not "links are not checked any more".
     expect(
-      'a missing required document fails',
-      checkDocuments(tree, ['README.md', 'docs/community-guide.md'], optional).some((failure) =>
-        failure.includes('does not exist')
-      )
+      "a missing required document fails",
+      checkDocuments(
+        tree,
+        ["README.md", "docs/community-guide.md"],
+        optional,
+      ).some((failure) => failure.includes("does not exist")),
     );
 
     // When the untracked note *is* present, its own links are checked like anybody
     // else's, because somebody is reading it.
-    writeFileSync(join(tree, 'docs', 'next-release.md'), 'See [gone](releases/nowhere.md).\n');
+    writeFileSync(
+      join(tree, "docs", "next-release.md"),
+      "See [gone](releases/nowhere.md).\n",
+    );
     expect(
-      'a broken link in the present note fails',
-      checkDocuments(tree, documents, optional).some((failure) => failure.includes('releases/nowhere.md'))
+      "a broken link in the present note fails",
+      checkDocuments(tree, documents, optional).some((failure) =>
+        failure.includes("releases/nowhere.md"),
+      ),
     );
 
     // Absolute and fragment links are still nobody's problem. The note created above
     // keeps its broken link, so the assertion is about what these two lines do not add.
-    writeFileSync(join(tree, 'README.md'), 'See [site](https://example.com) and [top](#top).\n');
+    writeFileSync(
+      join(tree, "README.md"),
+      "See [site](https://example.com) and [top](#top).\n",
+    );
     const afterAbsolute = checkDocuments(tree, documents, optional);
     expect(
-      'absolute and fragment links are ignored',
-      !afterAbsolute.some((failure) => failure.includes('example.com') || failure.includes('#top'))
+      "absolute and fragment links are ignored",
+      !afterAbsolute.some(
+        (failure) =>
+          failure.includes("example.com") || failure.includes("#top"),
+      ),
     );
   } finally {
     rmSync(tree, { recursive: true, force: true });
@@ -139,12 +172,12 @@ function selfTest() {
     console.log(`\n${failures} documentation-link self-test failure(s).`);
     process.exit(1);
   }
-  console.log('Documentation-link checks: self-test passed (5 cases).');
+  console.log("Documentation-link checks: self-test passed (5 cases).");
 }
 
 function main() {
   const documents = [...DOCUMENTS, ...OPTIONAL_DOCUMENTS];
-  if (process.argv.includes('--list')) {
+  if (process.argv.includes("--list")) {
     for (const document of documents) console.log(document);
     return;
   }
@@ -154,10 +187,12 @@ function main() {
     console.log(`\n${failures.length} broken documentation link(s).`);
     process.exit(1);
   }
-  console.log(`Documentation links: all resolve (${documents.length} documents).`);
+  console.log(
+    `Documentation links: all resolve (${documents.length} documents).`,
+  );
 }
 
-if (process.argv.includes('--self-test')) {
+if (process.argv.includes("--self-test")) {
   selfTest();
 } else {
   main();

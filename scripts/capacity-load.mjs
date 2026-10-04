@@ -18,13 +18,13 @@
 //   node scripts/capacity-load.mjs --base URL --cookie NAME=VALUE [--clients N]
 //     [--duration SECONDS] [--channels N] [--report PATH] [--label NAME]
 
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
-import { createConnection as createTcpConnection } from 'node:net';
-import { connect as createTlsConnection } from 'node:tls';
-import { createHash, randomBytes } from 'node:crypto';
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { createConnection as createTcpConnection } from "node:net";
+import { connect as createTlsConnection } from "node:tls";
+import { createHash, randomBytes } from "node:crypto";
 
 // A minimal text-only WebSocket client.
 //
@@ -35,7 +35,15 @@ import { createHash, randomBytes } from 'node:crypto';
 // handshake, masked text frames out, unmasked text frames in, and a close.
 
 export class RawSocket {
-  constructor({ host, port, path, cookie, origin, secure, rejectUnauthorized }) {
+  constructor({
+    host,
+    port,
+    path,
+    cookie,
+    origin,
+    secure,
+    rejectUnauthorized,
+  }) {
     this.host = host;
     this.port = port;
     this.path = path;
@@ -54,7 +62,7 @@ export class RawSocket {
 
   connect({ handshakeTimeoutMs = 10000 } = {}) {
     return new Promise((resolve, reject) => {
-      const key = randomBytes(16).toString('base64');
+      const key = randomBytes(16).toString("base64");
       // A deadline on the handshake. Without one, connecting to something that never
       // answers — a plaintext client aimed at a TLS port, a port with nothing behind it —
       // never settles, and a capacity run whose participants cannot connect hangs instead
@@ -67,7 +75,11 @@ export class RawSocket {
         } catch {
           /* Already gone. */
         }
-        reject(new Error(`websocket handshake did not complete within ${handshakeTimeoutMs}ms`));
+        reject(
+          new Error(
+            `websocket handshake did not complete within ${handshakeTimeoutMs}ms`,
+          ),
+        );
       }, handshakeTimeoutMs);
       const settle = (fn) => (value) => {
         if (settled) return;
@@ -92,34 +104,41 @@ export class RawSocket {
             `Sec-WebSocket-Key: ${key}\r\n` +
             `Sec-WebSocket-Version: 13\r\n` +
             `Origin: ${this.origin}\r\n` +
-            `Cookie: ${this.cookie}\r\n\r\n`
+            `Cookie: ${this.cookie}\r\n\r\n`,
         );
       };
       this.socket = this.secure
         ? createTlsConnection(
-            { host: this.host, port: this.port, servername: this.host, rejectUnauthorized: this.rejectUnauthorized },
-            onOpen
+            {
+              host: this.host,
+              port: this.port,
+              servername: this.host,
+              rejectUnauthorized: this.rejectUnauthorized,
+            },
+            onOpen,
           )
         : createTcpConnection({ host: this.host, port: this.port }, onOpen);
       let settled = false;
-      this.socket.on('error', fail);
-      this.socket.on('data', (chunk) => {
+      this.socket.on("error", fail);
+      this.socket.on("data", (chunk) => {
         this.buffer = Buffer.concat([this.buffer, chunk]);
         if (!this.handshaken) {
-          const end = this.buffer.indexOf('\r\n\r\n');
+          const end = this.buffer.indexOf("\r\n\r\n");
           if (end < 0) return;
-          const head = this.buffer.subarray(0, end).toString('latin1');
+          const head = this.buffer.subarray(0, end).toString("latin1");
           this.buffer = this.buffer.subarray(end + 4);
-          if (!/ 101 /.test(head.split('\r\n')[0])) {
-            fail(new Error(`websocket handshake failed: ${head.split('\r\n')[0]}`));
+          if (!/ 101 /.test(head.split("\r\n")[0])) {
+            fail(
+              new Error(`websocket handshake failed: ${head.split("\r\n")[0]}`),
+            );
             return;
           }
           // The server's accept value proves the handshake, not just the status line.
-          const expected = createHash('sha1')
-            .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
-            .digest('base64');
+          const expected = createHash("sha1")
+            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
           if (!head.includes(expected)) {
-            fail(new Error('websocket accept value did not match'));
+            fail(new Error("websocket accept value did not match"));
             return;
           }
           this.handshaken = true;
@@ -153,10 +172,13 @@ export class RawSocket {
       const maskOffset = offset;
       if (masked) offset += 4;
       if (this.buffer.length < offset + length) return;
-      const payload = Buffer.from(this.buffer.subarray(offset, offset + length));
+      const payload = Buffer.from(
+        this.buffer.subarray(offset, offset + length),
+      );
       if (masked) {
         const mask = this.buffer.subarray(maskOffset, maskOffset + 4);
-        for (let index = 0; index < payload.length; index++) payload[index] ^= mask[index % 4];
+        for (let index = 0; index < payload.length; index++)
+          payload[index] ^= mask[index % 4];
       }
       this.buffer = this.buffer.subarray(offset + length);
       if (opcode === 0x8) {
@@ -175,7 +197,7 @@ export class RawSocket {
         continue;
       }
       if (opcode === 0xa) continue;
-      if (opcode === 0x1) this.onMessage(payload.toString('utf8'));
+      if (opcode === 0x1) this.onMessage(payload.toString("utf8"));
     }
   }
 
@@ -204,7 +226,7 @@ export class RawSocket {
   }
 
   send(text) {
-    const payload = Buffer.from(text, 'utf8');
+    const payload = Buffer.from(text, "utf8");
     const mask = randomBytes(4);
     let header;
     if (payload.length < 126) {
@@ -221,7 +243,8 @@ export class RawSocket {
       header.writeBigUInt64BE(BigInt(payload.length), 2);
     }
     const masked = Buffer.from(payload);
-    for (let index = 0; index < masked.length; index++) masked[index] ^= mask[index % 4];
+    for (let index = 0; index < masked.length; index++)
+      masked[index] ^= mask[index % 4];
     this.socket.write(Buffer.concat([header, mask, masked]));
   }
 
@@ -246,102 +269,110 @@ async function main() {
     return index < 0 ? fallback : args[index + 1];
   };
 
-  const base = (option('--base', process.env.BRRP_BASE_URL) || '').replace(/\/$/, '');
-  const cookie = option('--cookie', process.env.BRRP_COOKIE || '');
+  const base = (option("--base", process.env.BRRP_BASE_URL) || "").replace(
+    /\/$/,
+    "",
+  );
+  const cookie = option("--cookie", process.env.BRRP_COOKIE || "");
   if (!base || !cookie) {
-    console.error('usage: --base URL --cookie NAME=VALUE [--clients N] [--duration SECONDS]');
+    console.error(
+      "usage: --base URL --cookie NAME=VALUE [--clients N] [--duration SECONDS]",
+    );
     process.exit(2);
   }
-  const clientCount = Number(option('--clients', 5));
-  const durationSeconds = Number(option('--duration', 60));
-  const channelCount = Number(option('--channels', 4));
-  const intervalMs = Number(option('--interval-ms', 500));
-  const reportPath = option('--report', '');
-  const label = option('--label', 'ad-hoc');
+  const clientCount = Number(option("--clients", 5));
+  const durationSeconds = Number(option("--duration", 60));
+  const channelCount = Number(option("--channels", 4));
+  const intervalMs = Number(option("--interval-ms", 500));
+  const reportPath = option("--report", "");
+  const label = option("--label", "ad-hoc");
 
-const BUDGETS = {
-  delivery_p95_ms: 500,
-  delivery_p99_ms: 1000,
-  search_p95_ms: 1000,
-  search_p99_ms: 2000,
-  reconnect_p95_ms: 10000
-};
+  const BUDGETS = {
+    delivery_p95_ms: 500,
+    delivery_p99_ms: 1000,
+    search_p95_ms: 1000,
+    search_p99_ms: 2000,
+    reconnect_p95_ms: 10000,
+  };
 
-function percentile(values, fraction) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((left, right) => left - right);
-  // Nearest-rank, so the reported value is one that was actually observed rather than
-  // an interpolation between two that were not. An interpolated p99 is a number nobody
-  // measured.
-  const rank = Math.ceil(fraction * sorted.length);
-  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
-}
-
-function sourceCommit() {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  } catch {
-    return 'unknown';
-  }
-}
-
-class Client {
-  constructor(name) {
-    this.name = name;
-    this.delivery = [];
-    this.search = [];
-    this.reconnect = [];
-    this.socket = null;
-    this.sentAt = new Map();
-    this.stopped = false;
+  function percentile(values, fraction) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    // Nearest-rank, so the reported value is one that was actually observed rather than
+    // an interpolation between two that were not. An interpolated p99 is a number nobody
+    // measured.
+    const rank = Math.ceil(fraction * sorted.length);
+    return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
   }
 
-  async connect() {
-    const started = Date.now();
-    const target = new URL(base);
-    this.socket = new RawSocket({
-      host: target.hostname,
-      // 443/80 are the defaults only for their scheme. A run against a deployment on
-      // 8443 with an explicit port must use it, and a run against TLS must not fall
-      // back to the plaintext default.
-      port: Number(target.port) || (target.protocol === 'https:' ? 443 : 80),
-      path: '/ws',
-      secure: target.protocol === 'https:' || target.protocol === 'wss:',
-      cookie,
-      // The server requires the Origin to equal its configured base URL exactly, which
-      // is what a browser sends and what makes this a faithful client rather than a
-      // back door.
-      origin: base
-    });
-    this.socket.onMessage = (text) => {
-      let message;
-      try {
-        message = JSON.parse(text);
-      } catch {
-        return;
-      }
-      if (message.t === 'message.created' && this.sentAt.has(message.d?.id)) {
-        this.delivery.push(Date.now() - this.sentAt.get(message.d.id));
-        this.sentAt.delete(message.d.id);
-      }
-    };
-    await this.socket.connect();
-    this.reconnect.push(Date.now() - started);
-  }
-
-  close() {
-    this.stopped = true;
+  function sourceCommit() {
     try {
-      this.socket?.close();
+      return execFileSync("git", ["rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).trim();
     } catch {
-      // A closing socket is the expected end of a measurement run.
+      return "unknown";
     }
   }
-}
+
+  class Client {
+    constructor(name) {
+      this.name = name;
+      this.delivery = [];
+      this.search = [];
+      this.reconnect = [];
+      this.socket = null;
+      this.sentAt = new Map();
+      this.stopped = false;
+    }
+
+    async connect() {
+      const started = Date.now();
+      const target = new URL(base);
+      this.socket = new RawSocket({
+        host: target.hostname,
+        // 443/80 are the defaults only for their scheme. A run against a deployment on
+        // 8443 with an explicit port must use it, and a run against TLS must not fall
+        // back to the plaintext default.
+        port: Number(target.port) || (target.protocol === "https:" ? 443 : 80),
+        path: "/ws",
+        secure: target.protocol === "https:" || target.protocol === "wss:",
+        cookie,
+        // The server requires the Origin to equal its configured base URL exactly, which
+        // is what a browser sends and what makes this a faithful client rather than a
+        // back door.
+        origin: base,
+      });
+      this.socket.onMessage = (text) => {
+        let message;
+        try {
+          message = JSON.parse(text);
+        } catch {
+          return;
+        }
+        if (message.t === "message.created" && this.sentAt.has(message.d?.id)) {
+          this.delivery.push(Date.now() - this.sentAt.get(message.d.id));
+          this.sentAt.delete(message.d.id);
+        }
+      };
+      await this.socket.connect();
+      this.reconnect.push(Date.now() - started);
+    }
+
+    close() {
+      this.stopped = true;
+      try {
+        this.socket?.close();
+      } catch {
+        // A closing socket is the expected end of a measurement run.
+      }
+    }
+  }
 
   const started = Date.now();
   const clients = [];
-  for (let index = 0; index < clientCount; index++) clients.push(new Client(`client-${index}`));
+  for (let index = 0; index < clientCount; index++)
+    clients.push(new Client(`client-${index}`));
   for (const client of clients) await client.connect();
 
   // A search is measured from the client too, because search latency is a user-visible
@@ -350,9 +381,12 @@ class Client {
     const at = Date.now();
     // The real search route and its real parameter. A driver that invented its own
     // would measure a 400 rather than a search.
-    const response = await fetch(`${base}/api/search?q=${encodeURIComponent('load sample')}`, {
-      headers: { Cookie: cookie }
-    }).catch(() => null);
+    const response = await fetch(
+      `${base}/api/search?q=${encodeURIComponent("load sample")}`,
+      {
+        headers: { Cookie: cookie },
+      },
+    ).catch(() => null);
     if (response) {
       await response.text();
       return Date.now() - at;
@@ -364,12 +398,14 @@ class Client {
   const deadline = Date.now() + durationSeconds * 1000;
   let sent = 0;
   const primary = clients[0];
-  let channelID = '';
+  let channelID = "";
   try {
     const channels = await (
       await fetch(`${base}/api/channels`, { headers: { Cookie: cookie } })
     ).json();
-    channelID = Array.isArray(channels) ? channels.find((row) => row.type === 'text')?.id ?? '' : '';
+    channelID = Array.isArray(channels)
+      ? (channels.find((row) => row.type === "text")?.id ?? "")
+      : "";
   } catch {
     // Reported as an empty population rather than a fabricated one.
   }
@@ -381,11 +417,17 @@ class Client {
       // rather than a second one.
       const key = `load-${label}-${sent}`;
       const at = Date.now();
-      const response = await fetch(`${base}/api/channels/${channelID}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: cookie },
-        body: JSON.stringify({ content: `load sample ${sent}`, idempotency_key: key })
-      }).catch(() => null);
+      const response = await fetch(
+        `${base}/api/channels/${channelID}/messages`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: cookie },
+          body: JSON.stringify({
+            content: `load sample ${sent}`,
+            idempotency_key: key,
+          }),
+        },
+      ).catch(() => null);
       if (response?.ok) {
         const message = await response.json();
         // The publication path is what a socket client waits on; recording the send time
@@ -414,7 +456,7 @@ class Client {
       duration_seconds: durationSeconds,
       // Stated so a reader cannot mistake this for the plan's numbers: it is one host,
       // loopback, and whatever machine the run happened to land on.
-      note: 'one host, loopback clients; the master plan budgets are stated for the reference allocation and a LAN, so these figures are not comparable to them'
+      note: "one host, loopback clients; the master plan budgets are stated for the reference allocation and a LAN, so these figures are not comparable to them",
     },
     sent,
     delivery: {
@@ -422,28 +464,35 @@ class Client {
       p50_ms: percentile(delivery, 0.5),
       p95_ms: percentile(delivery, 0.95),
       p99_ms: percentile(delivery, 0.99),
-      max_ms: delivery.length ? Math.max(...delivery) : null
+      max_ms: delivery.length ? Math.max(...delivery) : null,
     },
     search: {
       samples: searchLatencies.length,
       p50_ms: percentile(searchLatencies, 0.5),
       p95_ms: percentile(searchLatencies, 0.95),
-      p99_ms: percentile(searchLatencies, 0.99)
+      p99_ms: percentile(searchLatencies, 0.99),
     },
-    reconnect: { samples: reconnect.length, p95_ms: percentile(reconnect, 0.95) },
+    reconnect: {
+      samples: reconnect.length,
+      p95_ms: percentile(reconnect, 0.95),
+    },
     budgets: BUDGETS,
     verdict: {
-      delivery_p95: delivery.length ? percentile(delivery, 0.95) <= BUDGETS.delivery_p95_ms : null,
-      search_p95: searchLatencies.length ? percentile(searchLatencies, 0.95) <= BUDGETS.search_p95_ms : null,
+      delivery_p95: delivery.length
+        ? percentile(delivery, 0.95) <= BUDGETS.delivery_p95_ms
+        : null,
+      search_p95: searchLatencies.length
+        ? percentile(searchLatencies, 0.95) <= BUDGETS.search_p95_ms
+        : null,
       // A verdict is `null` when there was nothing to measure, never `true`. A budget
       // with no samples has not been met.
-      note: 'a null verdict means the run measured nothing, not that the budget passed'
+      note: "a null verdict means the run measured nothing, not that the budget passed",
     },
-    wall_clock_seconds: Math.round((Date.now() - started) / 1000)
+    wall_clock_seconds: Math.round((Date.now() - started) / 1000),
   };
   if (reportPath) {
     mkdirSync(dirname(reportPath), { recursive: true });
-    writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+    writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
   }
   console.log(JSON.stringify(report, null, 2));
 }

@@ -22,11 +22,21 @@
 // and how an operator supplies it.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const options = { dir: process.env.BRRP_BASELINE_RELEASE_DIR || null, urlBase: process.env.BRRP_BASELINE_RELEASE_URL || null, dest: null };
+const options = {
+  dir: process.env.BRRP_BASELINE_RELEASE_DIR || null,
+  urlBase: process.env.BRRP_BASELINE_RELEASE_URL || null,
+  dest: null,
+};
 {
   const argv = process.argv.slice(2);
   for (let index = 0; index < argv.length; index += 1) {
@@ -42,7 +52,9 @@ const options = { dir: process.env.BRRP_BASELINE_RELEASE_DIR || null, urlBase: p
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const manifest = JSON.parse(readFileSync(join(root, "scripts", "baseline-releases.json"), "utf8"));
+const manifest = JSON.parse(
+  readFileSync(join(root, "scripts", "baseline-releases.json"), "utf8"),
+);
 
 function digestOf(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -58,15 +70,27 @@ function fail(message) {
 
 async function fetchBaseline(version, platform) {
   const entry = manifest.baselines?.[version];
-  if (!entry) fail(`no pinned identities are recorded for ${version} (known: ${Object.keys(manifest.baselines ?? {}).join(", ")})`);
-  const os = platform?.split("/")[0] ?? ({ darwin: "darwin", linux: "linux", win32: "windows" })[process.platform];
+  if (!entry)
+    fail(
+      `no pinned identities are recorded for ${version} (known: ${Object.keys(manifest.baselines ?? {}).join(", ")})`,
+    );
+  const os =
+    platform?.split("/")[0] ??
+    { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
   const arch = platform?.split("/")[1] ?? process.arch;
   const name = `brrpbrrp-${version}-${os}-${arch}.zip`;
   const wanted = entry.archives?.[name];
   if (!wanted) fail(`no pinned archive ${name} is recorded for ${version}`);
-  const destination = join(options.dest ?? join(root, "dist", "releases"), name);
+  const destination = join(
+    options.dest ?? join(root, "dist", "releases"),
+    name,
+  );
 
-  const local = options.dir ? join(options.dir, name) : existsSync(destination) ? destination : null;
+  const local = options.dir
+    ? join(options.dir, name)
+    : existsSync(destination)
+      ? destination
+      : null;
   if (local && existsSync(local)) {
     const digest = digestOf(local);
     if (digest === wanted) {
@@ -74,20 +98,28 @@ async function fetchBaseline(version, platform) {
         mkdirSync(dirname(destination), { recursive: true });
         writeFileSync(destination, readFileSync(local));
       }
-      console.log(`ok  ${name} — sha256 ${digest} (${statSync(destination).size} bytes, verified at ${destination})`);
+      console.log(
+        `ok  ${name} — sha256 ${digest} (${statSync(destination).size} bytes, verified at ${destination})`,
+      );
       return destination;
     }
-    fail(`${local} is present but its sha256 ${digest} does not match the pinned ${wanted}`);
+    fail(
+      `${local} is present but its sha256 ${digest} does not match the pinned ${wanted}`,
+    );
   }
   if (!options.urlBase)
-    fail(`${name} is not at ${destination} and no source is configured (--dir/BRRP_BASELINE_RELEASE_DIR, --url-base/BRRP_BASELINE_RELEASE_URL)`);
+    fail(
+      `${name} is not at ${destination} and no source is configured (--dir/BRRP_BASELINE_RELEASE_DIR, --url-base/BRRP_BASELINE_RELEASE_URL)`,
+    );
   const url = `${options.urlBase.replace(/\/$/, "")}/${name}`;
   const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
   if (!response.ok) fail(`GET ${url} answered HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (digest !== wanted)
-    fail(`${url} downloaded ${bytes.length} bytes with sha256 ${digest}, not the pinned ${wanted}`);
+    fail(
+      `${url} downloaded ${bytes.length} bytes with sha256 ${digest}, not the pinned ${wanted}`,
+    );
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, bytes);
   console.log(`ok  ${name} — sha256 ${digest} (fetched from ${url})`);
@@ -97,20 +129,44 @@ async function fetchBaseline(version, platform) {
 function selfTest() {
   const problems = [];
   const expectEq = (name, actual, wanted) => {
-    if (actual !== wanted) problems.push(`${name}: ${JSON.stringify(actual)} != ${JSON.stringify(wanted)}`);
+    if (actual !== wanted)
+      problems.push(
+        `${name}: ${JSON.stringify(actual)} != ${JSON.stringify(wanted)}`,
+      );
   };
   const alpha5 = manifest.baselines["0.4.0-alpha.5"];
-  expectEq("every baseline records sha256-length digests", Object.values(manifest.baselines).every((entry) =>
-    Object.values(entry.archives).every((digest) => /^[0-9a-f]{64}$/.test(digest))), true);
-  expectEq("the packaged checkpoint names six native archives", Object.keys(alpha5.archives).length, 6);
-  expectEq("the legacy baseline names six native archives", Object.keys(manifest.baselines["0.4.0-alpha.3"].archives).length, 6);
-  expectEq("the pinned manifest rejects an unknown version", manifest.baselines["0.0.0-imaginary"] === undefined, true);
+  expectEq(
+    "every baseline records sha256-length digests",
+    Object.values(manifest.baselines).every((entry) =>
+      Object.values(entry.archives).every((digest) =>
+        /^[0-9a-f]{64}$/.test(digest),
+      ),
+    ),
+    true,
+  );
+  expectEq(
+    "the packaged checkpoint names six native archives",
+    Object.keys(alpha5.archives).length,
+    6,
+  );
+  expectEq(
+    "the legacy baseline names six native archives",
+    Object.keys(manifest.baselines["0.4.0-alpha.3"].archives).length,
+    6,
+  );
+  expectEq(
+    "the pinned manifest rejects an unknown version",
+    manifest.baselines["0.0.0-imaginary"] === undefined,
+    true,
+  );
   if (problems.length) {
     console.error("baseline manifest self-test failed:");
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  console.log("Baseline manifest self-test passed: every pinned identity is a sha256 digest, both baselines name six platform archives, and unknown versions are refused.");
+  console.log(
+    "Baseline manifest self-test passed: every pinned identity is a sha256 digest, both baselines name six platform archives, and unknown versions are refused.",
+  );
 }
 
 if (options.selfTest) {

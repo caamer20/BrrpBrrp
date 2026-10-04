@@ -18,12 +18,18 @@
 //
 // Usage: node scripts/check-schema-docs.mjs [--self-test]
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // The documents that state the schema, how each one phrases it, and whether a clone is
 // expected to contain it. A document that stops stating a schema entirely is not an
@@ -34,18 +40,31 @@ const CLAIMS = [
   // Anchored, because this document also states the *backup format*, whose number is
   // written the same way and is a different thing entirely. An unanchored match reads
   // "schema 24, backup format 2" as schema 2.
-  ['docs/v1-implementation-plan.md', /schema (\d+), backup format/, { required: true }],
-  ['docs/deployment.md', /current source candidate writes schema (\d+)/, { required: true }],
+  [
+    "docs/v1-implementation-plan.md",
+    /schema (\d+), backup format/,
+    { required: true },
+  ],
+  [
+    "docs/deployment.md",
+    /current source candidate writes schema (\d+)/,
+    { required: true },
+  ],
   // An operator note: present in a working checkout, absent from a fresh clone.
-  ['docs/next-release.md', /schema (\d+)/, { required: false }]
+  ["docs/next-release.md", /schema (\d+)/, { required: false }],
 ];
 
 // schemaNumber reads the schema the binary writes from the migration registry, which is
 // the source of truth `SchemaVersion` is derived from, so this cannot disagree with what
 // ships.
 export function schemaNumber(tree) {
-  const migrations = readFileSync(join(tree, 'internal/db/migrations.go'), 'utf8');
-  const versions = [...migrations.matchAll(/\{Version:\s*(\d+),/g)].map((match) => Number(match[1]));
+  const migrations = readFileSync(
+    join(tree, "internal/db/migrations.go"),
+    "utf8",
+  );
+  const versions = [...migrations.matchAll(/\{Version:\s*(\d+),/g)].map(
+    (match) => Number(match[1]),
+  );
   if (!versions.length) return null;
   return Math.max(...versions);
 }
@@ -56,10 +75,12 @@ export function checkClaims(tree, schema, claims = CLAIMS) {
   for (const [path, pattern, options] of claims) {
     if (!existsSync(join(tree, path))) {
       if (options?.required === false) continue;
-      problems.push(`${path} does not exist, so the schema it states cannot be checked`);
+      problems.push(
+        `${path} does not exist, so the schema it states cannot be checked`,
+      );
       continue;
     }
-    const text = readFileSync(join(tree, path), 'utf8');
+    const text = readFileSync(join(tree, path), "utf8");
     const match = pattern.exec(text);
     if (!match) {
       problems.push(`${path} states no schema number this check can verify`);
@@ -67,61 +88,83 @@ export function checkClaims(tree, schema, claims = CLAIMS) {
     }
     const stated = Number(match[1]);
     if (stated !== schema) {
-      problems.push(`${path} states schema ${stated}, but the binary writes schema ${schema}`);
+      problems.push(
+        `${path} states schema ${stated}, but the binary writes schema ${schema}`,
+      );
     }
   }
   return problems;
 }
 
 function selfTest() {
-  const tree = mkdtempSync(join(tmpdir(), 'brrp-schema-docs-'));
+  const tree = mkdtempSync(join(tmpdir(), "brrp-schema-docs-"));
   let failures = 0;
   const expect = (name, condition) => {
-    console.log(`  ${condition ? 'ok  ' : 'FAIL'}  ${name}`);
+    console.log(`  ${condition ? "ok  " : "FAIL"}  ${name}`);
     if (!condition) failures += 1;
   };
   try {
     writeFileSync(
-      join(tree, 'plan.md'),
-      'The current source candidate writes schema 25, backup format 2.\n'
+      join(tree, "plan.md"),
+      "The current source candidate writes schema 25, backup format 2.\n",
     );
-    writeFileSync(join(tree, 'deployment.md'), 'The current source candidate writes schema 25.\n');
+    writeFileSync(
+      join(tree, "deployment.md"),
+      "The current source candidate writes schema 25.\n",
+    );
     const claims = [
-      ['plan.md', /schema (\d+), backup format/, { required: true }],
-      ['deployment.md', /schema (\d+)/, { required: true }],
-      ['next-release.md', /schema (\d+)/, { required: false }]
+      ["plan.md", /schema (\d+), backup format/, { required: true }],
+      ["deployment.md", /schema (\d+)/, { required: true }],
+      ["next-release.md", /schema (\d+)/, { required: false }],
     ];
 
     // A fresh clone: the optional note is absent and that is not a problem.
-    expect('a tree without the untracked note passes', checkClaims(tree, 25, claims).length === 0);
+    expect(
+      "a tree without the untracked note passes",
+      checkClaims(tree, 25, claims).length === 0,
+    );
 
     // A required document that states the wrong number still fails.
-    writeFileSync(join(tree, 'deployment.md'), 'The current source candidate writes schema 24.\n');
+    writeFileSync(
+      join(tree, "deployment.md"),
+      "The current source candidate writes schema 24.\n",
+    );
     expect(
-      'a wrong number in a required document fails',
-      checkClaims(tree, 25, claims).some((problem) => problem.includes('schema 24'))
+      "a wrong number in a required document fails",
+      checkClaims(tree, 25, claims).some((problem) =>
+        problem.includes("schema 24"),
+      ),
     );
 
     // A required document that is missing fails rather than being skipped.
-    rmSync(join(tree, 'deployment.md'));
+    rmSync(join(tree, "deployment.md"));
     expect(
-      'a missing required document fails',
-      checkClaims(tree, 25, claims).some((problem) => problem.includes('does not exist'))
+      "a missing required document fails",
+      checkClaims(tree, 25, claims).some((problem) =>
+        problem.includes("does not exist"),
+      ),
     );
 
     // A tracked document that stopped stating a number fails: otherwise the gate would
     // pass while checking nothing.
-    writeFileSync(join(tree, 'deployment.md'), 'Schema version is documented elsewhere.\n');
+    writeFileSync(
+      join(tree, "deployment.md"),
+      "Schema version is documented elsewhere.\n",
+    );
     expect(
-      'a required document with no statement fails',
-      checkClaims(tree, 25, claims).some((problem) => problem.includes('states no schema'))
+      "a required document with no statement fails",
+      checkClaims(tree, 25, claims).some((problem) =>
+        problem.includes("states no schema"),
+      ),
     );
 
     // When the optional note is present, its number is checked like anybody else's.
-    writeFileSync(join(tree, 'next-release.md'), 'Alpha, schema 21.\n');
+    writeFileSync(join(tree, "next-release.md"), "Alpha, schema 21.\n");
     expect(
-      'a wrong number in the present note fails',
-      checkClaims(tree, 25, claims).some((problem) => problem.includes('next-release.md'))
+      "a wrong number in the present note fails",
+      checkClaims(tree, 25, claims).some((problem) =>
+        problem.includes("next-release.md"),
+      ),
     );
   } finally {
     rmSync(tree, { recursive: true, force: true });
@@ -130,25 +173,29 @@ function selfTest() {
     console.log(`\n${failures} schema-documentation self-test failure(s).`);
     process.exit(1);
   }
-  console.log('Schema-documentation checks: self-test passed (5 cases).');
+  console.log("Schema-documentation checks: self-test passed (5 cases).");
 }
 
 function main() {
   const schema = schemaNumber(root);
   if (schema === null) {
-    console.error('no migrations found in internal/db/migrations.go — cannot check the schema');
+    console.error(
+      "no migrations found in internal/db/migrations.go — cannot check the schema",
+    );
     process.exit(1);
   }
   const problems = checkClaims(root, schema);
   if (problems.length) {
-    console.error(`Schema documentation is out of date (the binary writes schema ${schema}):`);
+    console.error(
+      `Schema documentation is out of date (the binary writes schema ${schema}):`,
+    );
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
   console.log(`Documentation schema: all statements match schema ${schema}.`);
 }
 
-if (process.argv.includes('--self-test')) {
+if (process.argv.includes("--self-test")) {
   selfTest();
 } else {
   main();

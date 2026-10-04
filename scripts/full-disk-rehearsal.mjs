@@ -37,14 +37,11 @@ import {
   buildBinary,
   createRehearsal,
   freePort,
-  installTeardown,
   multipart,
   run,
   startServer,
   stopServer,
 } from "./rehearsal-kit.mjs";
-
-installTeardown((code) => process.exit(code));
 const { checks, transcript, say, check } = createRehearsal();
 
 const options = parseArgs(process.argv.slice(2));

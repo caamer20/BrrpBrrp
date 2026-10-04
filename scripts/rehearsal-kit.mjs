@@ -134,6 +134,11 @@ export async function startServer(
     stdio: ["ignore", "pipe", "pipe"],
   });
   trackChild(child);
+  // A spawn *error* (binary missing, fork failed) arrives asynchronously on 'error', long
+  // after the process.on('exit') wiring above would have fired. Without a listener it's an
+  // uncaught exception; with one it lands in the same log the rehearsal keeps next to the
+  // ready wait, and the exit handlers still kill any tracked child that never scheduled.
+  child.on("error", (error) => log.push(`spawn failed: ${error.message}\n`));
   child.stdout.on("data", (chunk) => log.push(chunk.toString()));
   child.stderr.on("data", (chunk) => log.push(chunk.toString()));
   const base = `http://127.0.0.1:${port}`;
@@ -229,26 +234,8 @@ export function multipart(filename, content) {
   };
 }
 
-// installTeardown makes a rehearsal tear its servers down on every exit path. It is a
-// function rather than module-level wiring so an imported kit cannot kill a caller's
-// children by accident.
-export function installTeardown(exit) {
-  process.on("exit", killLiveChildren);
-  for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, async () => {
-      console.error(
-        `Rehearsal interrupted (${signal}); stopping rehearsal servers.`,
-      );
-      // SIGTERM first so a server can close its database cleanly; the exit-handler
-      // backstop and killLiveChildren cover one that refuses.
-      for (const child of liveChildren) child.kill("SIGTERM");
-      await new Promise((done) => setTimeout(done, 1500));
-      killLiveChildren();
-      exit(1);
-    });
-  }
-}
-
+// Teardown is installed by importing this module: the process wiring above. A rehearsal
+// that also called an installer would run the grace period twice per signal.
 /**
  * Creates the run's transcript and its check function.
  *

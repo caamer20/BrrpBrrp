@@ -62,15 +62,12 @@ import {
   untrackChild,
   createRehearsal,
   freePort,
-  installTeardown,
   killLiveChildren,
   multipart,
   run,
   startServer,
   stopServer,
 } from "./rehearsal-kit.mjs";
-
-installTeardown((code) => process.exit(code));
 const { checks, transcript, say, check } = createRehearsal();
 // The rollback rehearsal keeps a coverage table of its own beside the check list: it runs
 // against two executables and has to record which of its assertions the older one could
