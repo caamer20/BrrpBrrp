@@ -1,12 +1,11 @@
 # v1 implementation progress and evidence ledger
 
-**Last updated:** 4 October 2026 (Phase B closed; the acceptance matrix and the browser
-evidence loops are the current record)
+**Last updated:** 4 October 2026 (Phase B features closed; alpha.9 packaged and consumed at 55b2c30)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
-**Candidate:** **0.4.0-alpha.8** (schema **25**, backup format **2**)
+**Candidate:** **0.4.0-alpha.9** (schema **25**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
-**Current evidence:** [alpha.8 release record](releases/0.4.0-alpha.8.md)
-**Prior candidate:** [alpha.7](releases/0.4.0-alpha.7.md)
+**Current evidence:** [alpha.9 release record](releases/0.4.0-alpha.9.md)
+**Prior candidate:** [alpha.8](releases/0.4.0-alpha.8.md)
 **Execution ledger:** `planning/v1-execution-ledger-2026-10-01.md` in the repository
 **Historical finding record:** [completion-remediation-2026-09-24.md](completion-remediation-2026-09-24.md)
 **Assessment:** substantial local implementation progress; no G0–G8 release gate has passed. Earlier dated reviews describe their inspected snapshot. They do not override this candidate's implementation or supply missing host/independent acceptance.
