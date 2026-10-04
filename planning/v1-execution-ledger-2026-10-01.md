@@ -1861,6 +1861,31 @@ owner's decisions have already fixed and the ones with no external dependency.
   either ever matters.
 
 
+### 11x. The final pass through this session's own checkpoint
+
+- **Final tree:** `84ea142` (this writing's commit) plus the queued follow-ups the same
+  run landed after flagging. The two convergence rounds produced three findings, all of
+  which are now fixed and proven: the refused-share blindness (testable by
+  `a refused publication stops the capture and does not blind the room` /
+  `a share cancelled by an audience change never publishes and never holds`), the misnamed
+  acceptance-matrix reference (the gate itself caught the third bug — today's alpha.9 tree
+  with the new J-rows would not have passed on the tree the gate was measured against), and
+  the kit's double-teardown wiring (rehearsals' SIGINT/SIGTERM handler now installed once
+  by import; the spawn-failure path now has an error listener rather than an uncaught
+  exception for the whole run).
+- **One deferred-but-documented item:** the negative/acceptance matrices' debt fields are
+  current; the reviewer-schema stability warning in the CI step is not yet covered
+  in the browser-step audit because audit scope is fixed at the two browser run steps; a
+  later round can pick it up.
+- **Latest evidence sweep at this tree:** `go test ./...` 11 packages green (API 8 s);
+  365 frontend unit tests; `svelte-check` 0/0 over 158 files; prettier/gofmt/tidy clean;
+  `make check` green on a fresh clone of this exact commit; the 20-run voice loop plus the
+  pairwise browser runs hold; the new full-disk and encrypted rehearsals each run green
+  under the kit.
+- **What is still owed, unchanged:** the two feature gates' default-on flip stays with the
+  owner; no release is named until a remote exists and hosted CI runs.
+
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
