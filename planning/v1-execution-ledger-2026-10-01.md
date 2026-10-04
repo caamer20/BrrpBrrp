@@ -1741,6 +1741,37 @@ owner's decisions have already fixed and the ones with no external dependency.
   acceptance matrix's T-AUTH-01 row, and the plan's own full walk (a private channel, a thread
   inside it, a DM and a group on a physical second device) remains owed to phase D.
 
+### 11s. 0.4.0-alpha.9 packaged from a clean commit, and Phase A's exit proven on a fresh clone
+
+- **Commits:** `55b2c30` (0.4.0-alpha.9 version bump — `internal/app/version.go`,
+  `web/package.json`, both lockfile records, and the release script's flag default, with
+  `TestVersionIdentityAgrees` green before packaging), `f810f0c` (four new scripts added to
+  the source-package contents list after the first fresh-clone run failed on exactly that),
+  `d8f638e` (the release record and consumer evidence).
+- **Packaging:** archives rebuilt twice and the first two discarded — once for a dirty tree
+  (the bump was uncommitted; the record would have read `vcs.modified=true`), once after
+  `check-source-package.mjs` on the fresh-clone run failed because the Makefile referenced
+  `probe.mjs`, the two new rehearsals and the kit while the source archive did not contain
+  them. The final set was built from clean `f810f0c`: six native archives plus the Docker
+  source package, all seven digests checked with `shasum -a 256 -c` from their own lists.
+- **Consumer evidence on the extracted darwin/amd64 bytes:** `brrpbrrp version` prints
+  exactly `BrrpBrrp 0.4.0-alpha.9` and reports `vcs.revision=f810f0c`,
+  `vcs.modified=false`; `scripts/check-package.mjs` passes — CLI setup, backup, restore,
+  a refused second restore, the data-folder lock, healthcheck, the non-HTTPS guard, the
+  embedded UI and manifest, and a graceful stop. (Five consecutive passes at ~0.7 s each
+  against the first build of the same content; the final build passes identically.)
+- **Phase A exit criterion proven on a fresh export of HEAD:** `git archive HEAD` into a
+  scratch directory with no `node_modules`, no `.tools`, and no `docs/next-release.md`;
+  `npm ci`; `make check` exits 0 — this covers the *checked-in* gate set (`go vet`, gofmt,
+  `go mod tidy -diff`, the acceptance-matrix check, the source/package checks, the
+  browser-step audit's lints, and the docs checks that previously depended on an
+  untracked operator note).
+- **Not claimed:** the Linux/Windows archives' execution (no host for them here), and a
+  *hosted* CI run of the same gates — the `.github/workflows/check.yml` job graph is
+  validated statically plus by stub-driven audit, and the first real hosted run is its own
+  Phase C item waiting on the owner's remote.
+
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
