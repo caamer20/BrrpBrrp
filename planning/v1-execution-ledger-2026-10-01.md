@@ -1687,6 +1687,21 @@ owner's decisions have already fixed and the ones with no external dependency.
   rather than hidden), and the acceptance matrix — T-DATA-01 now carries the rehearsal as a
   check, with the every-fixture-generation interruption run left owed to Phase D.
 
+### 11q. The whole-tree race sweep against this session's code
+
+- **Command:** `.tools/go/bin/go test -race -count=1 -timeout 60m ./...` — the same command
+  CI runs, at the tree this session leaves behind.
+- **Result:** every package ok — **thirteen packages, zero data races** — including
+  `internal/rtc` (40 s, the media path with its new forwarded/dropped counters), the metrics
+  package (with its concurrent-recording test), and the API package with the measuring
+  middleware and the new `/api/admin/metrics` route. The API package is the long pole under
+  the race detector and the number is recorded rather than the wall time of the whole sweep,
+  because that is the figure the plan's budget discussion refers to.
+- **What it covers that the non-race suite does not:** the counters added this session are
+  atomic adds on a hot path (one per forwarded packet) and the recorder is a mutex-guarded map
+  written by every request; both are exactly the shapes a race detector exists for, and a
+  plain `go test ./...` would not have noticed an unsynchronised one.
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
