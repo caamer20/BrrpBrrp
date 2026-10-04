@@ -1,6 +1,7 @@
 # v1 implementation progress and evidence ledger
 
-**Last updated:** 1 October 2026 (review-17 handoff, first tranche)
+**Last updated:** 4 October 2026 (Phase B closed; the acceptance matrix and the browser
+evidence loops are the current record)
 **Baseline reviewed:** 0.4.0-alpha.3 (schema 2)
 **Candidate:** **0.4.0-alpha.8** (schema **25**, backup format **2**)
 **Plan:** [v1-implementation-plan.md](v1-implementation-plan.md)
@@ -467,10 +468,22 @@ Review 8 itself changed documentation only; the fixes above are the P8 tranche's
 | WP-11 groups and blocking                                  | **Groups, invitations, blocking and group policy implemented behind the private gate; locally verified**                      | Consenting group invitations with explicit acceptance, ownership, membership and history lifecycle, shared-group block policy and private evidence all exist and are locally tested (ADR 0016, ADR 0013); direct block/unblock preserves accepted history, stops contact mutations and never replays refused sends. The group surfaces ship behind `BRRP_ENABLE_PRIVATE_CONVERSATIONS` until the independent review and deployment qualification open it. |
 | WP-12 account lifecycle                                    | **Community removal, direct and group cleanup, and member export implemented**                                                | Recent-auth typed confirmation, immutable Deleted member identity, transactional cleanup and retained history; separate account/message erasure path. Member data export is a verified snapshot with per-request re-authorization, registered delivery, expiry and erasure (ADR 0019b); group membership/history follows removal and erasure. Policy ratification and post-snapshot reconciliation of a live server remain (ADRs 0011–0012). |
 | WP-15 moderation                                           | **Community and private selected-message evidence implemented behind separate authorities**                                       | Durable posting intervals, per-reporter deduplication, rate limits, current-readable-channel review, audit and 90-day expiry from report creation for community messages. Moderation timeouts are applied as a community decision — audited, enforced against live accounts, lifted with exactly the assignments they recorded. Private direct-message evidence is a separate store and capability: one server-confirmed snapshot a reporter explicitly confirms, `report.review_private` for review, read (not write) eligibility so a blocked participant can report retained history, edit-before-confirm refusal, durable hourly limits, and nonpunitive resolve/reopen that neither deletes nor bans (ADR 0013). Report assignment, invitation-abuse workflow, file evidence and policy qualification remain. |
-| WP-13, WP-16–22, WP-24–33                                  | **Partly built; the remaining work is qualification, review and release, not features alone**                                 | Named and archived threads with independent read state are built (ADR 0017) and no longer belong in this row. The video feedback path (keyframe requests from a viewer to the publisher, and telling a late joiner that a share is running), the screen presets and per-publication bitrate ceilings (2.5 Mbit/s picture, 64 kbit/s screen audio, enforced at ingress), and the codec policy (the client's own codec order decides, with VP8 carried as well as H264 and a Firefox project running the media journeys) closed on 2 October. What remains: viewer controls, output-device selection, storage quota and disk guards, bounded metrics, off-host encrypted backup, both host lifecycles (Windows native and Linux Docker), the capacity and soak measurements, the independent reviews, the beta and the final release. (The protocol handshake and the reconnect policy closed on 2 October as well.) Existing UI improvements and local packaging are partial evidence, not completed work packages. |
+| WP-13, WP-16–22, WP-24–33                                  | **Partly built; the remaining work is qualification, review and release, not features alone**                                 | Named and archived threads with independent read state are built (ADR 0017) and no longer belong in this row. Every Phase B row closed: the video feedback path, the screen presets and per-publication ceilings (2.5 Mbit/s picture, 64 kbit/s screen audio, enforced at ingress), the codec policy with a Firefox project, the viewer controls with a phone layout and audio-only, output-device selection and the measured rejoin budget, the storage quota and disk guards, emphasis and block quotes, the member profile, Back/Forward, bounded metrics with an external probe, and the encrypted off-host backup with its own rehearsal. What remains is evidence this machine cannot produce: both host lifecycles (Windows native and Linux Docker), physical devices, the capacity and soak measurements, the independent security and accessibility reviews, the beta and the final release. `planning/acceptance-matrix.json` is the authoritative list — fourteen owed items, each naming what is missing and which phase owns it, checked against the plan by `make check`. |
 
 No gate (G0–G8) has passed, and no capacity, latency, media or recovery target in
 section 10 is claimed.
+
+**What is proved locally, as of 4 October.** Every Phase B row has its code, its tests and
+its ledger entry. The plan's own scenario catalog is machine-checked: twenty-nine scenarios,
+132 named checks, fourteen owed items — the owed list is printed by every `make check` and
+every CI run rather than left in prose. The voice project passed **twenty consecutive runs**
+(14 journeys each, artifacts retained per run) after three loops that did not, whose failures
+were three harness defects and two environment timeouts rather than product defects. Two
+rendered proofs the plan listed as owed are now real journeys: a thousand-reply thread walked
+in a browser (gated behind `BRRP_E2E_SCALE=1`) and an Arabic message composed, rendered
+right-to-left and searched — the second of which found that the direction rule had been
+written as `direction: auto`, which is not a CSS value, so Arabic had been rendering
+left-to-right since the rule was added.
 
 The 24 September 2026 second review added findings R2-01–R2-10 and the P2 plan. Its
 progress is recorded item by item in §6 of
