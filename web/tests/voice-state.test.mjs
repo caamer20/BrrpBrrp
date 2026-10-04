@@ -76,6 +76,21 @@ export const SCREEN_PRESETS = {
 export const screenPresetFromValue = value => (value === 'text' ? 'text' : 'motion');
 export const presetApplications = [];
 export const applyScreenPreset = async (sender, preset) => { presetApplications.push(preset); return true; };
+// The capture seam, the way real tests drive a share without a browser picker: what the
+// browser would have delivered, in one answer, from a stub rather than a hardware dialog.
+export let requestedScreen = { state: 'cancelled' };
+export const setRequestedScreen = next => { requestedScreen = next; };
+export const requestScreen = async () => requestedScreen;
+export const screenShareMessage = () => '';
+export const screenAudioMessage = () => '';
+export const screenAudioOutcome = () => '';
+export const canShareScreen = () => true;
+export const captureStillWanted = () => ({ ok: true });
+export const stopScreen = stream => { for (const track of stream.getTracks()) track.stop?.(); };
+export const stoppedWatchers = [];
+export let releasedWatches = 0;
+export const bumpReleased = () => { releasedWatches += 1; };
+export const onCaptureEnded = (stream, end) => { return () => bumpReleased(); };
 `;
 const {
   Voice,
@@ -87,7 +102,8 @@ const {
   newAudio,
   newStream,
   storedValues,
-  peers
+  peers,
+  setRequestedScreen
 } = await import(
   'data:text/javascript;base64,' +
     Buffer.from(prelude + screenReceive + compiled).toString('base64')
@@ -460,4 +476,61 @@ test('choosing a preset applies it to the share that is running', async () => {
   await voice.setScreenPreset('motion');
   assert.equal(voice.screenPreset, 'motion');
   assert.deepEqual(presetApplications, ['text']);
+});
+
+// A *failed* publication. The room can refuse, the connection can drop mid-prompt, or the
+// negotiation can report no peer. Whatever the cause, the client must let go of the share:
+// it holds the browser's capture indicator as stop evidence only while it might deliver
+// media, and dropping that hold on itself was how a refused publication left the client
+// believing it shared - and permanently blind to everyone else's shares until the call
+// ended, because `attachScreen` takes `if (this.capture) return` seriously.
+test('a refused publication stops the capture and does not blind the room', async () => {
+  const voice = new Voice();
+  voice.channelId = 'old';
+  voice.peer = null; // negotiation cannot send without one — the transport-level refusal
+  const track = {
+    kind: 'video',
+    enabled: true,
+    stopped: false,
+    stop() {
+      this.stopped = true;
+    }
+  };
+  setRequestedScreen({ state: 'sharing', stream: newStream([track]) });
+  await voice.startScreenShare();
+  assert.equal(voice.screenState, 'failed');
+  assert.match(voice.screenMessage, /not shared/i);
+  // The browser indicator is released with the stream, and *nothing about the attempted
+  // share tolerates later screen work*: not the capture guard, and not the capture-ended
+  // watcher that would still react to a share that no longer exists.
+  assert.equal(voice.screenStream, null, 'the refused stream stayed recorded');
+  assert.equal(voice.capture, null, 'the stopped stream still claims to be captured');
+  // A share somebody else starts later must still land. The original defect made this
+  // assertion fail: `attachScreen` bows out whenever `capture` is set, so once refused,
+  // every later publication rendered as nothing at all.
+  const later = newStream([{ kind: 'video', enabled: true }]);
+  voice.attachScreen(later);
+  assert.equal(voice.screenStream, later, 'a later share was never attached');
+  assert.equal(voice.screenShared, true);
+});
+
+test('a refused publication detaches the capture watch', async () => {
+  const voice = new Voice();
+  voice.channelId = 'old';
+  voice.peer = null;
+  const track = {
+    kind: 'video',
+    enabled: true,
+    stopped: false,
+    stop() {
+      this.stopped = true;
+    }
+  };
+  setRequestedScreen({ state: 'sharing', stream: newStream([track]) });
+  await voice.startScreenShare();
+  assert.equal(voice.screenState, 'failed');
+  // The capture-ended watcher is registered before publication so the browser's own Z
+  // button cleaning up can be heard. It must be released when the share is refused: an
+  // unreleased watch answering a share that is not running never frees the indicator.
+  assert.equal(voice.releaseScreenWatch, null);
 });

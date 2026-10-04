@@ -1445,6 +1445,89 @@ test('two members hold a private call, and a third account cannot reach it', asy
 // others; the state is the server's, so it survives a reopen; and a row that arrives
 // afterwards is not swallowed by the earlier press — which is what "acknowledge
 // everything at or below the newest row shown" means, made visible.
+// The acknowledge endpoint is account-scoped, not tab-scoped. The plan's "two browser
+// profiles" proof is two independent browser contexts of one account reaching agreement
+// through the server: one marks the row seen, the other has to fetch fresh on reopen, and
+// the state it finds must match — an ack in one window would otherwise leave the other
+// reading a stale counter forever.
+test('an acknowledgment in one profile is what the other profile reads back', async ({
+  page,
+  request,
+  browser
+}) => {
+  test.setTimeout(180000);
+  const alice = { username: 'two_profile_alice', password: 'a two-profile alice passphrase' };
+  const bob = { username: 'two_profile_bob', password: 'a two-profile bob passphrase' };
+  await signInOverApi(request);
+  const aliceID = await createAccount(request, alice);
+  const bobID = await createAccount(request, bob);
+  await signInOverApi(request, bob);
+  const asked = await request.post('/api/directs', {
+    data: { user_id: aliceID, introduction: 'from one profile' }
+  });
+  expect(asked.status()).toBe(201);
+  const pair = await asked.json();
+  await signInOverApi(request, alice);
+  expect((await request.post(`/api/directs/${pair.id}/accept`, { data: {} })).status()).toBe(200);
+  await signInOverApi(request, bob);
+  const sent = await request.post(`/api/conversations/${pair.id}/messages`, {
+    data: { content: 'a message to acknowledge from either side', idempotency_key: randomUUID() }
+  });
+  expect(sent.status()).toBe(201);
+
+  // A second browser profile of the same account: full storage isolation, same server.
+  const otherContext = await browser.newContext({ baseURL: process.env.BRRP_E2E_BASE_URL });
+  const other = await otherContext.newPage();
+  try {
+    await signIn(page, alice);
+    await other.goto(process.env.BRRP_E2E_BASE_URL);
+    await signIn(other, alice);
+
+    // Both profiles see one unacknowledged row, and the button reports the same count.
+    const openActivityOf = async (target) => {
+      await target.getByRole('button', { name: /^Messages and requests/ }).click();
+      const dialog = target.getByRole('dialog', { name: 'Messages', exact: true });
+      await dialog.getByRole('button', { name: 'Activity' }).click();
+      const region = dialog.getByRole('region', { name: 'Activity' });
+      await expect(region).toBeVisible();
+      return { dialog, region };
+    };
+    const here = await openActivityOf(page);
+    const there = await openActivityOf(other);
+    for (const { dialog } of [here, there]) {
+      await expect(dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveText(
+        'Mark 1 seen'
+      );
+      // The row itself is present but not yet marked.
+      await expect(
+        dialog.getByText('a message to acknowledge from either side')
+      ).toBeVisible();
+      await expect(activityFeed(dialog).getByText('· seen')).toHaveCount(0);
+    }
+
+    // Acknowledge in the first profile only.
+    await here.dialog.getByRole('button', { name: 'Mark 1 seen' }).click();
+    await expect(here.dialog.getByRole('button', { name: /^Mark \d+ seen$/ })).toHaveCount(0);
+    await expect(activityFeed(here.dialog).getByText('· seen')).toHaveCount(1);
+
+    // The second profile is still open: it has not been re-read. That's the rule the row
+    // exists to prove — the server answered the ack, not the shared tab state this account
+    // happens to be sharing with itself on this machine.
+    await expect(
+      activityFeed(there.dialog).getByText('· seen')
+    ).toHaveCount(0);
+    // A fresh open on that profile re-reads from the server and finds the cleared count.
+    await there.dialog.getByRole('button', { name: 'Close dialog' }).click();
+    const thereAgain = await openActivityOf(other);
+    await expect(
+      thereAgain.dialog.getByRole('button', { name: /^Mark \d+ seen$/ })
+    ).toHaveCount(0);
+    await expect(activityFeed(thereAgain.dialog).getByText('· seen')).toHaveCount(1);
+  } finally {
+    await otherContext.close();
+  }
+});
+
 test('activity acknowledgment marks exactly the rows it reported and survives a reopen', async ({
   page,
   request

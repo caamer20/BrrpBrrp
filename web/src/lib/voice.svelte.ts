@@ -1176,6 +1176,13 @@ class Voice {
       // to a room that is not receiving them.
       stopScreen(result.stream);
       this.screenStream = null;
+      // The refusal also has to let go of the moment's hold on the client state: the
+      // capture watch would still react to a share that is not running, and `capture`
+      // would still tell `attachScreen` to bow out of every later share until the call
+      // ended — which is the blindness this comment had been written to warn about.
+      this.releaseScreenWatch?.();
+      this.releaseScreenWatch = null;
+      this.capture = null;
       this.screenState = 'failed';
       this.screenMessage =
         'Your screen was not shared. Join a conversation where you can share, and try again.';

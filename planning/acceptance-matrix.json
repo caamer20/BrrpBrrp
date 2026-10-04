@@ -298,7 +298,7 @@
     "J-01": {
       "checks": [
         "script:scripts/upgrade-recovery.mjs",
-        "installer::TestDataLockAndEnvironmentFile",
+        "app::TestDataLockAndEnvironmentFile",
         "app::TestLocalCertificatesHaveTrustableCAAndPreserveRootOnRepair",
         "ownership.spec.mjs::ownership designation and transfer move the operator surface",
         "api::TestBoundedInvitationAdmitsExactlyItsUses"
