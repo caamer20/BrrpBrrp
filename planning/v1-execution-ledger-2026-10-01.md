@@ -1788,6 +1788,28 @@ owner's decisions have already fixed and the ones with no external dependency.
   frontend tests green.
 
 
+### 11u. The race job fits a hosted runner now
+
+- **The measurement the change hangs on.** The whole-tree race sweep passes today
+  (`scripts/race-shard.mjs`'s 13/13 package run), but the API package measured **2 626 s**
+  under the detector (alpha.8 table, measured at `4d20529`) against the CI job's 60-minute
+  budget — a two-to-four-core hosted runner cannot pay that on top of the browser suite's
+  slot, and a timeout that races the runtime reports nothing.
+- **The split.** `scripts/race-shard.mjs` lists tests from the compiled binary (`go test
+  -list`, not a parse), assigns each to one of N shards by content hash — adding a name
+  moves only that name, because the assignment is derived from the name list rather than an
+  index position — and runs its shard with `-run '^(…)$'` anchored. In CI the sweep is its
+  own job with five matrix entries: four API shards plus one for the rest of the tree, and
+  the promotion gate (`packages`) requires it.
+- **The self-test has the load-bearing shape:** partition over a 503-name fixture (full
+  coverage, no overlap, order-independent), the empty list, the anchored pattern, and a
+  stable assignment. The off-by-one the CLI grew late — the workflow's matrix is 1-based
+  and the hash bucket 0-based — came out of the dry-run shape mismatch (one whole bucket
+  never ran under the first wiring) and is pinned by the dry-run coverage assertion.
+- **What it does not establish:** shard wall-clock times on a real two-core runner; that
+  measurement is the first hosted run's second artifact (after a green one).
+
+
 ### 11e. Where the next session starts
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,

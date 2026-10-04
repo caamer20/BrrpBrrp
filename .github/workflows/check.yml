@@ -53,7 +53,10 @@ jobs:
       # 2402s against a 40m budget while reporting no failure of its own
       # (0.4.0-alpha.8). The margin is deliberate: a timeout that races the runtime
       # hides the signal it exists to provide.
-      - run: go test -race -timeout 60m ./...
+      # The race sweep under 60 minutes fits this workstation but not a two-to-four-core
+      # hosted runner; it moved to a sharded job that runs the API package in quarters and
+      # the rest of the tree in one, with the split proven to be a partition before any of
+      # it runs (scripts/race-shard.mjs --self-test).
       - run: go build ./cmd/brrpbrrp
       # The released binary redistributes these dependencies, so the notices must
       # match them: a stale file or an unreadable license fails here.
@@ -119,6 +122,33 @@ jobs:
             }
             console.log("capacity fixture routes match the product");
           '
+  # The race detector has to be universal evidence, and it has hosted-runner limits: the
+  # API package measured 43 minutes on a sixteen-core laptop at alpha.8, and a two-core
+  # runner with a 60-minute budget cannot pay that twice (the browser job needs the slot
+  # open). So the sweep is sharded: the API package in four content-hashed quarters, the
+  # rest of the tree in one job, with the partition proven before any job's clock starts.
+  race:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/4", "2/4", "3/4", "4/4", "rest"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+      - name: The shard split is a partition before it runs
+        run: node scripts/race-shard.mjs --self-test
+      - name: Race sweep shard ${{ matrix.shard }}
+        run: |
+          if [ "${{ matrix.shard }}" = "rest" ]; then
+            go test -race -count=1 -timeout 58m $(go list ./... | grep -v internal/api | tr "\n" " ")
+          else
+            node scripts/race-shard.mjs --shard "${{ matrix.shard }}" --package internal/api
+          fi
   browser:
     needs: test
     runs-on: ubuntu-latest
@@ -370,7 +400,7 @@ jobs:
   # joined them to a promotion decision (completion review F-15).
   packages:
     if: github.event_name == 'workflow_dispatch'
-    needs: [test, browser, docker, recovery, rollback]
+    needs: [test, race, browser, docker, recovery, rollback]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
