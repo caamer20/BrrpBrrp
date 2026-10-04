@@ -75,7 +75,15 @@ export const SCREEN_PRESETS = {
 };
 export const screenPresetFromValue = value => (value === 'text' ? 'text' : 'motion');
 export const presetApplications = [];
-export const applyScreenPreset = async (sender, preset) => { presetApplications.push(preset); return true; };
+export let applyPresetResult = true;
+export const setApplyPresetResult = next => { applyPresetResult = next; };
+// The production seam records and can now refuse, matching the real module's failure
+// when the sender has no track: a preset whose application collapses is a message seen
+// the next time the share path is exercised, not a silent lie the tests walk past.
+export const applyScreenPreset = async (sender, preset) => {
+  presetApplications.push(preset);
+  return applyPresetResult;
+};
 // The capture seam, the way real tests drive a share without a browser picker: what the
 // browser would have delivered, in one answer, from a stub rather than a hardware dialog.
 export let requestedScreen = { state: 'cancelled' };
@@ -85,7 +93,12 @@ export const screenShareMessage = () => '';
 export const screenAudioMessage = () => '';
 export const screenAudioOutcome = () => '';
 export const canShareScreen = () => true;
-export const captureStillWanted = () => ({ ok: true });
+export let captureStillWantedAnswer = () => ({ ok: true });
+export const setCaptureStillWantedAnswer = next => { captureStillWantedAnswer = next; };
+// The audience seam is also settable now: the production answer is routed by the two
+// audiences passed, so the store's refusal half (capture stopped, never published) can be
+// exercised by tests instead of sitting behind a stub that always says yes.
+export const captureStillWanted = (started, now) => captureStillWantedAnswer(started, now);
 export const stopScreen = stream => { for (const track of stream.getTracks()) track.stop?.(); };
 export const stoppedWatchers = [];
 export let releasedWatches = 0;
@@ -103,7 +116,9 @@ const {
   newStream,
   storedValues,
   peers,
-  setRequestedScreen
+  setRequestedScreen,
+  setCaptureStillWantedAnswer,
+  setApplyPresetResult
 } = await import(
   'data:text/javascript;base64,' +
     Buffer.from(prelude + screenReceive + compiled).toString('base64')
@@ -484,6 +499,37 @@ test('choosing a preset applies it to the share that is running', async () => {
 // media, and dropping that hold on itself was how a refused publication left the client
 // believing it shared - and permanently blind to everyone else's shares until the call
 // ended, because `attachScreen` takes `if (this.capture) return` seriously.
+test('a share cancelled by an audience change never publishes and never holds', async () => {
+  // The audience moved between 'the system picker opened' and 'they confirmed': a
+  // different channel, a different account, or a dropped permission. The seam now lets
+  // the stub say so, and we assert the cancellation stops the captures' tracks and stops
+  // before anything is written about the caller.
+  const voice = new Voice();
+  voice.channelId = 'old';
+  const track = {
+    kind: 'video',
+    enabled: true,
+    stopped: false,
+    stop() {
+      this.stopped = true;
+    }
+  };
+  setCaptureStillWantedAnswer(() => ({ ok: false, reason: 'Your share was cancelled.' }));
+  setRequestedScreen({ state: 'sharing', stream: newStream([track]) });
+  await voice.startScreenShare();
+  // The audience change is honoured: the share is gated before any negotiation happens,
+  // the browser's indicator is released with the capture, and nothing about the caller
+  // reads as sharing afterward.
+  assert.equal(voice.screenState, 'failed');
+  assert.equal(voice.screenMessage, 'Your share was cancelled.');
+  assert.equal(voice.screenStream, null);
+  assert.equal(voice.publishedScreen, false);
+  // The seam is module-scoped, so the refusal answer must go carefully behind itself, or
+  // the refusal built for one test would spill into the next — the lesson the "twice"
+  // failures here are already teaching.
+  setCaptureStillWantedAnswer(() => ({ ok: true }));
+});
+
 test('a refused publication stops the capture and does not blind the room', async () => {
   const voice = new Voice();
   voice.channelId = 'old';
