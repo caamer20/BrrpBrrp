@@ -77,9 +77,13 @@ export function partition(names, shards) {
   return { ok: true, shards };
 }
 
-/** The -run regex for a shard's names. Anchored, so a prefix cannot steal another shard's. */
+/** The -run regex for a shard's names. Names are Go test identifiers, so the constraint
+ *  is really dead easy: metacharacters never appear. The escape is here anyway, because
+ *  the only contract this building block has is that the output is a regular expression
+ *  matching the input strings, and 'test runs wherever the names are safe' is a coupling
+ *  nobody should have to remember while editing either side. */
 export function shardPattern(names) {
-  return `^(${names.join("|")})$`;
+  return `^(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$`;
 }
 
 /** Runs one shard of one package under the race detector. */

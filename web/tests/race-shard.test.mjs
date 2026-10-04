@@ -31,6 +31,17 @@ test('an empty package is a shard of zero, not a crash', () => {
   assert.ok(result.ok);
 });
 
+test('a metacharacter in a name cannot end the string the regex offers', () => {
+  // Test names are Go identifiers, so this shape cannot occur in the real inventory, and
+  // that is the point: the seam that lists names and the seam that pattern-matches them
+  // must be able to drift apart without a name silently matching more than it lists.
+  const pattern = shardPattern(['TestA+B']);
+  const re = new RegExp(pattern);
+  assert.ok(re.test('TestA+B'));
+  assert.ok(!re.test('TestA'));
+  assert.ok(!re.test('TestAAB'));
+});
+
 test('the regex anchors otherwise ambiguous names', () => {
   // TestA and TestAB would collide under a prefix pattern; anchored, they do not.
   const pattern = shardPattern(['TestA', 'TestAB']);
