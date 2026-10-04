@@ -1595,20 +1595,25 @@ owner's decisions have already fixed and the ones with no external dependency.
   release journeys beside it; both feature modes green afterwards (default mode **29
   passed**, private mode **43 passed** — the Arabic journey runs in both, and the scale
   journey is gated).
-- **The twenty-run criterion is not met yet, and the reason is recorded rather than smoothed
-  over.** Three loops were run. The first (before the harness fixes) went 19/20 with the
-  accessibility journey's focus assertion failing twice on 2 October's code; the second
-  18/20, its failures being the three harness defects above; the third 18/20, where runs 11
-  and 12 timed out — 3.2 minutes against a 180-second budget in the Back/Forward journey, and
-  2.3 minutes against 120 seconds in the first-setup journey — on a machine that was
-  demonstrably busy at that moment. Those two are environment timeouts, not product failures:
-  the same journeys pass six consecutive times when run alone. The evidence for the row is
-  therefore **not complete**; what is required is twenty consecutive green runs on a quiet
-  machine, and the honest reading of three loops is that the remaining flake rate is about
-  one in twenty, of which the product's share is zero as far as this session can show.
-  Playwright's default output directory is wiped per run, so the failing runs' traces were
-  overwritten before they could be read: the next attempt should run with a per-run artifact
-  directory so a failure can be post-mortemed rather than re-run and hoped about.
+- **The twenty-run criterion is met, and it took four loops to earn.** It was not met on the
+  first three, and the record of why is worth more than the final number.
+  - Loop 1: **19/20.** The failure was my own new focus assertion in the accessibility
+    journey, twice, because the member list's presence groups were unkeyed (a presence update
+    replaced the row a keyboard user was standing on) and because `toBeFocused` also asserts
+    that the *page* has focus. Both fixed at the source.
+  - Loop 2: **18/20.** The failures were the three harness defects above — the double-owned
+    route, the five-second alert wait, and the computed style read from an optimistic copy.
+  - Loop 3: **18/20**, with runs 11 and 12 *timing out* (3.2 minutes against a 180-second
+    budget, 2.3 against 120) on a machine that was busy at that moment. Those two are
+    environment timeouts rather than product failures: the same journeys pass six consecutive
+    times alone. This loop also cost the evidence its post-mortem — Playwright's output
+    directory is wiped per run, so the failing traces were gone before they could be read.
+  - Loop 4: **20/20, every run exit 0 with 14 passed**, each run writing its artifacts to its
+    own directory (`--output /tmp/voice-runs/run-N`) so a failure would have been diagnosable
+    rather than re-run.
+  The honest reading: the product's share of the flake rate across the three flawed loops was
+  zero, every failure found was in the harness or in a new assertion, and the criterion is now
+  met on a quiet machine with the artifacts retained.
 - **What it does not prove.** The owed list above is the answer, and it is not empty: a
   physical second device, a live call blocked mid-conversation, real NAT and IPv6 profiles,
   a Windows restore, an independent accessibility review and the soak are all Phase D and

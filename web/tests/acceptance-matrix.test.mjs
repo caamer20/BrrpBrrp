@@ -113,6 +113,20 @@ test('a healthy tree passes, and its owed items are counted rather than hidden',
   assert.equal(await main(['--json'], root), 0);
 });
 
+test('a journey whose title contains an apostrophe is still found', () => {
+  // Titles are written `\'` in a spec, so a checker that compared between quotes would
+  // report a real journey as missing — a failure that costs an afternoon and teaches
+  // nothing.
+  const root = tree({ matrix: { scenarios: {} } });
+  // The spec file is real JavaScript, so its own quote is escaped — which is exactly why a
+  // checker comparing ``'name'`` reported this journey as missing.
+  writeFileSync(
+    path.join(root, 'web/e2e/some.spec.mjs'),
+    `test('a member\\'s draft survives', async () => {});\n`
+  );
+  assert.equal(checkExists("some.spec.mjs::a member's draft survives", root), null);
+});
+
 test('a scenario the plan declares and the matrix omits fails the build', () => {
   const matrix = { scenarios: { 'T-ONE-01': { checks: ['api::TestOneThing'] } } };
   const result = checkMatrix({ planText: PLAN, matrix, base: tree({ matrix }) });

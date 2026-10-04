@@ -55,15 +55,18 @@ export function checkExists(reference, base = root) {
   if (where.includes(".spec.mjs")) {
     const file = path.join(base, "web/e2e", where);
     if (!existsSync(file)) return `no such journey file: ${file}`;
-    // A journey title is quoted with single quotes in the spec.
-    return readFileSync(file, "utf8").includes(`'${name}'`)
+    // The title is matched as a substring of the file with escaped apostrophes unescaped:
+    // a journey whose name contains one is written `\'` in the spec, and neither a quoted
+    // comparison nor a plain substring finds it — the first because the quote is escaped,
+    // the second because the backslash is in the way.
+    return unescapeQuotes(readFileSync(file, "utf8")).includes(name)
       ? null
       : `no such journey in ${where}: ${name}`;
   }
   if (where.includes(".test.mjs")) {
     const file = path.join(base, where);
     if (!existsSync(file)) return `no such unit test file: ${file}`;
-    return readFileSync(file, "utf8").includes(`'${name}'`)
+    return unescapeQuotes(readFileSync(file, "utf8")).includes(name)
       ? null
       : `no such test in ${where}: ${name}`;
   }
@@ -75,6 +78,10 @@ export function checkExists(reference, base = root) {
       return null;
   }
   return `no such test in internal/${where}: ${name}`;
+}
+
+function unescapeQuotes(text) {
+  return text.replace(/\\'/g, "'");
 }
 
 export function checkMatrix({ planText, matrix, base = root }) {
