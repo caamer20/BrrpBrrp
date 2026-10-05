@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, request as requestFactory, test } from '@playwright/test';
 import { createAccount, OWNER, signIn, signInOverApi } from './support.mjs';
 
 // A named thread is a channel conversation with a subject (ADR 0017). This journey
@@ -377,18 +377,27 @@ test('a thread reply moves only the thread, and archiving closes replies until r
 //   1. a permalink that lands mid-history and shows the anchor's neighbour rows;
 //   2. a return to the newest reply from a fresh entry;
 //   3. a second jump *inside the still-mounted* thread — clicking the quote in the
-//      newest reply that references the middle one;
+//      newest reply that references the anchor;
 //   4. a permalink to the earliest page of the thread, from a fresh entry.
 //
-// Replies are rate-limited per author (60 a minute, 10 per 5 seconds) and logins are
-// rate-limited per client (10 a 5 minutes), so the volume is spread low and wide:
-// eight writers post thirty replies each at a pace every cap allows (under 2 a second
-// per author; nine sign-ins a run).
+// The cursor contract only needs more than one 50-reply page on each side of the
+// anchor, so the thread is 130 replies and the anchor is reply 53: 52 replies older and
+// 77 newer, more than a page each way, and the tail sits 77 replies above the anchor.
+// Seeding is through the API across four signed-in senders, because the product's flood
+// control is per author (ten in five seconds, sixty a minute) and one author pacing
+// itself would spend two minutes waiting; four authors writing one reply each per round
+// seed the whole thread in about thirty-five seconds. The journey is capped at three
+// minutes.
+//
+// The quote inside a named thread reads "View original message": a thread reply's
+// quoted target is not in the channel window the quote resolves against, so the
+// control has no quoted text to show. It is the control the reader clicks, and it is
+// addressed by that label.
 test('a deep link to the middle of a long thread opens the thread at that middle', async ({
   page,
   request
 }) => {
-  test.setTimeout(720000);
+  test.setTimeout(180000);
   await signInOverApi(request);
   await signIn(page, OWNER);
 
@@ -407,82 +416,145 @@ test('a deep link to the middle of a long thread opens the thread at that middle
   const thread = threads.find((item) => item.title === 'Long haul');
   expect(thread, 'the journey thread exists').toBeTruthy();
 
-  // Replies are rate-limited per author (60 a minute, 10 per 5 seconds) and logins are
-  // per client (10 in 5 minutes), so the volume stays with one author at a pace inside
-  // both caps — about a second per post — and the run keeps its sign-ins at two.
-  const ids = [];
-  for (let n = 1; n <= 240; n++) {
-    const data = { content: `reply ${n} of 240`, idempotency_key: crypto.randomUUID() };
-    if (n === 240) data.reply_to_id = ids[120];
-    const sent = await request.post(`/api/threads/${thread.id}/messages`, { data });
-    expect(sent.status()).toBe(201);
-    ids.push((await sent.json()).id);
-    await page.waitForTimeout(1050);
-  }
-  // The anchor sits 121st: a hundred and twenty replies older and a hundred and
-  // nineteen newer, so neither half of the window fits in one page — a panel that
-  // skips a whole page in either direction loses it here, and the final reply quotes
-  // the anchor so the same-panel jump is a row the reader can click.
-  const middle = ids[120];
-  const last = ids[239];
-  const early = ids[2];
-
-  // 1. Entry at the middle: the pivot page must include the row it names and the
-  //    reply immediately after it — a descending `after` scan makes every row between
-  //    122 and 190 vanish — but not the first page. A permalink is read once at entry,
-  //    so arriving at one is a fresh load, never a hash write.
-  await page.evaluate((hash) => {
-    location.hash = hash;
-  }, `#message=${middle}`);
-  await page.reload();
-  const panel = page.getByRole('dialog', { name: 'Thread' });
-  await expect(panel).toBeVisible({ timeout: 30000 });
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
-  ).toBeVisible({ timeout: 30000 });
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })
-  ).toBeVisible();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 1 of 240' })).toHaveCount(
-    0
+  const TOTAL = 130;
+  const ANCHOR = 53; // 1-based ordinal of the reply a permalink will name.
+  const EARLY = 3;
+  // Four senders, each with its own API context so the requests carry separate session
+  // cookies. One request context signing in as a second account replaces the first's
+  // session — the error the scale journey records — so the senders are separate
+  // contexts, and each is closed when its replies are written.
+  const SENDERS = 4;
+  const senders = await Promise.all(
+    Array.from({ length: SENDERS }, () => requestFactory.newContext({ baseURL: requestBase() }))
   );
+  try {
+    for (let index = 0; index < SENDERS; index += 1) {
+      const account = {
+        username: `deep_link_sender_${index}`,
+        password: `a deep link sender passphrase ${index}`
+      };
+      // `request` still holds the owner's session from signInOverApi, so the accounts
+      // are created through the product's own route in that context.
+      const created = await request.post('/api/admin/users', {
+        data: {
+          username: account.username,
+          password: account.password,
+          display_name: account.username
+        }
+      });
+      expect([201, 409], `create ${account.username}: ${created.status()}`).toContain(
+        created.status()
+      );
+      const login = await senders[index].post('/api/login', { data: account });
+      expect(login.ok(), `sign in ${account.username}: ${login.status()}`).toBe(true);
+    }
+    // Each sender writes one line of every group of four, in order, so reply n is
+    // written by sender (n-1) % 4. A round is paced just over a second because the
+    // product's flood control is per author — ten in five seconds and sixty a minute —
+    // and each author writes one reply a round: a round of four is four authors in
+    // parallel, and thirty-three rounds seed the thread in about thirty-five seconds
+    // with every author inside both caps. By the final round the anchor's id (written
+    // nineteen rounds earlier) is known, so the tail can quote it.
+    const ids = new Array(TOTAL);
+    const roundPauseMs = 1050;
+    for (let start = 0; start < TOTAL; start += SENDERS) {
+      await Promise.all(
+        Array.from({ length: Math.min(SENDERS, TOTAL - start) }, async (_, offset) => {
+          const n = start + offset + 1; // 1-based ordinal
+          const data = {
+            content: `reply ${n} of ${TOTAL}`,
+            idempotency_key: crypto.randomUUID()
+          };
+          if (n === TOTAL) data.reply_to_id = ids[ANCHOR - 1];
+          const sent = await senders[offset].post(`/api/threads/${thread.id}/messages`, { data });
+          expect(
+            sent.status(),
+            `reply ${n}: ${sent.status()} ${await sent.text().catch(() => '')}`
+          ).toBe(201);
+          ids[n - 1] = (await sent.json()).id;
+        })
+      );
+      if (start + SENDERS < TOTAL) await page.waitForTimeout(roundPauseMs);
+    }
+    // The anchor reply's id is needed before the tail can quote it, and the tail is
+    // written last, so the two are checked here rather than assumed.
+    const anchor = ids[ANCHOR - 1];
+    const tail = ids[TOTAL - 1];
+    const early = ids[EARLY - 1];
+    expect(anchor && tail && early, 'the seeded replies exist').toBeTruthy();
 
-  // 2. Fresh entry at the tail: newest first, nothing of the middle standing around.
-  await page.evaluate((hash) => {
-    location.hash = hash;
-  }, `#message=${last}`);
-  await page.reload();
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })
-  ).toBeVisible({ timeout: 30000 });
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
-  ).toHaveCount(0);
+    // 1. Entry at the anchor: the pivot page must include the row it names and the
+    //    reply immediately after it — a descending `after` scan makes every row between
+    //    the anchor and the tail vanish — but not the first page. A permalink is read
+    //    once at entry, so arriving at one is a fresh load, never a hash write.
+    await page.evaluate((hash) => {
+      location.hash = hash;
+    }, `#message=${anchor}`);
+    await page.reload();
+    const panel = page.getByRole('dialog', { name: 'Thread' });
+    await expect(panel).toBeVisible({ timeout: 30000 });
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${ANCHOR} of ${TOTAL}` })
+    ).toBeVisible({ timeout: 30000 });
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${ANCHOR + 1} of ${TOTAL}` })
+    ).toBeVisible();
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply 1 of ${TOTAL}` })
+    ).toHaveCount(0);
 
-  // 3. The in-place second link: the quote inside the newest reply sends the same
-  //    mounted panel back to the anchor. No remount happens — the location has to be
-  //    consumed by the panel's own watching, not by an initial-mount read.
-  const tailRow = panel.locator('article.message').filter({ hasText: 'reply 240 of 240' });
-  await tailRow.getByRole('button', { name: /reply 121 of 240/ }).click();
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
-  ).toBeVisible({ timeout: 30000 });
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })
-  ).toBeVisible();
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })
-  ).toHaveCount(0);
+    // 2. Fresh entry at the tail: newest first, nothing of the anchor standing around.
+    await page.evaluate((hash) => {
+      location.hash = hash;
+    }, `#message=${tail}`);
+    await page.reload();
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${TOTAL} of ${TOTAL}` })
+    ).toBeVisible({ timeout: 30000 });
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${ANCHOR} of ${TOTAL}` })
+    ).toHaveCount(0);
 
-  // 4. Fresh entry at the early replies: the anchor page, three rounds in, stays put.
-  await page.evaluate((hash) => {
-    location.hash = hash;
-  }, `#message=${early}`);
-  await page.reload();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 3 of 240' })).toBeVisible({
-    timeout: 30000
-  });
-  await expect(
-    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
-  ).toHaveCount(0);
+    // 3. The in-place second link: the quote inside the newest reply sends the same
+    //    mounted panel back to the anchor. No remount happens — the location has to be
+    //    consumed by the panel's own watching, not by an initial-mount read. The
+    //    control is the quote reference, whose label is "View original message" because
+    //    a thread reply's quoted text is not loaded into the channel window.
+    const tailRow = panel
+      .locator('article.message')
+      .filter({ hasText: `reply ${TOTAL} of ${TOTAL}` });
+    await tailRow.getByRole('button', { name: /View original message|reply \d+ of \d+/ }).click();
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${ANCHOR} of ${TOTAL}` })
+    ).toBeVisible({ timeout: 30000 });
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${ANCHOR + 1} of ${TOTAL}` })
+    ).toBeVisible();
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${TOTAL} of ${TOTAL}` })
+    ).toHaveCount(0);
+
+    // 4. Fresh entry at the early replies: the anchor page, four rounds in, stays put.
+    //    Landing at reply 3, the `after` page reaches reply 53 — one 50-reply page above
+    //    the pivot — while the tail (77 replies further) is not fetched, which is what
+    //    this asserts: the window has not jumped to the newest replies.
+    await page.evaluate((hash) => {
+      location.hash = hash;
+    }, `#message=${early}`);
+    await page.reload();
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${EARLY} of ${TOTAL}` })
+    ).toBeVisible({ timeout: 30000 });
+    await expect(
+      panel.locator('article.message').filter({ hasText: `reply ${TOTAL} of ${TOTAL}` })
+    ).toHaveCount(0);
+  } finally {
+    await Promise.all(senders.map((sender) => sender.dispose()));
+  }
 });
+
+// The base URL the harness started this server on, taken from the page the journey is
+// driving rather than re-derived, so the senders' contexts talk to the same server.
+function requestBase() {
+  return new URL(process.env.BRRP_E2E_BASE_URL).origin;
+}
