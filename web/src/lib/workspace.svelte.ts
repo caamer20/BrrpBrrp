@@ -1001,6 +1001,7 @@ class Workspace {
     // so the query a person typed is not thrown away.
     this.threadId = '';
     this.namedThreadId = '';
+    this.threadJump = null;
     this.threadsOpen = false;
     this.refreshWorkspace = true;
     this.scheduleChanges();
@@ -1031,6 +1032,7 @@ class Workspace {
     this.replyTo = null;
     this.threadId = '';
     this.namedThreadId = '';
+    this.threadJump = null;
     this.threadsOpen = false;
     this.typing = {};
   }
@@ -2726,6 +2728,11 @@ class Workspace {
     this.composerDrafts = new Map();
     this.threadId = '';
     this.namedThreadId = '';
+    // A deep link's jump is consumed by the panel it names. If the account signs out or
+    // another account signs in while it is still standing, the next account's panel
+    // must not honour a location the previous account created — it names a thread and a
+    // reply that account could read. Cleared with the rest of the account-scoped view.
+    this.threadJump = null;
     this.conversationEvents = [];
     this.switcherOpen = false;
     this.onConversationEvent = null;

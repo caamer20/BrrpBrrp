@@ -335,6 +335,13 @@ test('in-flight requests cannot restore private state after the session stops', 
   assert.deepEqual(value.messages, []);
 });
 
+test('a deep link jump is cleared when the session stops', async () => {
+  const value = workspace();
+  value.threadJump = { threadId: 'thread-1', messageId: 'reply-9' };
+  value.stop();
+  assert.equal(value.threadJump, null);
+});
+
 test('a late send response is discarded even if the same user signs back in', async () => {
   const value = workspace();
   const response = deferred();
