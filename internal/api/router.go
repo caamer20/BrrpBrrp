@@ -144,6 +144,16 @@ type Server struct {
 	// credential change between the route guard and the registration check, which is the
 	// ordering registration exists to close (R6-02). Production leaves it nil.
 	connectionAdmission atomic.Pointer[func()]
+	// uploadAdmission, when set, runs after an upload's bytes are published and before
+	// the transaction that admits its row is begun. It is the exact window the quota
+	// race lived in: the old handler read the committed total before BeginTx, so two
+	// uploads could both see room and both commit. The store has one connection, which
+	// is what makes the fixed handler safe, and it is also why the race cannot be
+	// produced here by chance — a test holds two uploads at this seam until both have
+	// published, then releases them so the second's quota read runs inside the
+	// transaction that already carries the first's committed row. Production leaves it
+	// nil.
+	uploadAdmission atomic.Pointer[func()]
 	// pendingExportRemovals are export files whose rows have already been reclaimed.
 	// The row goes first so nothing can authorize a download of a file about to be
 	// unlinked; the file follows outside the transaction.

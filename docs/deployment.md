@@ -117,6 +117,33 @@ The `production-check --config PATH` command is safe while the service is runnin
 | `BRRP_VOICE_PORT_MIN` / `BRRP_VOICE_PORT_MAX` | UDP 50000–50100 |
 | `BRRP_BACKUP_COPY_DIR` | Optional absolute destination for extra copies; grant the service account write access |
 
+### What the disk reserve guarantees
+
+`BRRP_STORAGE_RESERVE_BYTES` is the room the server keeps for its own recovery work — a
+database vacuum, the next backup archive, the writes of the next minute. It is a floor, not
+a budget: a write that would take the volume below it is refused with 507.
+
+The guard reads the free space at the start of each upload and plans for the largest upload
+this installation accepts, because a file's real size is not known until its bytes have
+arrived. That check is a moment old by the time the write reaches the filesystem, and
+several uploads can be deciding at once. What that means in practice is:
+
+- **The reserve is measured per write, not reserved per writer.** Two uploads that both
+  pass the guard can still, together, take the volume closer to the floor than either would
+  alone. The guard is a conservative estimate of one write's cost, not a lock on the
+  remaining space.
+- **The floor is what the write path enforces, not the check.** A write that reaches the
+  filesystem after the volume has filled underneath the check fails with the operating
+  system's disk-full error, and the upload path answers it with the same 507 it answers the
+  guard, on every platform. The refusal is a property of the volume, so it holds however
+  many uploads were in flight.
+
+So the reserve holds against a single upload, and the second line of defence — mapping the
+filesystem's own disk-full error to a storage refusal — holds when the estimate is wrong or
+overtaken. Neither can promise an exact number of free bytes after a burst of concurrent
+uploads; both together promise that a full volume is refused honestly rather than turned
+into a server fault.
+
 ## Keeping a copy that is not on the server
 
 `BRRP_BACKUP_COPY_DIR` copies each verified backup to a second destination, and a second

@@ -6,75 +6,124 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync"
 	"testing"
+	"time"
 )
 
-// F-01 regression — a quota answer can never precede the register-side commit.
-// Under the review's overlay (pre-fix tree) two concurrent uploads of eight bytes each
-// committed `"committed=16 status=[201 201]"` on a 10-byte quota. With the quota read
-// moved inside the transaction that admits the row, the same shape is answered 507 on the
-// second call. That is the claim this file pins, at a handful of so-called failure shapes.
+// The storage-quota boundary (F-01) and the failure shapes around it.
 //
-// Additional checks asked of it by the review: size at exactly the boundary, a pre-staged
-// file, permission withdrawal, commit failure, and publication failure coverage.
-func TestUploadQuotaAdmission(t *testing.T) {
+// The race this file is named for: the upload handler used to read the committed
+// attachment total *before* the transaction that admitted the new row. Two uploads
+// arriving together could both read the same total, both decide they fitted, and both
+// commit — the review reproduced `quota 10 exceeded: committed=16 status=[201 201]` on a
+// ten-byte quota. The fix reads the total inside the transaction that also inserts the
+// row. The store runs on a single connection, which is what makes that read meaningful,
+// and it is also why the race cannot be produced here by chance: two handlers cannot
+// interleave their transactions. TestConcurrentUploadsCannotBothCommitPastTheQuota holds
+// both uploads at the seam between publication and admission and releases them together,
+// so the interleaving the store otherwise serializes away is reached deliberately.
+
+// TestConcurrentUploadsCannotBothCommitPastTheQuota is the F-01 regression. Two uploads
+// of eight bytes each against a ten-byte quota: exactly one commits and the committed
+// total never exceeds the quota. The two requests are held at the admission seam until
+// both have published their bytes, then released at once.
+func TestConcurrentUploadsCannotBothCommitPastTheQuota(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
-	s.config.StorageQuotaBytes = 20
+	s.config.StorageQuotaBytes = 10
 
-	// One operation fits, the other is refused for committed work, not for a WriteWaiter.
-	a := uploadFile(t, handler, admin, "a.bin", 8)
-	if a.Code != 201 {
-		t.Fatalf("first short sizing should fit: %d (%s)", a.Code, a.Body.String())
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	hook := func() {
+		arrived <- struct{}{}
+		<-release
 	}
-	b := uploadFile(t, handler, admin, "b.bin", 8)
-	if b.Code != 201 {
-		t.Fatalf("second short sizing should fit: %d (%s)", b.Code, b.Body.String())
+	s.uploadAdmission.Store(&hook)
+	t.Cleanup(func() { s.uploadAdmission.Store(nil) })
+
+	var (
+		mu    sync.Mutex
+		codes []int
+	)
+	var writers sync.WaitGroup
+	for _, name := range []string{"first.bin", "second.bin"} {
+		writers.Add(1)
+		go func(name string) {
+			defer writers.Done()
+			response := uploadFile(t, handler, admin, name, 8)
+			mu.Lock()
+			codes = append(codes, response.Code)
+			mu.Unlock()
+		}(name)
 	}
-	if got := attachmentRows(t, s); got != 2 {
-		t.Fatalf("two works committed: %d", got)
+	for range 2 {
+		select {
+		case <-arrived:
+		case <-time.After(15 * time.Second):
+			t.Fatal("both uploads did not reach the admission seam")
+		}
 	}
-	c := uploadFile(t, handler, admin, "c.bin", 8)
-	if c.Code != http.StatusInsufficientStorage {
-		t.Fatalf("third heavens topping out: %d", c.Code)
+	close(release)
+	writers.Wait()
+
+	if used := storageUsed(t, s); used > 10 {
+		t.Fatalf("quota 10 exceeded: committed=%d status=%v", used, codes)
 	}
-	// The commit-before-read path in the old handler showed committed=16 on the review's
-	// harness with an upload quota of 10; proof holds under the table here as well.
-	used := storageUsed(t, s)
-	if used != 16 {
-		t.Fatalf("only the second pair commits above where it should: %d", used)
+	if used := storageUsed(t, s); used != 8 {
+		t.Fatalf("exactly one eight-byte upload should have committed: committed=%d status=%v", used, codes)
+	}
+	if rows := attachmentRows(t, s); rows != 1 {
+		t.Fatalf("one attachment row should exist: %d status=%v", rows, codes)
+	}
+	created := 0
+	for _, code := range codes {
+		if code == http.StatusCreated {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("exactly one upload should be created: status=%v", codes)
 	}
 }
 
-// Translating the boundary to exactly the size that fits: no unknown publication is needed.
-func TestUploadQuotaAtTheLimit(t *testing.T) {
+// TestAnUploadPastTheQuotaIsRefusedWithAReason is the boundary with the control beside
+// it: a file that exactly fills the quota is accepted, and one that does not is refused
+// 507 while the committed total is unchanged.
+func TestAnUploadPastTheQuotaIsRefusedWithAReason(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
 	s.config.StorageQuotaBytes = 8
 
-	r := uploadFile(t, handler, admin, "x.bin", 8)
-	if r.Code != 201 {
-		t.Fatalf("a file that exactly fills the quota is admitted: %d", r.Code)
+	fits := uploadFile(t, handler, admin, "fits.bin", 8)
+	if fits.Code != http.StatusCreated {
+		t.Fatalf("a file that exactly fills the quota is admitted: %d %s", fits.Code, fits.Body.String())
 	}
-	r2 := uploadFile(t, handler, admin, "y.bin", 4)
-	if r2.Code != http.StatusInsufficientStorage {
-		t.Fatalf("a committed row is followed by querying the table for any room: %d body=%s", r2.Code, r2.Body.String())
+	over := uploadFile(t, handler, admin, "over.bin", 4)
+	if over.Code != http.StatusInsufficientStorage {
+		t.Fatalf("an upload past the quota is refused 507: %d %s", over.Code, over.Body.String())
 	}
-	used := storageUsed(t, s)
-	if used != 8 {
-		t.Fatalf("the quota did not admit the second row: %d", used)
+	if used := storageUsed(t, s); used != 8 {
+		t.Fatalf("the refused upload changed the committed total: %d", used)
+	}
+	if rows := attachmentRows(t, s); rows != 1 {
+		t.Fatalf("the refused upload left a row: %d", rows)
 	}
 }
 
-// F-06 without let: an upload that dies before its body ends refuses with the truncated
-// body label, and never with the sizing one. A 413 already-covered state can be seen by
-// compare within the quota tests.
-func TestUploadTruncatedBodyIsTruncatedNotTooLarge(t *testing.T) {
+// TestUploadTruncatedBodyIs400Not413 pins F-06: a body that ends before it is complete
+// is a truncated request (400), never the too-large answer (413). The two are different
+// faults — the client picked a too-large file versus the file never all arrived — and the
+// old handler answered both with 413.
+func TestUploadTruncatedBodyIs400Not413(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
 
 	boundary := "brrp-truncated-test"
-	prefix := append([]byte("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"half.bin\"\r\nContent-Type: text/plain\r\n\r\n"), bytes.Repeat([]byte("x"), 32)...)
+	prefix := append(
+		[]byte("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"half.bin\"\r\nContent-Type: text/plain\r\n\r\n"),
+		bytes.Repeat([]byte("x"), 32)...)
 	body := &failingBody{prefix: prefix, err: io.ErrUnexpectedEOF}
 	r := httptest.NewRequest("POST", "/api/uploads", body)
 	r.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
@@ -83,10 +132,8 @@ func TestUploadTruncatedBodyIsTruncatedNotTooLarge(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	if w.Code != 400 {
-		t.Fatalf("a body ending early is refused as it happens, not as a size complaint: %d body=%s", w.Code, w.Body.String())
+		t.Fatalf("a body ending early is refused as a truncated request, not a size complaint: %d body=%s", w.Code, w.Body.String())
 	}
-	// The explanation separates the different strikes on this path: too large (413),
-	// too much space (507), or the request not completing (400 truncated).
 	if got := uploadEntries(t, s); len(got) != 0 {
 		t.Fatalf("the stopped upload wrote a file: %v", got)
 	}
@@ -95,14 +142,17 @@ func TestUploadTruncatedBodyIsTruncatedNotTooLarge(t *testing.T) {
 	}
 }
 
-// Helper settle-aborts to render read-failure bodies similar.
-func TestUploadCancelledBodyIsAParticularRefusal(t *testing.T) {
+// TestUploadCancelledBodyIs400Not413 is the cancelled half of the same boundary: a
+// request the client abandoned is a truncated request, and it writes nothing.
+func TestUploadCancelledBodyIs400Not413(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
 	s.config.StorageQuotaBytes = 1024
 
 	boundary := "brrp-cancelled-test"
-	prefix := append([]byte("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"gone.bin\"\r\nContent-Type: text/plain\r\n\r\n"), bytes.Repeat([]byte("x"), 32)...)
+	prefix := append(
+		[]byte("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"gone.bin\"\r\nContent-Type: text/plain\r\n\r\n"),
+		bytes.Repeat([]byte("x"), 32)...)
 	body := &failingBody{prefix: prefix, err: context.Canceled}
 	r := httptest.NewRequest("POST", "/api/uploads", body)
 	r.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
@@ -111,64 +161,108 @@ func TestUploadCancelledBodyIsAParticularRefusal(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	if w.Code != 400 {
-		t.Fatalf("a cancelled upload is treated the same way as truncated, 400 not 413: %d body=%s", w.Code, w.Body.String())
+		t.Fatalf("a cancelled upload is refused as truncated: %d body=%s", w.Code, w.Body.String())
 	}
 	if got := uploadEntries(t, s); len(got) != 0 {
-		t.Fatalf("the cancelled upload wrote something: %v", got)
+		t.Fatalf("the cancelled upload wrote a file: %v", got)
+	}
+	if got := attachmentRows(t, s); got != 0 {
+		t.Fatalf("the cancelled upload wrote a row: %d", got)
 	}
 }
 
-// The owner's claim finally stated there is no lever to push under a single account.
-// A suspended account can't ship a second write.
-func TestUploadRequiresPermittedAccount(t *testing.T) {
+// TestADeactivatedAccountCannotUpload drives the product's own deactivation route: an
+// administrator deactivates an uploader through PATCH /api/admin/users/{id}, and the
+// next upload from that account is refused 401 — deactivation ends the session, so the
+// answer is a sign-in rather than a permission error. The permitted control beside it is
+// that the same upload succeeds before the deactivation.
+func TestADeactivatedAccountCannotUpload(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
-	_ = s
 	s.config.StorageQuotaBytes = 32
 
-	counted := uploadFile(t, handler, admin, "good.bin", 8)
-	if counted.Code != 201 {
-		t.Fatalf("setup landed: %d", counted.Code)
+	const password = "a member passphrase for uploads"
+	created := request(t, handler, "POST", "/api/admin/users", map[string]any{
+		"username":     "uploader",
+		"password":     password,
+		"display_name": "Uploader",
+	}, admin)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("creating the member: %d %s", created.Code, created.Body.String())
 	}
-	// Suspend the account through the marking flow, immediately.
-	setAccountSuspect(t, s, admin)
-	claim := uploadFile(t, handler, admin, "blocked.bin", 8)
-	if claim.Code == http.StatusCreated {
-		t.Fatalf("a suspended account borderline slips past: got 201")
+	memberID := readJSON[map[string]any](t, created)["id"].(string)
+	login := request(t, handler, "POST", "/api/login", map[string]string{
+		"username": "uploader",
+		"password": password,
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("the member signs in: %d %s", login.Code, login.Body.String())
 	}
-	used := storageUsed(t, s)
-	if used != 8 {
-		t.Fatalf("the only write is the admitted one: %d", used)
+	member := login.Result().Cookies()[0]
+
+	control := uploadFile(t, handler, member, "before.bin", 8)
+	if control.Code != http.StatusCreated {
+		t.Fatalf("the permitted control upload should be accepted: %d %s", control.Code, control.Body.String())
+	}
+
+	deactivate := request(t, handler, "PATCH", "/api/admin/users/"+memberID, map[string]any{
+		"is_deactivated": true,
+		"confirm":        "uploader",
+	}, admin)
+	if deactivate.Code != http.StatusOK {
+		t.Fatalf("deactivating through the product's route: %d %s", deactivate.Code, deactivate.Body.String())
+	}
+
+	refused := uploadFile(t, handler, member, "blocked.bin", 8)
+	if refused.Code != http.StatusUnauthorized {
+		t.Fatalf("a deactivated account's upload is refused 401: %d %s", refused.Code, refused.Body.String())
+	}
+	if used := storageUsed(t, s); used != 8 {
+		t.Fatalf("only the permitted upload should be stored: %d", used)
 	}
 }
 
-// Failure at publication: there is no row and no name at the failed publication after any
-// answer indication.
+// TestUploadPublicationFailureLeavesNoResidual induces a publication failure — the upload
+// directory is made read-only so the write publication needs cannot happen — and asserts
+// the product's promise: a non-201 answer, no file in the upload directory, and no row.
+// The control beside it is that the same upload is accepted once the directory is
+// writable again; a product that refused every upload would pass the assertions above and
+// fail here.
 func TestUploadPublicationFailureLeavesNoResidual(t *testing.T) {
 	s, handler := testServer(t)
 	admin := setupAdmin(t, s, handler)
-	s.config.StorageQuotaBytes = 12
 
-	before := attachmentRows(t, s)
-	if before != 0 {
-		t.Fatalf("no stage before any upload: %d", before)
+	if err := os.Chmod(s.config.UploadDir, 0o500); err != nil {
+		t.Fatal(err)
 	}
-	r := uploadFile(t, handler, admin, "final.bin", 8)
-	if r.Code != http.StatusCreated {
-		t.Fatalf("the happy path succeeds: %d %s", r.Code, r.Body.String())
+	t.Cleanup(func() { _ = os.Chmod(s.config.UploadDir, 0o700) })
+
+	failed := uploadFile(t, handler, admin, "final.bin", 8)
+	if failed.Code == http.StatusCreated {
+		// Directory permissions are not enforced for this user (typically root), so the
+		// publication cannot be made to fail here.
+		t.Skip("directory permissions are not enforced for this user")
+	}
+	if names := uploadEntries(t, s); len(names) != 0 {
+		t.Fatalf("a failed publication left files behind: %v", names)
+	}
+	if rows := attachmentRows(t, s); rows != 0 {
+		t.Fatalf("a failed publication left a row: %d", rows)
+	}
+
+	if err := os.Chmod(s.config.UploadDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writable := uploadFile(t, handler, admin, "final.bin", 8)
+	if writable.Code != http.StatusCreated {
+		t.Fatalf("the control upload should be accepted once the directory is writable: %d %s", writable.Code, writable.Body.String())
+	}
+	if rows := attachmentRows(t, s); rows != 1 {
+		t.Fatalf("the control upload should leave one row: %d", rows)
 	}
 }
 
-// Set the deactivation on the admin account ID — the code refusing downloads is the same
-// as on other recognised endpoints, and the side effect always connects the same.
-func setAccountSuspect(t *testing.T, s *Server, administrator *http.Cookie) {
-	t.Helper()
-	if _, err := s.store.Exec(`UPDATE users SET is_deleted=0,is_deactivated=1 WHERE username<>'' AND id=?`, funcAdmin(t, s)); err == nil { // NUL
-		return
-	}
-}
-
-// Simple helpers bridging the functions defined elsewhere in this package.
+// storageUsed is the committed attachment total the quota is measured against.
 func storageUsed(t *testing.T, s *Server) int64 {
 	t.Helper()
 	var used int64
@@ -178,12 +272,15 @@ func storageUsed(t *testing.T, s *Server) int64 {
 	return used
 }
 
-// uploadAttachmentCount is for rows once afnailed back to one of these pending.
-// The readers who set them are the one who asked.
+// uploadFile sends one real multipart file through the upload route and reports what the
+// server answered. The bytes are real: a fixture that inserted a row would not have gone
+// through the guard these tests are about.
 func uploadFile(t *testing.T, handler http.Handler, cookie *http.Cookie, name string, size int) *httptest.ResponseRecorder {
 	t.Helper()
 	boundary := "brrp-quota-exact"
-	payload := append([]byte("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\""+name+"\"\r\nContent-Type: application/octet-stream\r\n\r\n"), bytes.Repeat([]byte("x"), size)...)
+	payload := append(
+		[]byte("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\""+name+"\"\r\nContent-Type: application/octet-stream\r\n\r\n"),
+		bytes.Repeat([]byte("x"), size)...)
 	payload = append(payload, []byte("\r\n--"+boundary+"--\r\n")...)
 	r := httptest.NewRequest("POST", "/api/uploads", bytes.NewReader(payload))
 	r.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
@@ -192,13 +289,4 @@ func uploadFile(t *testing.T, handler http.Handler, cookie *http.Cookie, name st
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	return w
-}
-
-// collectionAux parsers brokering the sockets the write is offered.
-// The aliases fringes are set: the date when the answer is found by reliable removal.
-func funcAdmin(t *testing.T, s *Server) string {
-	t.Helper()
-	var id string
-	s.store.QueryRow(`SELECT id FROM users LIMIT 1`).Scan(&id)
-	return id
 }

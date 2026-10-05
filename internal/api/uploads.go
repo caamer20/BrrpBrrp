@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -55,29 +54,16 @@ func (s *Server) diskGuard(size int64) string {
 	return ""
 }
 
-// quotaRefusal reports why this many stored bytes would exceed the installation's storage
-// quota, or "" when they fit.
+// quotaRefusalForTx reports why this many stored bytes would exceed the installation's
+// storage quota, or "" when they fit.
 //
 // It is asked *after* the file exists and with the real size, and the caller removes the
-// file when it refuses: the alternative is deciding before the bytes are counted, which
-// either refuses files that would fit or accepts files that will not. A read that fails is
-// reported rather than ignored, because a guard that silently stops guarding is worse than
-// one that refuses and says why.
-func (s *Server) quotaRefusal(ctx context.Context, size int64) (string, error) {
-	quota := s.config.StorageQuotaBytes
-	if quota <= 0 {
-		return "", nil
-	}
-	// In the ATOMIC path this is read under the writer of the transaction that also
-	// admits the fraction row; outside that transaction the answer is not a claim about
-	// what upload's quota will be at commit time and is only useful for diagnostics.
-	return quotaRefused(ctx, quota, size, s.store)
-}
-
-// quotaRefusedForTx is that with a transaction appended, or its own refusal when the
-// transaction already read "no room". The read's value is not a claim about an earlier
-// read of the same total — two writers cannot interleave inside BeginTx's single-writer
-// serialized chain, so what the read measured is still what the next insert will make true.
+// file when it refuses: deciding before the bytes are counted would either refuse files
+// that would fit or accept files that will not. It is asked *inside* the transaction that
+// admits the attachment row, so the total it reads is the total the coming insert will add
+// to; two uploads cannot both see room and both commit, because they share the store's one
+// connection. A read that fails is reported rather than ignored, because a guard that
+// silently stops guarding is worse than one that refuses and says why.
 func (s *Server) quotaRefusalForTx(tx db.Queryer, ctx context.Context, size int64) (string, error) {
 	quota := s.config.StorageQuotaBytes
 	if quota <= 0 {
@@ -223,15 +209,21 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 	case errors.Is(err, errUploadTruncated):
 		problem(w, 400, "The upload ended before it was complete. Nothing was stored.")
 		return
-	case errors.Is(err, syscall.ENOSPC):
+	case app.IsDiskFull(err):
 		// The pre-check is a moment old by the time it is acted on, and the disk can fill
 		// from anything else on the host. The write that finds the volume full is refused
-		// as a storage problem rather than reported as a server fault.
+		// as a storage problem rather than reported as a server fault, on every platform:
+		// the Unix ENOSPC value and the Windows ERROR_DISK_FULL pair both arrive here.
 		problem(w, http.StatusInsufficientStorage, "The server is out of disk space. Free space or raise the volume, then try again.")
 		return
 	case err != nil:
 		s.failed(w, err)
 		return
+	}
+	// The bytes are on disk and no row promises them yet. This is the window the quota
+	// race lived in, and the seam a test uses to hold two uploads here at once.
+	if hook := s.uploadAdmission.Load(); hook != nil {
+		(*hook)()
 	}
 	tx, err := s.store.BeginTx(r.Context(), nil)
 	if err != nil {
