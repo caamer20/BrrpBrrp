@@ -2089,3 +2089,34 @@ approval, and cutting `1.0.0-beta.1`.
   V1-02's item 6 are unit-covered at the refusal shape, not measured against a real
   nearly-full volume — that stays with V1-10's host runs.
 
+## Tranche 15 — V1-03, local closure: the source package contains what its tests import
+
+- **What it was.** The remaining F-03 hole after the alpha.9-era repairs: the
+  packager's explicit script list did not include every module packaged code imports.
+  `web/tests/race-shard.test.mjs` (packaged) imports `../../scripts/race-shard.mjs`,
+  which the source list did not carry — so a clean extraction of the source package
+  ran `npm run test` to **359 pass / 1 fail**, the failure being the packaged test
+  failing to resolve a script the same package does not ship. `seed-schema13-private.mjs`
+  was in the same position (referenced by the packaged `upgrade-schema13-private.mjs`
+  instructions). The checker's rule 3 only scanned the Makefile, so a
+  script-referenced-from-a-test was invisible to it.
+- **Fix.** `scripts/release.go`: added `race-shard.mjs` and `seed-schema13-private.mjs`
+  to the packaged scripts. `scripts/check-source-package.mjs`: rule 3b — a packaged
+  module's relative imports must resolve to something the package ships (literal path,
+  or with `.ts`/`.mjs` appended — toolchain resolution semantics), so a packaged test
+  importing an unpackaged sibling is caught by the same checker that already guards the
+  Makefile. Asset pattern imports (CSS/images/JSON) are excluded; those are bundled
+  at build time, never shipped alone.
+- **Evidence.** `check-source-package.mjs --self-test`: pass. The honest extraction
+  (fresh `/tmp/brrp-src-extract`, 532 files per the packager's own source list, then
+  `npm ci`, then `npm run test` **pass 365 / fail 0**, `npm run check` 158 files 0/0,
+  `npm run format:check` clean, `go build ./...` clean, `go vet ./...` clean) — the
+  workflow a consumer of the archive is told to run, executed end-to-end outside the
+  checkout, with no fallback into this workspace beyond the offline Go module cache
+  (`GOPROXY=off`, so no network). Deleting `scripts/race-shard.mjs` from the
+  extraction and re-running `npm run test` reproduces the original failure shape,
+  proof the package check now guards its own dependency closure.
+- **What it does not prove.** Hosted CI execution (V1-04), native packaging on Windows
+  or Docker (V1-12/15), and the candidate-results manifest (V1-05) are owed to their
+  own tranches; this one is source-closure only.
+
