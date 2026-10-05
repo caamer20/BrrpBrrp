@@ -201,24 +201,35 @@
     void view.load();
   }
 
-  onMount(() => {
-    // A deep link names one reply to open the thread at. It is consumed once, and the
-    // bounded window is positioned around it rather than at the newest replies, so a
-    // link to the thousandth reply lands on that reply.
-    const jump = workspace.threadJumpId === id ? workspace.threadJumpId : '';
-    if (jump) workspace.threadJumpId = '';
-    if (jump) {
+  // A deep link names one reply to open the thread at. The jump is a {thread, message}
+  // pair, because this panel identifies itself by its thread id and can only honour a
+  // jump addressed to that thread. Consumption is exactly-once — the record is cleared
+  // the moment it is read — and it happens in an effect rather than in onMount, because
+  // entry mounts the panel once: a second link into the *same* mounted thread never
+  // re-fires a mount, and would otherwise leave its location standing unread.
+  let landed = false;
+  $effect(() => {
+    const pending = workspace.threadJump;
+    if (pending && pending.threadId === id) {
+      workspace.threadJump = null;
+      landed = true;
       atLatest = false;
-      void view.loadAround(jump).then(async () => {
+      void view.loadAround(pending.messageId).then(async () => {
         await tick();
         const target = log?.querySelector<HTMLElement>(
-          `[data-thread-message="${CSS.escape(jump)}"]`
+          `[data-thread-message="${CSS.escape(pending.messageId)}"]`
         );
         target?.scrollIntoView({ block: 'center' });
       });
-    } else {
+      return;
+    }
+    if (!landed) {
+      landed = true;
       void view.load();
     }
+  });
+
+  onMount(() => {
     return () => {
       // The author keeps their unsent text when the panel closes. The store is
       // account-scoped, so this cannot carry into the next account, and the key the

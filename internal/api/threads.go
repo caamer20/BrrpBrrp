@@ -521,23 +521,36 @@ func (s *Server) listThreadMessages(w http.ResponseWriter, r *http.Request, user
 	// A thread root whose message was deleted is a tombstone, not a vanished subject:
 	// the replies stay readable and say what they were attached to. A thread whose root
 	// is gone is removed with it, so this only happens if the root is unreadable.
+	// Each edge of the walk is nearest-first, never "skip to newest" (F-02): `before`
+	// fetches the page ending just below the pivot, `after` the page starting just
+	// above it. A descending scan for `after` would return the newest page of the
+	// range and silently drop every reply between the pivot and the tail.
 	if before := r.URL.Query().Get("before"); before != "" {
 		clause += " AND id<?"
 		args = append(args, before)
 	}
-	if after := r.URL.Query().Get("after"); after != "" {
+	after := r.URL.Query().Get("after")
+	if after != "" {
 		clause += " AND id>?"
 		args = append(args, after)
 	}
-	clause += " ORDER BY id DESC LIMIT ?"
+	if after != "" {
+		// Ascending is already display order; the reversal below would turn the
+		// nearest rows back into the farthest.
+		clause += " ORDER BY id ASC LIMIT ?"
+	} else {
+		clause += " ORDER BY id DESC LIMIT ?"
+	}
 	args = append(args, pageLimit(r))
 	messages, err := s.store.Messages(r.Context(), user.ID, clause, args...)
 	if err != nil {
 		s.failed(w, err)
 		return
 	}
-	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
-		messages[left], messages[right] = messages[right], messages[left]
+	if after == "" {
+		for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+			messages[left], messages[right] = messages[right], messages[left]
+		}
 	}
 	respond(w, 200, messages)
 }

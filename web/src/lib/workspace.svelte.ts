@@ -150,10 +150,12 @@ class Workspace {
   // separately so closing a reply thread does not close the named one, and so the two
   // can never be confused for each other's history.
   namedThreadId = $state('');
-  // The reply a deep link asked this thread to open at. The panel consumes it on
-  // mount and clears it, so the position is used once and a reopened thread is not
-  // dragged back to an old reply.
-  threadJumpId = $state('');
+  // A reply the deep link asked a thread to open at: the message's id *and* the thread
+  // it's inside of, paired. A message id alone is ambiguous — the panel identifies
+  // itself by its thread id, so it can only consume a jump that names the same record
+  // it does. The panel consumes it (clears it as it does), because a reader is owed
+  // the new location the moment the link has been followed, and never again afterwards.
+  threadJump = $state<{ threadId: string; messageId: string } | null>(null);
   // A channel's thread list, opened from the channel header.
   threadsOpen = $state(false);
 
@@ -2559,7 +2561,7 @@ class Workspace {
       // would not even be on screen. The thread panel positions its bounded window at
       // the reply instead (review 17, V17-04).
       if (target.thread_id) {
-        this.threadJumpId = id;
+        this.threadJump = { threadId: target.thread_id, messageId: id };
         this.namedThreadId = target.thread_id;
         this.viewingHistory = false;
         this.atLatest = false;

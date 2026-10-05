@@ -365,3 +365,100 @@ test('a thread reply moves only the thread, and archiving closes replies until r
   await expect(open.getByText(/This thread is archived, so new replies are closed/)).toHaveCount(0);
   await expect(open.getByLabel('Reply to this thread')).toBeVisible();
 });
+
+
+
+// F-02 / V1-01 regression. Two boundaries conspired against deep links into a long
+// named-thread thread: the workspace recorded the reply's id beside its own global jump
+// scalar, which the mounted panel compared against the *thread* id — the two records
+// never describe the same thing — and the server's `after` reader walked the thread
+// newest-first, so a panel landing mid-history had every reply between the anchor and
+// the tail silently absent from its window. Failing-first proof is in tranche 13's
+// ledger entry; what this journey reconstructs, in order:
+//
+//   1. a permalink that lands mid-history and shows the anchor's neighbour rows;
+//   2. a return to the newest reply from a fresh entry;
+//   3. a second jump *inside the still-mounted* thread — clicking the quote in the
+//      newest reply that references the middle one;
+//   4. a permalink to the earliest page of the thread, from a fresh entry.
+//
+// Replies are rate-limited per author (60 a minute, 10 per 5 seconds) and logins are
+// rate-limited per client (10 a 5 minutes), so the volume is spread low and wide:
+// eight writers post thirty replies each at a pace every cap allows (under 2 a second
+// per author; nine sign-ins a run).
+test('a deep link to the middle of a long thread opens the thread at that middle', async ({
+  page,
+  request
+}) => {
+  test.setTimeout(720000);
+  await signInOverApi(request);
+  await signIn(page, OWNER);
+
+  const channelButton = page.getByRole('button', { name: new RegExp(CHANNEL, 'i') }).first();
+  await expect(channelButton).toBeVisible();
+  await channelButton.click();
+  const composer = page.locator('.composer textarea').first();
+  await composer.fill('a subject to return to later');
+  await composer.press('Enter');
+  await page.waitForSelector('article.message');
+  await startThreadFrom(page, 'a subject to return to later', 'Long haul');
+
+  const state = await (await request.get('/api/state')).json();
+  const channelID = state.channels.find((item) => item.name === CHANNEL).id;
+  const threads = await (await request.get(`/api/channels/${channelID}/threads`)).json();
+  const thread = threads.find((item) => item.title === 'Long haul');
+  expect(thread, 'the journey thread exists').toBeTruthy();
+
+  // Replies are rate-limited per author (60 a minute, 10 per 5 seconds) and logins are
+  // per client (10 in 5 minutes), so the volume stays with one author at a pace inside
+  // both caps — about a second per post — and the run keeps its sign-ins at two.
+  const ids = [];
+  for (let n = 1; n <= 240; n++) {
+    const data = { content: `reply ${n} of 240`, idempotency_key: crypto.randomUUID() };
+    if (n === 240) data.reply_to_id = ids[120];
+    const sent = await request.post(`/api/threads/${thread.id}/messages`, { data });
+    expect(sent.status()).toBe(201);
+    ids.push((await sent.json()).id);
+    await page.waitForTimeout(1050);
+  }
+  // The anchor sits 121st: a hundred and twenty replies older and a hundred and
+  // nineteen newer, so neither half of the window fits in one page — a panel that
+  // skips a whole page in either direction loses it here, and the final reply quotes
+  // the anchor so the same-panel jump is a row the reader can click.
+  const middle = ids[120];
+  const last = ids[239];
+  const early = ids[2];
+
+  // 1. Entry at the middle: the pivot page must include the row it names and the
+  //    reply immediately after it — a descending `after` scan makes every row between
+  //    122 and 190 vanish — but not the first page. A permalink is read once at entry,
+  //    so arriving at one is a fresh load, never a hash write.
+  await page.evaluate((hash) => { location.hash = hash; }, `#message=${middle}`);
+  await page.reload();
+  const panel = page.getByRole('dialog', { name: 'Thread' });
+  await expect(panel).toBeVisible({ timeout: 30000 });
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toBeVisible({ timeout: 30000 });
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })).toBeVisible();
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 1 of 240' })).toHaveCount(0);
+
+  // 2. Fresh entry at the tail: newest first, nothing of the middle standing around.
+  await page.evaluate((hash) => { location.hash = hash; }, `#message=${last}`);
+  await page.reload();
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })).toBeVisible({ timeout: 30000 });
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toHaveCount(0);
+
+  // 3. The in-place second link: the quote inside the newest reply sends the same
+  //    mounted panel back to the anchor. No remount happens — the location has to be
+  //    consumed by the panel's own watching, not by an initial-mount read.
+  const tailRow = panel.locator('article.message').filter({ hasText: 'reply 240 of 240' });
+  await tailRow.getByRole('button', { name: /reply 121 of 240/ }).click();
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toBeVisible({ timeout: 30000 });
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })).toBeVisible();
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })).toHaveCount(0);
+
+  // 4. Fresh entry at the early replies: the anchor page, three rounds in, stays put.
+  await page.evaluate((hash) => { location.hash = hash; }, `#message=${early}`);
+  await page.reload();
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 3 of 240' })).toBeVisible({ timeout: 30000 });
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toHaveCount(0);
+});

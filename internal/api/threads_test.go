@@ -283,6 +283,73 @@ func TestThreadReplyNeedsChannelPostAuthorityInsideTheTransaction(t *testing.T) 
 // A thousand replies must be fully reachable, one bounded page at a time, with no
 // duplicates and no gaps. A client holds a window and asks for more, which is the
 // property that makes a large thread usable rather than merely stored.
+// F-02's second boundary, pinned at the route: a cursor page must walk nearest-first
+// from its anchor. `after=pivot` returns the page immediately above the pivot
+// (ascending, since that is display order) rather than the newest page of the range —
+// the earlier descending scan skipped every row between the anchor and the tail.
+func TestThreadMessageCursorWalksNearestFromItsAnchor(t *testing.T) {
+	s, handler := testServer(t)
+	channelID, alice, _, _ := threadFixture(t, s, handler)
+	root := readJSON[[]db.Message](t, request(t, handler, "GET", "/api/channels/"+channelID+"/messages", nil, alice))[0]
+	thread := startThread(t, handler, channelID, alice, root.ID, "Cursor contract", "")
+
+	// Store-level posts keep the rate limiter out of a pagination check.
+	const total = 130
+	now := time.Now().UTC()
+	authorID, _ := namedUser(t, s, "cursor-author")
+	if _, err := s.store.ExecContext(t.Context(), `UPDATE threads SET created_at=? WHERE id=?`, db.Timestamp(now.Add(-time.Hour)), thread.ID); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, total)
+	for i := range total {
+		id := db.ID()
+		if _, err := s.store.ExecContext(t.Context(), `INSERT INTO messages(id,conversation_id,channel_id,user_id,content,created_at,idempotency_key,thread_id)
+			VALUES(?,?,?,?,?,?,?,?)`, id, channelID, channelID, authorID, fmt.Sprintf("reply %d", i+1),
+			db.Timestamp(now.Add(-time.Hour).Add(time.Duration(i+1)*time.Second)), "cursor-"+id, thread.ID); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	pivot := ids[59] // reply 60: sixty rows older, seventy newer.
+
+	page := func(query string) []db.Message {
+		t.Helper()
+		return readJSON[[]db.Message](t, request(t, handler, "GET", "/api/threads/"+thread.ID+"/messages"+query, nil, alice))
+	}
+
+	// Newest page first, oldest-first within it: unchanged by the contract repair.
+	latest := page("")
+	if len(latest) != 50 || latest[0].ID != ids[80] || latest[len(latest)-1].ID != ids[129] {
+		t.Fatalf("the newest page is not the fifty latest in display order: %d rows", len(latest))
+	}
+	// before walks down from the pivot and still stops right below it.
+	older := page("?before=" + pivot)
+	if len(older) != 50 || older[len(older)-1].ID != ids[58] || older[0].ID != ids[9] {
+		t.Fatalf("`before` did not return the page ending just below the pivot: %d rows", len(older))
+	}
+	// after walks up from the pivot: the first row is the pivot's next neighbour, and
+	// the page ends fifty rows above it — not at the thread's tail.
+	newer := page("?after=" + pivot)
+	if len(newer) != 50 {
+		t.Fatalf("`after` returned %d rows, want the fifty immediately above the pivot", len(newer))
+	}
+	if newer[0].ID != ids[60] {
+		t.Fatalf("the first row after the pivot is %q, want its immediate neighbour", newer[0].Content)
+	}
+	if newer[len(newer)-1].ID != ids[109] {
+		t.Fatalf("the after page walked past the pivot's neighbourhood: %q", newer[len(newer)-1].Content)
+	}
+	for i := 1; i < len(newer); i++ {
+		if newer[i-1].ID >= newer[i].ID {
+			t.Fatalf("the after page is not ascending at %d", i)
+		}
+	}
+	// An exhausted edge is empty, not wound back.
+	if got := page("?after=" + ids[total-1]); len(got) != 0 {
+		t.Fatalf("after the newest message there is nothing: %d rows", len(got))
+	}
+}
+
 func TestThreadAThousandRepliesAreFullyReachableWithoutDuplicates(t *testing.T) {
 	s, handler := testServer(t)
 	channelID, alice, _, _ := threadFixture(t, s, handler)
