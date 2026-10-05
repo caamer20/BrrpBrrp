@@ -253,6 +253,31 @@ for (const [line] of makefile.matchAll(/^\t.*$/gm)) {
   }
 }
 
+// 3b — a packaged module's relative imports must resolve inside the package. A
+// script the Makefile never names but a packaged web test imports is exactly the
+// dependency the review found missing, so the rule reads the imports as well as the
+// Makefile's invocations. Resolution follows what the toolchain actually accepts:
+// the literal path, and the same path with .ts/.js appended.
+for (const path of contents) {
+  if (!/\.(?:mjs|ts|svelte)$/.test(path)) continue;
+  const source = readFileSync(diskPath(root, path), "utf8");
+  for (const [, pattern] of source.matchAll(
+    /(?:from|import)\s*\(?\s*["']((?:\.\.?\/)[^"']+)["']\)?/g,
+  )) {
+    const base = posix.normalize(posix.join(posix.dirname(path), pattern));
+    if (base.startsWith("../")) continue; // compiled/frontend-only imports
+    // Only module specifiers are checked: a CSS/font/image import is bundled at build
+    // time and does not ship as a script.
+    if (/\.(?:css|woff2?|png|svg|json|webp|ico)$/.test(pattern)) continue;
+    const candidates = [base, `${base}.ts`, `${base}.js`.replace(/\.js$/, ".mjs")];
+    if (!candidates.some((candidate) => packaged(candidate))) {
+      fail(
+        `${path} imports ${pattern}, which resolves to none of the packaged modules`,
+      );
+    }
+  }
+}
+
 // 4 — the Docker build context must be buildable from the extraction.
 const dockerignore = readFileSync(diskPath(root, ".dockerignore"), "utf8");
 for (const rule of dockerignore.split("\n")) {

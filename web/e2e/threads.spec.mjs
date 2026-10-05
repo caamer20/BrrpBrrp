@@ -366,8 +366,6 @@ test('a thread reply moves only the thread, and archiving closes replies until r
   await expect(open.getByLabel('Reply to this thread')).toBeVisible();
 });
 
-
-
 // F-02 / V1-01 regression. Two boundaries conspired against deep links into a long
 // named-thread thread: the workspace recorded the reply's id beside its own global jump
 // scalar, which the mounted panel compared against the *thread* id — the two records
@@ -433,32 +431,58 @@ test('a deep link to the middle of a long thread opens the thread at that middle
   //    reply immediately after it — a descending `after` scan makes every row between
   //    122 and 190 vanish — but not the first page. A permalink is read once at entry,
   //    so arriving at one is a fresh load, never a hash write.
-  await page.evaluate((hash) => { location.hash = hash; }, `#message=${middle}`);
+  await page.evaluate((hash) => {
+    location.hash = hash;
+  }, `#message=${middle}`);
   await page.reload();
   const panel = page.getByRole('dialog', { name: 'Thread' });
   await expect(panel).toBeVisible({ timeout: 30000 });
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toBeVisible({ timeout: 30000 });
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })).toBeVisible();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 1 of 240' })).toHaveCount(0);
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
+  ).toBeVisible({ timeout: 30000 });
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })
+  ).toBeVisible();
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 1 of 240' })).toHaveCount(
+    0
+  );
 
   // 2. Fresh entry at the tail: newest first, nothing of the middle standing around.
-  await page.evaluate((hash) => { location.hash = hash; }, `#message=${last}`);
+  await page.evaluate((hash) => {
+    location.hash = hash;
+  }, `#message=${last}`);
   await page.reload();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })).toBeVisible({ timeout: 30000 });
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toHaveCount(0);
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })
+  ).toBeVisible({ timeout: 30000 });
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
+  ).toHaveCount(0);
 
   // 3. The in-place second link: the quote inside the newest reply sends the same
   //    mounted panel back to the anchor. No remount happens — the location has to be
   //    consumed by the panel's own watching, not by an initial-mount read.
   const tailRow = panel.locator('article.message').filter({ hasText: 'reply 240 of 240' });
   await tailRow.getByRole('button', { name: /reply 121 of 240/ }).click();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toBeVisible({ timeout: 30000 });
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })).toBeVisible();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })).toHaveCount(0);
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
+  ).toBeVisible({ timeout: 30000 });
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 122 of 240' })
+  ).toBeVisible();
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 240 of 240' })
+  ).toHaveCount(0);
 
   // 4. Fresh entry at the early replies: the anchor page, three rounds in, stays put.
-  await page.evaluate((hash) => { location.hash = hash; }, `#message=${early}`);
+  await page.evaluate((hash) => {
+    location.hash = hash;
+  }, `#message=${early}`);
   await page.reload();
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 3 of 240' })).toBeVisible({ timeout: 30000 });
-  await expect(panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })).toHaveCount(0);
+  await expect(panel.locator('article.message').filter({ hasText: 'reply 3 of 240' })).toBeVisible({
+    timeout: 30000
+  });
+  await expect(
+    panel.locator('article.message').filter({ hasText: 'reply 121 of 240' })
+  ).toHaveCount(0);
 });
