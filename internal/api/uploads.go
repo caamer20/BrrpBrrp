@@ -22,6 +22,10 @@ var (
 	errUploadTooLarge = errors.New("upload exceeds the size limit")
 	errUploadEmpty    = errors.New("the uploaded file is empty")
 	errUploadNotOne   = errors.New("more than one part in the upload")
+	// errUploadTruncated: the body ended before it was complete — a cancelled request, a
+	// short read, or an io failure on the way in. Distinct from errUploadTooLarge: the
+	// client picked a too-large file; here the file never all arrived.
+	errUploadTruncated = errors.New("the upload's body ended before it was complete")
 )
 
 // diskGuard reports why an upload could not be accepted for want of free space, or ""
@@ -64,10 +68,30 @@ func (s *Server) quotaRefusal(ctx context.Context, size int64) (string, error) {
 	if quota <= 0 {
 		return "", nil
 	}
+	// In the ATOMIC path this is read under the writer of the transaction that also
+	// admits the fraction row; outside that transaction the answer is not a claim about
+	// what upload's quota will be at commit time and is only useful for diagnostics.
+	return quotaRefused(ctx, quota, size, s.store)
+}
+
+// quotaRefusedForTx is that with a transaction appended, or its own refusal when the
+// transaction already read "no room". The read's value is not a claim about an earlier
+// read of the same total — two writers cannot interleave inside BeginTx's single-writer
+// serialized chain, so what the read measured is still what the next insert will make true.
+func (s *Server) quotaRefusalForTx(tx db.Queryer, ctx context.Context, size int64) (string, error) {
+	quota := s.config.StorageQuotaBytes
+	if quota <= 0 {
+		return "", nil
+	}
+	return quotaRefused(ctx, quota, size, tx)
+}
+
+// quotaRefused does the arithmetic shared by both callers.
+func quotaRefused(ctx context.Context, quota, size int64, q db.Queryer) (string, error) {
 	var used int64
 	// Every row counts, staged or attached: a staged upload is bytes on the volume just as
 	// much as a sent one, and maintenance is what reclaims the ones nobody claims.
-	if err := s.store.QueryRowContext(ctx, `SELECT COALESCE(SUM(file_size),0) FROM attachments`).Scan(&used); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(file_size),0) FROM attachments`).Scan(&used); err != nil {
 		return "", err
 	}
 	if used+size > quota {
@@ -134,16 +158,49 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 		header := make([]byte, 512)
 		n, readErr := io.ReadFull(part, header)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-			return errUploadTooLarge
+			return errUploadTruncated
 		}
 		contentType = http.DetectContentType(header[:n])
 		if _, err := file.Write(header[:n]); err != nil {
 			return err
 		}
-		copied, err := io.Copy(file, io.LimitReader(part, limit+1-int64(n)))
-		size = int64(n) + copied
-		if err != nil || size > limit {
-			return errUploadTooLarge
+		buf := make([]byte, 64<<10)
+		copied := int64(n)
+		for {
+			// Each read/index is answered against the BytesLeft boundary before the write
+			// sees it: a short body is truncated, an oversized upload is refused, and a
+			// write failure is a space or I/O error the caller can act on — never the
+			// too-large answer the old shape gave on both kinds of failure.
+			remaining := limit + 1 - copied
+			if remaining <= 0 {
+				return errUploadTooLarge
+			}
+			readBuf := buf
+			if int64(len(readBuf)) > remaining {
+				readBuf = buf[:remaining]
+			}
+			nr, rerr := part.Read(readBuf)
+			if nr > 0 {
+				nw, werr := file.Write(readBuf[:nr])
+				copied += int64(nw)
+				if werr != nil {
+					return fmt.Errorf("writing the upload: %w", werr)
+				}
+			}
+			if rerr == nil {
+				continue
+			}
+			if rerr == io.EOF {
+				size = copied
+				// The budget is limit+1: reaching EOF at exactly limit+1 means the file
+				// did not fit, which only surfaces here when the body ends precisely on
+				// the boundary — one read more would already have refused it above.
+				if size > limit {
+					return errUploadTooLarge
+				}
+				break
+			}
+			return fmt.Errorf("the request body ended before it was complete: %w", errUploadTruncated)
 		}
 		if size == 0 {
 			return errUploadEmpty
@@ -163,6 +220,9 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 	case errors.Is(err, errUploadNotOne):
 		problem(w, 400, "Upload one file at a time.")
 		return
+	case errors.Is(err, errUploadTruncated):
+		problem(w, 400, "The upload ended before it was complete. Nothing was stored.")
+		return
 	case errors.Is(err, syscall.ENOSPC):
 		// The pre-check is a moment old by the time it is acted on, and the disk can fill
 		// from anything else on the host. The write that finds the volume full is refused
@@ -171,18 +231,6 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 		return
 	case err != nil:
 		s.failed(w, err)
-		return
-	}
-	// The quota is asked with the real size, now that the bytes are counted and before any
-	// row promises them: a refusal here is one removal away from leaving nothing behind,
-	// which is why it is not decided from the configured ceiling like the disk guard.
-	if refused, err := s.quotaRefusal(r.Context(), size); err != nil {
-		_ = os.Remove(published)
-		s.failed(w, err)
-		return
-	} else if refused != "" {
-		_ = os.Remove(published)
-		problem(w, http.StatusInsufficientStorage, refused)
 		return
 	}
 	tx, err := s.store.BeginTx(r.Context(), nil)
@@ -207,6 +255,20 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, user db.User) {
 	if err != nil {
 		_ = os.Remove(published)
 		s.scopeFailed(w, err)
+		return
+	}
+	// The quota is asked with the real size, now that the bytes are counted and *inside*
+	// this transaction, immediately beside the insert: under the store's single writer
+	// there is no window between "this fits" and "this commits" that a second upload can
+	// hide in. Reading it earlier, outside the transaction, was the race the independent
+	// review reproduced.
+	if refused, err := s.quotaRefusalForTx(tx, r.Context(), size); err != nil {
+		_ = os.Remove(published)
+		s.failed(w, err)
+		return
+	} else if refused != "" {
+		_ = os.Remove(published)
+		problem(w, http.StatusInsufficientStorage, refused)
 		return
 	}
 	_, err = tx.ExecContext(r.Context(), `INSERT INTO attachments(id,uploader_id,file_name,stored_name,file_size,mime_type,created_at,staged_conversation_id) VALUES(?,?,?,?,?,?,?,NULLIF(?,''))`, id, user.ID, name, id, size, contentType, db.Now(), scopeID)
