@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The requirement is that alerts *reach* an approved recipient, and the sentence that
@@ -42,6 +43,14 @@ func (a *alertReceiver) count() int {
 	return len(a.received)
 }
 
+// snapshot copies what has been received so far, so a test can wait for a later
+// delivery without racing the receiver.
+func (a *alertReceiver) snapshot() []alertRecord {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]alertRecord(nil), a.received...)
+}
+
 func (a *alertReceiver) first() (alertRecord, http.Header) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -65,9 +74,9 @@ func TestAnAlertIsDeliveredToARealRecipient(t *testing.T) {
 	enableBackups(t, handler, admin, s)
 	s.raise(alertBackupStale, "critical", "No verified backup has been recorded.")
 
-	if receiver.count() != 1 {
-		t.Fatalf("%d alerts arrived, want 1", receiver.count())
-	}
+	// Delivery is asynchronous by design: the request or pass that raises a condition
+	// must not wait on a webhook. The test waits for the worker.
+	waitForAlert(t, "the alert to arrive", func() bool { return receiver.count() == 1 })
 	record, headers := receiver.first()
 	if record.Kind != alertBackupStale {
 		t.Fatalf("the alert names %q", record.Kind)
@@ -101,12 +110,14 @@ func TestAConfiguredAlertThatCannotDeliverIsVisibleAsUndelivered(t *testing.T) {
 	receiverServer := httptest.NewServer(receiver)
 	defer receiverServer.Close()
 	t.Setenv("BRRP_ALERT_WEBHOOK", receiverServer.URL)
+	// A refused delivery is retried within the alert window rather than silenced for six
+	// hours. The test shortens the schedule instead of waiting it out.
+	s.alertDeliveryAttempts = 3
+	s.alertDeliveryBackoff = 5 * time.Millisecond
 
 	s.raise(alertStorageLow, "critical", "Only 1 GiB remains on the data volume.")
-	if receiver.count() != 1 {
-		t.Fatalf("%d attempts were made, want 1", receiver.count())
-	}
-	// The attempt happened and failed. The operator can see that, which is the whole
+	waitForAlert(t, "the bounded retries to be exhausted", func() bool { return receiver.count() == 3 })
+	// The attempts happened and failed. The operator can see that, which is the whole
 	// difference between a destination that is broken and one that has never been used.
 	status := readJSON[alertStatus](t, request(t, handler, "GET", "/api/admin/alerts", nil, admin))
 	if status.Delivered != "" {
@@ -115,8 +126,10 @@ func TestAConfiguredAlertThatCannotDeliverIsVisibleAsUndelivered(t *testing.T) {
 	if len(status.History) != 1 {
 		t.Fatalf("the history holds %d alerts, want 1", len(status.History))
 	}
-	if status.History[0].Attempts != 1 {
-		t.Fatalf("the alert records %d attempts, want 1", status.History[0].Attempts)
+	// One condition, several delivery attempts: retrying a delivery must not create new
+	// conditions, and a failed delivery must not be deduplicated away like one.
+	if status.History[0].Attempts != 3 {
+		t.Fatalf("the alert records %d attempts, want 3", status.History[0].Attempts)
 	}
 	if status.History[0].LastError == "" {
 		t.Fatal("a failed delivery recorded no reason, so the operator cannot diagnose it")
@@ -141,6 +154,8 @@ func TestAnUnchangedConditionIsNotRaisedRepeatedly(t *testing.T) {
 	s.raise(alertStorageLow, "warning", "Low disk.")
 	// One condition, one notice. Repeated notices for an unchanged problem are how an
 	// operator learns to ignore them.
+	waitForAlert(t, "the single notice", func() bool { return receiver.count() >= 1 })
+	time.Sleep(50 * time.Millisecond)
 	if receiver.count() != 1 {
 		t.Fatalf("one unchanged condition produced %d notices", receiver.count())
 	}
@@ -160,6 +175,7 @@ func TestAnAlertIsSignedSoAReceiverCanTellARealOneFromAForgedOne(t *testing.T) {
 	t.Setenv("BRRP_ALERT_SECRET", "an operator's shared secret")
 
 	s.raise(alertCopyStale, "critical", "No independent copy has completed.")
+	waitForAlert(t, "the signed notice", func() bool { return receiver.count() == 1 })
 	_, headers := receiver.first()
 	signature := headers.Get("X-Brrpbrrp-Signature")
 	if signature == "" {
@@ -215,6 +231,21 @@ func TestTheCurrentConditionsAreReadableWithoutAnyDestination(t *testing.T) {
 	if !active {
 		t.Fatalf("backups enabled with no verified backup was not reported as an active condition: %+v", status.Conditions)
 	}
+}
+
+// waitForAlert polls until cond is true. Delivery is asynchronous by design — the
+// request path must not wait on a webhook — so tests wait for the worker rather than
+// asserting synchronously on it.
+func waitForAlert(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 // enableBackups turns backups on through the real settings route and stores the

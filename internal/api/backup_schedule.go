@@ -582,11 +582,29 @@ func (s *Server) scheduledBackup(now time.Time) {
 	case snapshotDue(settings, status, now):
 		if _, err := s.runBackup(s.ctx, settings.BackupUploads); err != nil {
 			s.log.Warn("scheduled backup failed", "error", err)
+			// A failed job is a condition with a known moment. Ask the alert evaluator to
+			// look now rather than waiting for its bounded cadence, which is the
+			// difference between an operator learning in seconds and in minutes.
+			s.promptAlertEvaluation()
 		}
 	case copyRetryDue(settings, status, now):
 		if _, err := s.repairCopy(s.ctx); err != nil {
 			s.log.Warn("scheduled backup copy repair failed", "error", err)
+			s.promptAlertEvaluation()
 		}
+	}
+}
+
+// promptAlertEvaluation wakes the alert evaluator without blocking the caller. The
+// channel is buffered and the signal is coalesced: several failures in a moment are one
+// evaluation, and a backup must never wait on alerting.
+func (s *Server) promptAlertEvaluation() {
+	if s.alertPrompt == nil {
+		return
+	}
+	select {
+	case s.alertPrompt <- struct{}{}:
+	default:
 	}
 }
 

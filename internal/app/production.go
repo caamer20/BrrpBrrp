@@ -197,11 +197,15 @@ func checkGeneration(ctx context.Context, c Config, record generation, options P
 		return errors.Join(problems...)
 	}
 	// The local recovery point is the data inside the archive. A backup that took two hours
-	// is two hours older than it looks if it is dated by its completion time.
-	if record.SnapshotAt.IsZero() {
+	// is two hours older than it looks if it is dated by its completion time. The
+	// classification is the shared model's, so the command-line check and the running
+	// server's alerts cannot disagree about what "unknown" or "too old" means.
+	local := AssessSnapshotAt(record.SnapshotAt, options.Now)
+	switch {
+	case !local.Known:
 		problems = append(problems, errors.New("local backup: snapshot time is unknown; create a new backup to establish recovery freshness"))
-	} else if age := options.Now.Sub(record.SnapshotAt); age < -5*time.Minute || age > options.BackupMaxAge {
-		problems = append(problems, fmt.Errorf("local backup: the recoverable snapshot is %s old; maximum is %s", age.Round(time.Minute), options.BackupMaxAge))
+	case local.Future || local.Age > options.BackupMaxAge:
+		problems = append(problems, fmt.Errorf("local backup: the recoverable snapshot is %s old; maximum is %s", local.Age.Round(time.Minute), options.BackupMaxAge))
 	}
 	if err := checkArchive(ctx, filepath.Join(c.DataDir, "backups", record.Name), record.Digest, record.GenerationUploads, options, "local backup"); err != nil {
 		problems = append(problems, err)
@@ -216,8 +220,8 @@ func checkGeneration(ctx context.Context, c Config, record generation, options P
 	// recovery of this generation, so the recorded copy must also be the recorded digest.
 	recordedCopy := record.CopyName != "" && record.CopyDigest != "" && !record.CopiedAt.IsZero()
 	if recordedCopy && record.CopyDigest == record.Digest {
-		if age := options.Now.Sub(record.SnapshotAt); !record.SnapshotAt.IsZero() && age > options.BackupMaxAge {
-			problems = append(problems, fmt.Errorf("backup copy: the copied snapshot is %s old; maximum is %s", age.Round(time.Minute), options.BackupMaxAge))
+		if copied := AssessSnapshotAt(record.SnapshotAt, options.Now); copied.Known && copied.Age > options.BackupMaxAge {
+			problems = append(problems, fmt.Errorf("backup copy: the copied snapshot is %s old; maximum is %s", copied.Age.Round(time.Minute), options.BackupMaxAge))
 		}
 		if err := checkArchive(ctx, filepath.Join(c.BackupCopyDir, record.CopyName), record.CopyDigest, record.GenerationUploads, options, "backup copy"); err != nil {
 			problems = append(problems, err)
@@ -246,16 +250,18 @@ func checkGeneration(ctx context.Context, c Config, record generation, options P
 // usable.
 func fallbackProblem(ctx context.Context, c Config, record generation, options ProductionCheckOptions) error {
 	snapshotAt := record.RecoverableSnapshotAt
-	age := options.Now.Sub(snapshotAt)
+	aged := AssessSnapshotAt(snapshotAt, options.Now)
+	age := aged.Age
 	var reasons []string
 	ageDescription := fmt.Sprintf("snapshot %s old", age.Round(time.Minute))
-	if snapshotAt.IsZero() {
+	switch {
+	case !aged.Known:
 		ageDescription = "snapshot age unknown"
 		reasons = append(reasons, "its snapshot time is unknown; copy completion does not establish recovery freshness")
-	} else if age < -5*time.Minute {
+	case aged.Future:
 		ageDescription = "snapshot age invalid"
 		reasons = append(reasons, "its snapshot time is in the future; check the host clock")
-	} else if age > options.BackupMaxAge {
+	case age > options.BackupMaxAge:
 		reasons = append(reasons, fmt.Sprintf("it is older than the %s maximum", options.BackupMaxAge))
 	}
 	coverage := "database-only"

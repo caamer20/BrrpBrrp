@@ -51,7 +51,17 @@ const (
 	// current. A backup on the same host is not a backup, and this is the alert that
 	// says so.
 	alertCopyStale = "copy_stale"
+	// alertResolved is the notice that a condition which was raised is no longer true.
+	// It exists because an operator who was told about a failure is owed the news that
+	// it cleared: without it the last notice in the history is always the alarm, and the
+	// only way to learn a backup caught up is to go and look at the status.
+	alertResolved = "resolved"
 )
+
+// resolvedKind names a recovery notice for one condition, so a receiver can filter on
+// the prefix and two different conditions recovering in the same window are two notices
+// rather than one suppressed by the other's deduplication.
+func resolvedKind(kind string) string { return alertResolved + ":" + kind }
 
 type alertRecord struct {
 	// At is when the condition was raised. Alerts are not a queue to be drained; each
@@ -78,6 +88,32 @@ type alertRecord struct {
 	LastError string `json:"last_error"`
 }
 
+const maxAlertHistory = 100
+
+// alertRepeat is how long a raised condition is considered the same one. Long enough
+// that a transient condition does not produce a burst, short enough that a condition
+// which recovers and returns is reported again. It deduplicates *conditions*; it is not
+// the delivery policy, and a failed delivery is retried on its own schedule rather than
+// being silenced for six hours.
+const alertRepeat = 6 * time.Hour
+
+// The delivery and evaluation policy.
+//
+//   - Evaluation runs on a bounded cadence of its own rather than only on the hourly
+//     maintenance pass, and a job or copy failure prompts an immediate evaluation, so a
+//     condition cannot wait up to an hour to be noticed.
+//   - Delivery is a bounded queue drained by one worker: a webhook that takes twenty
+//     seconds to time out must not hold the pass that raised it, and must not spawn a
+//     goroutine per alert.
+//   - A failed delivery is retried a bounded number of times within the alert window,
+//     because a transient refusal is not the same thing as a condition that has stopped.
+const (
+	alertEvaluationInterval = 5 * time.Minute
+	alertQueueDepth         = 16
+	alertDeliveryAttempts   = 4
+	alertDeliveryBackoff    = 30 * time.Second
+)
+
 // alertState is the raised-alert history. It is bounded: an unbounded alert log on a
 // server with a broken webhook would grow on its own, which is the one thing an
 // alerting system must not do.
@@ -95,14 +131,11 @@ type alertState struct {
 	// delivered records the last *successful* delivery of anything, which is what the
 	// status surface answers "are my alerts working" with.
 	delivered string
+	// queue carries records to the delivery worker. It is bounded, and a full queue
+	// drops the *delivery*, not the record: the condition stays in the history with its
+	// failure visible, which is the honest outcome when alerting itself is overloaded.
+	queue chan alertRecord
 }
-
-const maxAlertHistory = 100
-
-// alertRepeat is how long a raised condition is considered the same one. Long enough
-// that a transient condition does not produce a burst, short enough that a condition
-// which recovers and returns is reported again.
-const alertRepeat = 6 * time.Hour
 
 func (s *Server) alerts() *alertState {
 	s.alertMu.Lock()
@@ -110,15 +143,123 @@ func (s *Server) alerts() *alertState {
 	if s.alertState == nil {
 		s.alertState = &alertState{}
 	}
-	s.alertState.once.Do(func() { s.alertState.lastRaised = map[string]string{} })
+	s.alertState.once.Do(func() {
+		s.alertState.lastRaised = map[string]string{}
+		s.alertState.queue = make(chan alertRecord, alertQueueDepth)
+	})
 	return s.alertState
 }
 
-// raise records an alert and attempts delivery outside the lock.
+// alertWorker evaluates the health conditions on a bounded cadence and on demand, and
+// hands each new condition to the delivery worker. Both stages are outside the
+// file-maintenance lock: a network call must never hold the pass that sweeps files, and a
+// slow receiver must never delay a backup.
+func (s *Server) alertWorker() {
+	defer s.workers.Done()
+	ticker := time.NewTicker(alertEvaluationInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.raiseCurrentAlerts(time.Now())
+		case <-s.alertPrompt:
+			// A job or copy failure is a condition with a known moment. Evaluating now
+			// rather than at the next tick is the difference between noticing a failed
+			// backup in seconds and noticing it up to a cadence later.
+			s.raiseCurrentAlerts(time.Now())
+		}
+	}
+}
+
+// alertDeliveryWorker drains the bounded queue. One worker is enough for a condition
+// stream this small, and it is the reason a delivery cannot grow goroutines without
+// bound.
+func (s *Server) alertDeliveryWorker() {
+	defer s.workers.Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case record := <-s.alerts().queue:
+			s.deliverWithRetries(record)
+		}
+	}
+}
+
+// noteAlertFailure records a delivery that could not be attempted because the queue was
+// full, so the operator can see alerting itself was overloaded rather than believing the
+// notice was delivered.
+func (s *Server) noteAlertFailure(record alertRecord, reason string) {
+	state := s.alerts()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	for index := range state.history {
+		if state.history[index].At == record.At && state.history[index].Kind == record.Kind {
+			state.history[index].LastError = reason
+			break
+		}
+	}
+}
+
+// deliverWithRetries attempts one record's delivery a bounded number of times. Each
+// attempt is recorded, so the operator can tell "refused once" from "refused four times
+// over three minutes", and a final failure leaves its reason on the record.
+func (s *Server) deliverWithRetries(record alertRecord) {
+	attempts := s.alertDeliveryAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	backoff := s.alertDeliveryBackoff
+	delivered := ""
+	lastError := ""
+	total := 0
+	for attempt := range attempts {
+		if attempt > 0 {
+			select {
+			case <-s.ctx.Done():
+			case <-time.After(backoff * time.Duration(1<<(attempt-1))):
+			}
+		}
+		endpoint, secret := s.alertTarget()
+		if endpoint == "" {
+			// The destination was removed while the record waited. Nothing to attempt.
+			return
+		}
+		when, tried, err := s.deliverAlert(endpoint, secret, record)
+		total += tried
+		if err == "" {
+			delivered = when
+			lastError = ""
+			break
+		}
+		lastError = err
+	}
+	state := s.alerts()
+	state.mu.Lock()
+	for index := range state.history {
+		if state.history[index].At == record.At && state.history[index].Kind == record.Kind {
+			state.history[index].Delivered = delivered
+			state.history[index].Attempts = total
+			state.history[index].LastError = lastError
+			if delivered != "" {
+				state.delivered = delivered
+			}
+			break
+		}
+	}
+	state.mu.Unlock()
+	if lastError != "" {
+		s.log.Warn("operator alert was not delivered", "kind", record.Kind, "attempts", total, "error", lastError)
+	}
+}
+
+// raise records an alert and queues its delivery.
 //
-// The lock is held only for the bookkeeping. A webhook that takes thirty seconds to
-// time out must not hold the maintenance pass that raised it, and must not hold the
-// next one either.
+// The bookkeeping happens under the lock; the network call does not happen here at all.
+// A webhook that takes twenty seconds to time out must not hold the maintenance pass that
+// raised it, and must not hold the next one either.
 func (s *Server) raise(kind, severity, summary string) {
 	state := s.alerts()
 	state.mu.Lock()
@@ -139,29 +280,19 @@ func (s *Server) raise(kind, severity, summary string) {
 	state.lastRaised[kind] = now
 	state.mu.Unlock()
 
-	endpoint, secret := s.alertTarget()
-	if endpoint == "" {
+	if endpoint, _ := s.alertTarget(); endpoint == "" {
 		// No destination is a configuration state, not a failure, and it is reported in
 		// the status rather than here. A "delivery failed" alert for an alert nobody
 		// configured is noise.
 		return
 	}
-	delivered, attempts, lastError := s.deliverAlert(endpoint, secret, record)
-	state.mu.Lock()
-	for index := range state.history {
-		if state.history[index].At == record.At && state.history[index].Kind == record.Kind {
-			state.history[index].Delivered = delivered
-			state.history[index].Attempts = attempts
-			state.history[index].LastError = lastError
-			if delivered != "" {
-				state.delivered = delivered
-			}
-			break
-		}
-	}
-	state.mu.Unlock()
-	if lastError != "" {
-		s.log.Warn("operator alert was not delivered", "kind", kind, "error", lastError)
+	select {
+	case state.queue <- record:
+	default:
+		// A full queue means deliveries are slower than conditions are arriving. The
+		// record stays in the history with the overload visible; dropping it silently
+		// would make a configured alert look delivered.
+		s.noteAlertFailure(record, "the alert delivery queue was full; the notice was not attempted")
 	}
 }
 
@@ -265,7 +396,7 @@ func (s *Server) alertStatusReport() alertStatus {
 		Configured: endpoint != "",
 		Delivered:  delivered,
 		History:    history,
-		Conditions: s.alertConditions(),
+		Conditions: s.alertConditions(time.Now()),
 	}
 	if endpoint != "" {
 		// The host only. A webhook URL commonly carries a token in its path, and an
@@ -283,64 +414,54 @@ func (s *Server) alertStatusReport() alertStatus {
 }
 
 // alertConditions reads the current health of the things the product can check
-// without a destination, and is the same logic the maintenance pass uses. One
-// implementation, so the panel and the alerts cannot disagree about what is wrong.
-func (s *Server) alertConditions() []alertCondition {
-	now := time.Now()
+// without a destination, and is the same model the production check uses. One
+// implementation, so the panel, the alerts and the command-line check cannot disagree
+// about what is wrong.
+//
+// Freshness is judged from the newest *independently recoverable* snapshot — the
+// generation with a verified copy, or the newest one that is still recoverable when the
+// latest attempt has no copy — and never from the newest local job's completion time. A
+// recent local backup that has never been copied is not a recovery point, and a delayed
+// copy of an old archive does not make the old data fresh.
+func (s *Server) alertConditions(now time.Time) []alertCondition {
 	settings := s.Settings()
+	backup := s.backupStatus()
 	conditions := []alertCondition{}
 
-	// The recovery point the operator configured, compared with the last verified
-	// backup. A backup that is one interval old is not a stale backup; one that is
-	// three is.
-	backup := s.backupStatus()
-	interval := settings.BackupHours
-	if interval < 1 {
-		interval = 24
+	interval := time.Duration(max(1, settings.BackupHours)) * time.Hour
+	warning, critical := app.RecoveryThresholds(interval)
+	// The newest generation has a verified independent copy only when the recorded copy
+	// is the recorded generation: the same name and digest, not merely a copy that
+	// exists. A copy of a different, valid archive is not a recovery of this generation.
+	recordedCopy := backup.CopyName != "" && backup.CopyDigest != "" && backup.LastCopy != ""
+	newestCopied := recordedCopy && backup.CopyDigest == backup.Digest
+	state := app.RecoveryState{
+		Enabled:              settings.BackupEnabled,
+		NewestSnapshotAt:     backup.SnapshotAt,
+		NewestUploads:        backup.IncludesUploads,
+		NewestCopied:         newestCopied,
+		FallbackIdentifiable: backup.RecoverableID != "" && backup.RecoverableCopyName != "" && backup.RecoverableCopyDigest != "",
+		FallbackSnapshotAt:   backup.RecoverableSnapshotAt,
+		FallbackUploads:      backup.RecoverableIncludesUploads,
+		JobError:             backup.SnapshotError,
+		CopyError:            backup.CopyError,
 	}
-	staleness := ""
-	if backup.LastSuccess != "" {
-		if when, err := time.Parse(time.RFC3339Nano, backup.LastSuccess); err == nil {
-			staleness = now.Sub(when).Truncate(time.Minute).String()
-			age := now.Sub(when)
-			if age > time.Duration(interval*3)*time.Hour {
-				conditions = append(conditions, alertCondition{
-					Kind: alertBackupStale, Severity: "critical", Active: true,
-					Summary: fmt.Sprintf(
-						"Last verified backup is %s old and the interval is %d hours, so the %dh recovery point is at risk.",
-						staleness, interval, interval*24),
-				})
-			}
+	if state.NewestCopied {
+		state.Identity = backup.Name
+	} else {
+		state.Identity = backup.RecoverableID
+	}
+	verdict := app.AssessRecovery(state, now, warning, critical)
+	if verdict.Severity != "ok" {
+		kind := alertBackupStale
+		if state.JobError != "" {
+			kind = alertBackupFailed
+		} else if state.CopyError != "" {
+			kind = alertCopyStale
 		}
-	} else if settings.BackupEnabled {
 		conditions = append(conditions, alertCondition{
-			Kind: alertBackupStale, Severity: "critical", Active: true,
-			Summary: "Backups are enabled but no verified backup has been recorded yet.",
+			Kind: kind, Severity: verdict.Severity, Active: true, Summary: verdict.Summary,
 		})
-	}
-	if backup.Attempts > 0 {
-		conditions = append(conditions, alertCondition{
-			Kind: alertBackupFailed, Severity: "critical", Active: true,
-			Summary: fmt.Sprintf("The last %d backup attempts failed; there is no fresh verified archive.", backup.Attempts),
-		})
-	}
-
-	// The independent copy, which is what makes a backup a backup. A copy on the same
-	// host is not one, and an operator who believes otherwise is worse off than one who
-	// knows they have none.
-	if settings.BackupEnabled && backup.LastCopy == "" && (backup.LastCopyAttempt != "" || backup.CopyAttempts > 0) {
-		conditions = append(conditions, alertCondition{
-			Kind: alertCopyStale, Severity: "critical", Active: true,
-			Summary: "An independent copy destination is configured but no copy has completed.",
-		})
-	} else if settings.BackupEnabled && backup.LastCopy != "" && backup.CopyAttempts > 0 {
-		if success, err := time.Parse(time.RFC3339Nano, backup.LastCopy); err == nil {
-			conditions = append(conditions, alertCondition{
-				Kind: alertCopyStale, Severity: "critical", Active: true,
-				Summary: "The most recent copy attempt failed; the last good copy is " +
-					now.Sub(success).Truncate(time.Minute).String() + " old.",
-			})
-		}
 	}
 
 	if free, err := app.FreeDiskBytes(s.config.DataDir); err == nil {
@@ -360,14 +481,42 @@ func (s *Server) alertConditions() []alertCondition {
 	return conditions
 }
 
-// raiseCurrentAlerts converts the conditions into alerts. It is called from the
-// maintenance pass rather than from a timer of its own, so the readings and the
-// notifications come from one pass and cannot describe different moments.
-func (s *Server) raiseCurrentAlerts() {
-	for _, condition := range s.alertConditions() {
+// raiseCurrentAlerts converts the conditions into alerts. It runs from the alert
+// worker's own bounded cadence and from a prompt trigger when a job or copy fails, not
+// from the file-maintenance pass: a condition must not wait for the hourly ticker, and
+// the pass holds the file lock while it sweeps.
+func (s *Server) raiseCurrentAlerts(now time.Time) {
+	active := map[string]bool{}
+	for _, condition := range s.alertConditions(now) {
 		if condition.Active {
+			active[condition.Kind] = true
 			s.raise(condition.Kind, condition.Severity, condition.Summary)
 		}
+	}
+	s.resolveClearedAlerts(active)
+}
+
+// resolveClearedAlerts raises a recovery notice for each condition that was raised and is
+// no longer true, and forgets it so a recurrence alerts again. A condition that has never
+// been raised produces nothing: "healthy" is the status surface's answer, not an alert.
+func (s *Server) resolveClearedAlerts(active map[string]bool) {
+	state := s.alerts()
+	state.mu.Lock()
+	cleared := []string{}
+	for kind := range state.lastRaised {
+		if strings.HasPrefix(kind, alertResolved+":") {
+			continue
+		}
+		if !active[kind] {
+			cleared = append(cleared, kind)
+		}
+	}
+	for _, kind := range cleared {
+		delete(state.lastRaised, kind)
+	}
+	state.mu.Unlock()
+	for _, kind := range cleared {
+		s.raise(resolvedKind(kind), "info", fmt.Sprintf("The %s condition is no longer active.", kind))
 	}
 }
 

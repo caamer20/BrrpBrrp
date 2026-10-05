@@ -163,11 +163,21 @@ type Server struct {
 	// than the constant alone so a test can lower it and exercise the byte boundary
 	// without constructing a 250 MiB document; New sets it to the shipped constant.
 	exportByteCeiling int64
-	settingsMu        sync.RWMutex
-	settings          db.Settings
-	passwordSlots     chan struct{}
-	thumbnailSlots    chan struct{}
-	limiter           *rateLimiter
+	// alertPrompt wakes the alert evaluator when a condition has a known moment — a
+	// failed backup or copy — so detection does not wait for the bounded cadence. It is
+	// a field so the worker and its trigger live together rather than reaching for a
+	// package global.
+	alertPrompt chan struct{}
+	// alertDeliveryAttempts and alertDeliveryBackoff are the retry policy, as fields so
+	// a test can exercise a transient failure quickly instead of waiting out the shipped
+	// backoff.
+	alertDeliveryAttempts int
+	alertDeliveryBackoff  time.Duration
+	settingsMu            sync.RWMutex
+	settings              db.Settings
+	passwordSlots         chan struct{}
+	thumbnailSlots        chan struct{}
+	limiter               *rateLimiter
 }
 
 func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) {
@@ -179,24 +189,27 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	pushClient := scraper.HTTPClient(5 * time.Second)
 	pushClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	s := &Server{
-		freeSpace:         app.FreeSpace,
-		pushJobs:          make(chan pushJob, 128),
-		pushHTTP:          pushClient,
-		scraper:           scraper.New(),
-		previewJobs:       make(chan previewJob, 64),
-		ctx:               ctx,
-		cancel:            cancel,
-		hub:               ws.New(),
-		config:            config,
-		store:             store,
-		authz:             authz.NewService(store),
-		log:               log,
-		started:           time.Now(),
-		settings:          db.DefaultSettings(),
-		passwordSlots:     make(chan struct{}, 2),
-		thumbnailSlots:    make(chan struct{}, 1),
-		limiter:           newRateLimiter(),
-		exportByteCeiling: exportByteCeiling,
+		freeSpace:             app.FreeSpace,
+		pushJobs:              make(chan pushJob, 128),
+		pushHTTP:              pushClient,
+		scraper:               scraper.New(),
+		previewJobs:           make(chan previewJob, 64),
+		ctx:                   ctx,
+		cancel:                cancel,
+		hub:                   ws.New(),
+		config:                config,
+		store:                 store,
+		authz:                 authz.NewService(store),
+		log:                   log,
+		started:               time.Now(),
+		settings:              db.DefaultSettings(),
+		passwordSlots:         make(chan struct{}, 2),
+		thumbnailSlots:        make(chan struct{}, 1),
+		limiter:               newRateLimiter(),
+		exportByteCeiling:     exportByteCeiling,
+		alertPrompt:           make(chan struct{}, 1),
+		alertDeliveryAttempts: alertDeliveryAttempts,
+		alertDeliveryBackoff:  alertDeliveryBackoff,
 	}
 	var saved string
 	if err := store.QueryRow(`SELECT value FROM settings WHERE key='public'`).Scan(&saved); err == nil {
@@ -253,6 +266,13 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	go s.pushWorker()
 	s.workers.Add(1)
 	go s.maintenanceWorker()
+	// The alert evaluator and its delivery worker are their own goroutines, outside the
+	// file-maintenance pass: a webhook that times out must not hold the sweep, and a
+	// condition must not wait for the hourly ticker to be noticed.
+	s.workers.Add(1)
+	go s.alertDeliveryWorker()
+	s.workers.Add(1)
+	go s.alertWorker()
 	// One pass at startup, before the hourly one. A `building` export row is the only
 	// thing blocking that account from asking again, so a job interrupted by the
 	// restart that just happened would otherwise answer "an export is already being
