@@ -3,37 +3,36 @@
 Compact record of implementation tranches toward v1.0.0, per the review-17 handoff
 (`planning/handoff-agentic-coder-v1-review-17-2026-10-01.md`). One section per tranche.
 
-**Current status (4 October 2026 evening).** Read this first; the per-tranche sections
+**Current status (5 October 2026).** Read this first; the per-tranche sections
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical.
 
+- **Branch head after tranche 16:** see the top of the file for the commit; W-01 is
+  closed. The two independent-review product P1s — the quota race (F-01) and the
+  thread deep-link defect (F-02) — are fixed **and** carry regressions that fail without
+  the fix (the quota one proven against a pre-fix overlay; the deep-link one a rendered
+  journey). `make check`, `go test ./...`, both Chromium feature modes with nothing
+  excluded, `thread-scale`, and the full-disk rehearsal are green on this tree.
 - **Candidate:** 0.4.0-alpha.9 at `f810f0c` (digests in `dist/releases/SHA256SUMS`,
-  record at `docs/releases/0.4.0-alpha.9.md`). That record predates the independent
-  review of 3–4 October 2026 (`planning/v1-release-execution-plan-2026-10-03.md`) and
-  several of its claims are answered below; see the dated addendum in the record itself.
-  **Do not build on it as if it were current.** The shipped archive at `f810f0c` predates
-  the refused-share fix in `6a84fee`; any further packaging is a new version.
+  record at `docs/releases/0.4.0-alpha.9.md`). That archive predates several fixes; any
+  further packaging is a new version (`0.4.0-alpha.10`). **Do not build on it as if it
+  were current.**
 - **What is closed, measured in the tree on this branch:** all fifteen Phase B rows
-  (ENG-01…ENG-15); the 1000-reply thread journey, the Arabic journey, the refusal
+  (ENG-01...ENG-15); the 1000-reply thread journey, the Arabic journey, the refusal
   cleanup for a failed publication, the shared rehearsal kit, the acceptance and
   negative matrices with their CI gates; the Firefox voice project (13/14 green) and
-  WebKit release subset (a red starting point over the Chromium fixture, see below).
-- **What is red right now on this tree at 4 October evening:** the independent review's
-  quota race reproduces exactly as reported (`committed=16 status=[201 201]` on a quota
-  of 10) *(closed in tranche 14)*; the F-02 deep-link boundaries — the panel comparing
-  a message id with a thread id and the `after` cursor answering the tail page for a
-  mid-history anchor — were likewise red on that tree and are **closed in tranche 13**;
-  Firefox's voice project has one red webview assertion (`node.playsInline` is
-  undefined there); WebKit's release subset shares its fixture with the Chromium
-  `release` project so its own journeys cannot run against a second installation; the
-  disk-image detaches and the stale worktree are cleaned up. Example failure shape, not
-  a catalogue.
+  WebKit release subset (a red starting point over the Chromium fixture, see below);
+  tranche 16's W-01 items 1 through 8.
 - **What is open and the owner owns it:** a private remote (settled: none), the two
   feature gates (settled: only after the independent reviews and their P1s land), the
   host/device/reviewer/profile requirements of the D–I phases (settled), a Windows
   code-signing identity, and the long lead items listed in section 5 of the top-level
   kickoff. The rest of this ledger's tail is historical; the owed list that follows it
   accurately is the one the acceptance checker prints on any `make check`.
+- **Still red or owed on this branch:** Firefox's voice project has one red webview
+  assertion (`node.playsInline` is undefined there — a test-assertion defect, W-05);
+  WebKit's release subset shares its fixture with the Chromium `release` project, so its
+  own journeys cannot run against a second installation (W-06); W-02 onward are open.
 
 ---
 
@@ -2120,3 +2119,201 @@ approval, and cutting `1.0.0-beta.1`.
   or Docker (V1-12/15), and the candidate-results manifest (V1-05) are owed to their
   own tranches; this one is source-closure only.
 
+
+## Tranche 16 — W-01: the last session's wrong results repaired, and the two P1s closed honestly
+
+Plain sequence continues from tranche 15; this tranche closes W-01 items 1 through 8.
+Source commit before this tranche: `bc238a0`. Source commits within it: `70bee20`
+(W-01.1), `c405638` (W-01.2/.3/.4), `6c0d91a` (W-01.5), `0e90130` (W-01.7), `298b118`
+(W-01.6), `4700371` (W-01.8). Ledger entry committed separately, so its own hash is not
+in this list.
+
+### 16a. The miss this tranche exists for
+
+**The journey was reported green from a failing log.** Tranche 13's entry cites
+`/tmp/brrp-e2e/f02-verify3.log` as the threads-project browser proof and calls the journey
+green. That log ends `✘ 14 [threads] ... a deep link to the middle of a long thread ...
+(12.0m) — 1 failed — 13 passed (12.6m)`: the journey failed, and the run took twelve and a
+half minutes. The last line was read as the summary and the failure above it was missed. So
+the F-02 *rendered* proof was never green at `bc238a0`; only the underlying Go cursor fix
+and the panel-pair fix were, and those are sound.
+
+**The journey's final edits are not in the commit that claims it.** `2c399a8` ("Tranche 13")
+is cited as the commit that lands the journey, but it does not hold the journey as
+described: `f429e86` ("Tranche 15", nominally about the source package) also edits
+`web/e2e/threads.spec.mjs`, carrying the journey's later revisions. History is not
+rewritten; this is the record.
+
+**What it took to find out.** Reading the whole log rather than its last line, then running
+the `threads` project (`--project=threads`) on the current tree with a 540 s global
+timeout: **13 passed, 0 failed, 0 skipped, 1 did not run**, the suite timed out on the
+deep-link journey, which the screenshot showed stuck at its third step waiting for a button
+named after the quoted reply's text. To make the strengthened rule durable, the run's
+summary is now read in four numbers — passed, failed, skipped, did not run — and a
+`did not run` line is a red result.
+
+**Also recorded:** `d4d33e2` ("Tranche 14") added `uploads_quota_concurrency_test.go`, whose
+tests pass against the pre-fix handler (verified in 16b) and so did not detect the quota
+race — the same failure mode, a proof that does not prove. And `f429e86` edited
+`web/e2e/threads.spec.mjs` under a message about the source package.
+
+### 16b. W-01.1 — the deep-link journey
+
+**Failing behavior and reproduction.** At `bc238a0` the `threads` project hangs on the
+deep-link journey until the suite's own timeout: the journey waits (`page.getByRole('button',
+{ name: /reply 121 of 240/ })`) for a quote control named after the quoted reply's text. But
+the quoted reply is outside the loaded window, and `MessageItem.svelte` renders the control
+as **"View original message"** when its quoted text is not loaded — so the button the
+journey waits for never exists. The journey also seeded 240 replies from one author at a
+hard-coded 1,050 ms per post, about five minutes of sleeping before that wait.
+
+**Fix (`70bee20`).** `web/e2e/threads.spec.mjs`: four signed-in senders write one reply each
+per round (the flood control is per author — ten in five seconds, sixty a minute), seeding
+130 replies in about thirty-five seconds; the anchor is reply 53 (52 replies older, 77
+newer, more than one 50-reply page each way); the tail quotes the anchor and the in-place
+quote click is addressed by "View original message"; the budget is three minutes; the header
+comment describes this code rather than eight writers posting thirty replies each.
+
+**Commands and results.** `--project=threads`, twice: **14 passed / 0 failed / 0 skipped / 0
+did not run, 1.3 min each** (deep-link journey 40 s). Both Chromium feature modes with
+nothing excluded: default **30 passed / 3.3 min**, private **45 passed / 4.7 min** — 0
+failed, 0 skipped, 0 did not run in either. The journey had failed continuously for ~40
+seconds but was mistakenly reported green before this tranche.
+
+**What it does not prove.** The 200+-reply window case stays in the gated `thread-scale`
+project; this journey proves the cursor contract at 130 replies, and it is a browser
+journey, not a device run.
+
+### 16c. W-01.2 — a regression that fails on the pre-fix handler
+
+**Failing behavior and reproduction.** The committed `TestUploadQuotaAdmission` and
+`TestUploadQuotaAtTheLimit` **pass** against the pre-fix handler (`2c399a8`), verified by
+running them with a Go overlay of the old `internal/api/uploads.go` (both PASS, 0.9 s and
+1.0 s). They cannot detect the race: the store has one connection, so two handlers never
+interleave their transactions by chance. The review reached the race only by inserting a
+barrier between the check and `BeginTx`; the race is real but timing does not produce it.
+
+**Fix.** A test-only seam: `Server.uploadAdmission` (an `atomic.Pointer[func()]`, nil in
+production, alongside the existing hooks) runs after the bytes are published and before
+`BeginTx`. `TestConcurrentUploadsCannotBothCommitPastTheQuota` holds two eight-byte uploads
+at that seam against a ten-byte quota, releases them together, and asserts the committed
+total never exceeds ten and exactly one row exists.
+
+**Proof it is a regression.** Against the fixed handler: PASS (committed=8, one row).
+Against the pre-fix handler (overlay = `2c399a8` `uploads.go` plus the same seam):
+**FAIL — `quota 10 exceeded: committed=16 status=[201 201]`**, exactly the review's
+signature. The seam is in production code but is inert (nil) there; the store's single
+connection remains the actual reason the fix is safe.
+
+**What it does not prove.** That no other interleaving exists; the property is the store's
+one connection, which this test exercises at the documented seam rather than proving about
+the scheduler.
+
+### 16d. W-01.3 — the test file named for what it holds, and plain comments
+
+**Failing behavior.** `uploads_quota_concurrency_test.go` contained a test that exercised no
+failure: `TestUploadPublicationFailureLeavesNoResidual` uploaded one file successfully and
+asserted 201. `TestUploadRequiresPermittedAccount` "suspended" the account with a direct SQL
+`UPDATE` whose error it discarded and then accepted any status other than 201. Several
+messages, comments and helper names were unreadable ("third heavens topping out",
+`funcAdmin`, `setAccountSuspect`, "collectionAux parsers brokering the sockets the write is
+offered"), and `internal/api/uploads.go` carried the same in a comment about "the fraction
+row".
+
+**Fix.** The file is rewritten and its helpers named plainly. `TestUploadPublicationFailure`
+makes the upload directory read-only to induce a real publication failure and asserts no
+file and no row, with a writable control that must be accepted (skips only where directory
+permissions are not enforced, e.g. root). `TestADeactivatedAccountCannotUpload` creates a
+member, signs in, and deactivates through the product's own `PATCH /api/admin/users/{id}`
+route, asserting the exact 401 (deactivation ends the session); a permitted upload precedes
+it as the control. The remaining tests assert exact statuses. In `uploads.go` the dead
+`quotaRefusal` wrapper is removed and its comment and the copy-loop comment are rewritten as
+plain statements.
+
+**Commands and results.** `go test ./internal/api -count=1`: **ok (207 s)** across the API
+package.
+
+### 16e. W-01.4 — the Windows full-disk answer, and what the reserve guarantees
+
+**Failing behavior.** A write that finds the volume full was recognised only by
+`errors.Is(err, syscall.ENOSPC)`, a Unix value. On Windows the same condition is
+`ERROR_DISK_FULL`/`ERROR_HANDLE_DISK_FULL`, which the handler did not recognise, so a
+Windows installation answered a server fault rather than 507.
+
+**Fix.** `internal/app/diskfull_unix.go` and `diskfull_windows.go` provide `IsDiskFull`
+(ENOSPC and EDQUOT on Unix; the two Windows errors on Windows); the handler maps it to 507
+on both. `docs/deployment.md` gains "What the disk reserve guarantees": the guard is
+per-write and conservative, so two concurrent uploads can together approach the floor more
+than either alone, and the filesystem's own disk-full error — recognised on every platform —
+is the floor that holds when the estimate is overtaken.
+
+**Evidence.** `go vet` clean; `GOOS=windows GOARCH=amd64 go build ./internal/app
+./internal/api` compiles. The behaviour is exercised by the full-disk rehearsal, which runs
+on the host platform (macOS) and cannot execute the Windows branch; the Windows mapping is
+proven by compilation and by the shared predicate, not by a Windows run — host qualification
+owns that.
+
+### 16f. W-01.5 — the jump does not outlive its account
+
+**Failing behavior.** `workspace.threadJump` is cleared only when a panel consumes it. An
+account that signed out (or another that signed in) with a jump still standing left the next
+account's panel answering a location the previous account created.
+
+**Fix (`6c0d91a`).** Cleared in `stop()` with the rest of the account-scoped view, and in
+`clearActiveConversation` and `invalidateWorkspace` where `namedThreadId` is cleared for the
+same authority reason.
+
+**Proof.** `web/tests/workspace-state.test.mjs`, "a deep link jump is cleared when the
+session stops", over the real compiled `Workspace`. `npm --prefix web test`: **366 pass / 0
+fail**.
+
+### 16g. W-01.6 — the scale walk's union bound
+
+**Failing behavior.** `thread-scale.spec.mjs` asserted each window was bounded and
+internally unique, but not that the walk showed every seeded reply exactly once overall: a
+cursor that skipped a reply, or invented one, would pass.
+
+**Fix (`298b118`).** The seeded content set is registered, and the walk requires the union of
+everything it rendered to equal it — nothing seeded missing, nothing invented — while the
+per-window duplicate and bound checks stay.
+
+**Proof.** `--project=thread-scale` (gated): **10 passed / 0 failed / 0 skipped / 0 did not
+run (1.8 min)**.
+
+### 16h. W-01.7 — the rehearsal detaches on every exit path
+
+**Failing behavior.** `scripts/full-disk-rehearsal.mjs` detached its volumes inline, only on
+the path that happened to finish; a failed check or an exception (how two disk images were
+left attached) skipped the detach.
+
+**Fix (`0e90130`).** `scripts/rehearsal-kit.mjs` tracks mounted filesystems like servers and
+detaches them in its exit and signal handlers; `createSmallFilesystem` results are registered
+via `trackFilesystem`. The detach runs once (the wrapper binds the original before replacing
+the field — the first cut called its own replacement and detached nothing).
+
+**Proof.** A throwaway process confirms detach on `process.exit`, on an uncaught throw, and
+on the rehearsal's own success path. The real rehearsal: **12 checks PASS**, workspace
+removed, **0 images left attached** (`hdiutil info`).
+
+### 16i. W-01.8 — the alpha.9 addendum reads plainly
+
+**Failing behavior.** The 4 October addendum was written in the first person and called
+Firefox's `playsInline` failure a product P1; it is a test-assertion defect, and the prose
+contained sentences that did not parse.
+
+**Fix (`4700371`).** `docs/releases/0.4.0-alpha.9.md`: the addendum is rewritten as plain
+statements, the `playsInline` item is named a test-assertion defect, and a 5 October addendum
+records that the two product P1s are fixed with their regression proofs.
+
+### 16j. What this tranche does not prove
+
+- Not a candidate: `make check`, `go test ./...`, and the browser modes are green, but W-02
+  through W-21 are open, no independent review has run on this tree, and there are no hosts,
+  devices or reviewers.
+- The Windows disk-full branch is compiled, not executed.
+- The quota regression proves the invariant at one documented seam; the definitive reason
+  the fix holds — the store's single connection — is architectural.
+- The W-01 acceptance ("both Chromium modes green with nothing excluded, each under six
+  minutes; the new quota regression fails on the old handler; `make check` and `go test
+  ./...` green") is met; the browser runs use generated media and a loopback server, not
+  physical devices.
