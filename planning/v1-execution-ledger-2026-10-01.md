@@ -2420,3 +2420,89 @@ process's own RSS, not a serialized byte count relabelled as memory.
 - The load run is a development measurement on this machine, not the ratified
   resource/latency contract; that stays with the plan's load run against a frozen
   candidate.
+
+## Tranche 18 — W-03: recovery alerts that can be trusted
+
+Source commit before: `e2b98cb`. Source commit: `bb33ba4`. This closes W-03 (F-11).
+
+### 18a. Failing behaviour and reproduction
+
+- **Staleness was judged from the newest local job.** `alertConditions` aged
+  `backup.LastSuccess` against `interval*3` and printed `interval*24` as the
+  recovery-point hours. A recent local backup attempt therefore hid an old
+  independently recoverable snapshot: the alerting was quiet exactly when the RPO had
+  failed.
+- **Delivery was a synchronous network call under `filesMu`.** `maintain` held the file
+  lock while `raiseCurrentAlerts` called the webhook with a twenty-second timeout, so a
+  slow receiver stalled the maintenance pass.
+- **A failed delivery was suppressed for six hours like a successful one**, so a
+  transient refusal silenced the condition.
+- **Conditions were evaluated hourly**, so a failure just after an evaluation waited up
+  to an hour to be noticed.
+
+The regression is proven by fixture rather than by pre-fix overlay for the freshness
+half: the fix gave `alertConditions` the clock the test controls, so the pre-fix file
+cannot compile with the new test. The test's fixture is the defect's exact shape — the
+newest local job completed minutes ago while the only recoverable generation is thirty
+hours old — and the test asserts both that the old reading (`LastSuccess`) is fresh and
+that the condition is still raised.
+
+### 18b. Fix
+
+- `internal/app/recovery.go` (new): `RecoveryState`, `AssessRecovery`,
+  `AssessSnapshotAge`/`AssessSnapshotAt`, `NewestRecoveryPoint` and
+  `RecoveryThresholds`. One model; the recovery point is the newest generation with a
+  verified independent copy, else the newest still independently recoverable one. A
+  local archive on this host is not recovery; an unknown or future timestamp is never
+  green; a copy completion time does not establish snapshot age.
+- `internal/app/production.go`: the local, copy and fallback age checks classify through
+  the shared model.
+- `internal/api/alerts.go`: `alertConditions(now)` builds the state and asks the model.
+  Thresholds are `RecoveryThresholds(interval)` — the master plan's 18 h warning / 24 h
+  critical at the recommended 12-hour cadence, scaling with the configured interval, so
+  a 24-hour installation is not warned six hours before its next backup is due. A job or
+  copy failure is reported promptly and by itself.
+- Delivery: a bounded queue (`alertQueueDepth`) drained by one worker with bounded
+  retries (`alertDeliveryAttempts`, `alertDeliveryBackoff`); a full queue is disclosed on
+  the record rather than dropped. Condition deduplication (six-hour `alertRepeat`) is
+  separate from delivery retry.
+- Evaluation: a bounded cadence (`alertEvaluationInterval`) on its own worker plus a
+  prompt trigger that `scheduledBackup` fires on a failed job or copy. `maintain` no
+  longer evaluates alerts at all.
+- A cleared condition raises `resolved:<kind>` and drops its dedup entry, so a
+  recurrence alerts again.
+
+### 18c. Tests
+
+`internal/app/recovery_test.go`: thresholds reproduce 18 h/24 h at a 12-hour cadence and
+36 h/48 h at 24 h; boundaries at exactly 18 h and 24 h; a recent local job with an old
+recoverable snapshot is critical; a late copy does not refresh old data; unknown and
+future stamps are critical; no verified copy is critical; a job failure is reported as a
+failure; disabled backups do not alert.
+
+`internal/api/alerts_recovery_test.go`: the server's condition comes from the
+recoverable snapshot with a controllable clock; a late copy does not refresh it; a
+transient refusal retries to success (three attempts observed, then delivered); a
+receiver that hangs does not delay `maintain`; a job failure is delivered through the
+prompt trigger; a condition appearing just after an evaluation is caught by the next
+one; a recovered condition is announced and can be raised again.
+
+Existing alert tests were updated to wait for the asynchronous worker — delivery is
+asynchronous by design, and asserting on it synchronously was a property of the old,
+blocking implementation.
+
+### 18d. Commands and results
+
+- `make check`: **exit 0**.
+- `go test ./internal/api ./internal/app ./internal/backup -count=1`: **ok (247.7 s, 2.1 s, 3.8 s)**.
+
+### 18e. What it does not prove
+
+- Real external receipt over the operator's network is V1-14; the tests use a loopback
+  receiver.
+- The 5-minute evaluation cadence and 18 h/24 h thresholds are the ratified policy for a
+  12-hour cadence; the shipped `BackupHours` default remains the operator's setting at
+  24 h, and its thresholds scale accordingly. Ratifying a 12-hour default is a product
+  decision recorded here, not made silently.
+- Host-side external outage probing is not part of this tranche; it belongs with the
+  host/external tooling in V1-14 and the operator guide.
