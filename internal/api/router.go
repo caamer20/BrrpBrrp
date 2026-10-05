@@ -159,11 +159,15 @@ type Server struct {
 	// unlinked; the file follows outside the transaction.
 	pendingExportRemovals []string
 	exportRemovalsMu      sync.Mutex
-	settingsMu            sync.RWMutex
-	settings              db.Settings
-	passwordSlots         chan struct{}
-	thumbnailSlots        chan struct{}
-	limiter               *rateLimiter
+	// exportByteCeiling is where a build stops adding messages. It is a field rather
+	// than the constant alone so a test can lower it and exercise the byte boundary
+	// without constructing a 250 MiB document; New sets it to the shipped constant.
+	exportByteCeiling int64
+	settingsMu        sync.RWMutex
+	settings          db.Settings
+	passwordSlots     chan struct{}
+	thumbnailSlots    chan struct{}
+	limiter           *rateLimiter
 }
 
 func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) {
@@ -175,23 +179,24 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	pushClient := scraper.HTTPClient(5 * time.Second)
 	pushClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	s := &Server{
-		freeSpace:      app.FreeSpace,
-		pushJobs:       make(chan pushJob, 128),
-		pushHTTP:       pushClient,
-		scraper:        scraper.New(),
-		previewJobs:    make(chan previewJob, 64),
-		ctx:            ctx,
-		cancel:         cancel,
-		hub:            ws.New(),
-		config:         config,
-		store:          store,
-		authz:          authz.NewService(store),
-		log:            log,
-		started:        time.Now(),
-		settings:       db.DefaultSettings(),
-		passwordSlots:  make(chan struct{}, 2),
-		thumbnailSlots: make(chan struct{}, 1),
-		limiter:        newRateLimiter(),
+		freeSpace:         app.FreeSpace,
+		pushJobs:          make(chan pushJob, 128),
+		pushHTTP:          pushClient,
+		scraper:           scraper.New(),
+		previewJobs:       make(chan previewJob, 64),
+		ctx:               ctx,
+		cancel:            cancel,
+		hub:               ws.New(),
+		config:            config,
+		store:             store,
+		authz:             authz.NewService(store),
+		log:               log,
+		started:           time.Now(),
+		settings:          db.DefaultSettings(),
+		passwordSlots:     make(chan struct{}, 2),
+		thumbnailSlots:    make(chan struct{}, 1),
+		limiter:           newRateLimiter(),
+		exportByteCeiling: exportByteCeiling,
 	}
 	var saved string
 	if err := store.QueryRow(`SELECT value FROM settings WHERE key='public'`).Scan(&saved); err == nil {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"brrpbrrp/internal/app"
 	"brrpbrrp/internal/authz"
 	"brrpbrrp/internal/db"
 )
@@ -31,12 +32,48 @@ import (
 // exportBounds are the ceilings applied *while* the export is built, not checked
 // afterwards. An unbounded member-triggered job is a way to fill the server's disk,
 // and a truncated file that looks complete is worse than one that says it stopped.
+//
+// Each bound is enforced incrementally, and each has its own omission reason, because
+// the earlier version checked the attachment budget once per message (so a five-file
+// message starting at 1,999 ended at 2,004), read reactions inside the same branch (so
+// later reactions vanished when the attachment budget was spent rather than for any
+// reason about reactions), and applied the byte ceiling to a fully materialized
+// document (so it bounded what was published, not what was built). A budget that is
+// spent is now recorded against the limit that was actually reached.
 const (
 	maxExportMessages    = 50_000
 	maxExportAttachments = 2_000
+	maxExportReactions   = 20_000
 	maxExportBytes       = 256 << 20
 	exportLifetime       = 7 * 24 * time.Hour
 )
+
+// exportByteCeiling is where the build stops adding messages. It sits below the file
+// ceiling by a framing allowance, because the running count is of each element's own
+// compact JSON encoding while the file is written with indentation: stopping early
+// enough that the written file is always under maxExportBytes is what makes the byte
+// bound a bound on construction, not on the document after it already exists.
+const exportByteCeiling = maxExportBytes - (4 << 20)
+
+// exportBudget tracks what the build has accumulated, so every ceiling is applied as
+// the document grows rather than after it exists. Each limit has its own flag, because
+// a member whose export stopped needs to know *which* ceiling they reached: the earlier
+// version read reactions inside the attachment-budget branch, so a member whose export
+// had many attachments lost later reactions for a reason that was not about reactions.
+type exportBudget struct {
+	messages    int
+	attachments int
+	reactions   int
+	bytes       int64
+
+	messageLimit    bool
+	attachmentLimit bool
+	reactionLimit   bool
+	byteLimit       bool
+}
+
+// spent reports whether a limit that stops the whole build has been reached.
+func (b *exportBudget) spent() bool { return b.messageLimit || b.byteLimit }
 
 // exportDocument is the shape written to disk. It is a single JSON file rather than a
 // directory of files so that a member can read it without this application, and so a
@@ -346,21 +383,19 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 		return err
 	}
 	omitted := []string{}
-	truncated := false
-	totalMessages, totalAttachments := 0, 0
+	budget := &exportBudget{}
 
 	for _, conversation := range conversations {
 		// The ceiling is applied *before* reading a conversation's messages, not after
 		// counting them: an export that reads everything and then discards most of it
 		// is still a job that filled the disk.
-		if totalMessages >= maxExportMessages {
-			truncated = true
+		if budget.spent() {
 			omitted = append(omitted, fmt.Sprintf(
 				"stopped after %d messages; %d conversations were not included",
-				maxExportMessages, len(conversations)-len(document.Conversations)))
+				budget.messages, len(conversations)-len(document.Conversations)))
 			break
 		}
-		exported, err := s.exportConversation(ctx, tx, conversation, &totalMessages, &totalAttachments, &truncated)
+		exported, err := s.exportConversation(ctx, tx, conversation, budget)
 		if err != nil {
 			return err
 		}
@@ -370,14 +405,12 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 		}
 		document.Conversations = append(document.Conversations, *exported)
 	}
-	if truncated {
-		document.Omissions = append(document.Omissions, omitted...)
-	}
+	document.Omissions = append(document.Omissions, omissionReasons(budget)...)
 	document.Summary = exportSummary{
 		Conversations: len(document.Conversations),
-		Messages:      totalMessages,
-		Attachments:   totalAttachments,
-		Truncated:     truncated,
+		Messages:      budget.messages,
+		Attachments:   budget.attachments,
+		Truncated:     budget.spent() || budget.attachmentLimit || budget.reactionLimit,
 	}
 	document.ExpiresAt = db.Timestamp(time.Now().UTC().Add(exportLifetime))
 
@@ -386,37 +419,23 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 		return err
 	}
 	if int64(len(encoded)) > maxExportBytes {
-		// The row bound and the byte bound are the same bound seen from two sides. The
-		// earlier version recorded the omission and then wrote the oversized file
-		// anyway, so the ceiling protected nothing except the reader's patience: a
-		// member whose export was over the limit got a document the server had already
-		// declared it would not produce.
-		//
-		// So it is not written. The job fails, the member is told why in the place they
-		// can see it, and nothing lands on disk for a delivery to serve. The
-		// conversation-level bound above normally stops this long before: 50,000
-		// messages of 4,000 characters is about 200 MiB, under a 256 MiB ceiling.
+		// The bound is normally reached during the build (exportByteCeiling), so a
+		// document this size means the compact estimate undercounted the framing. It is
+		// still not written: a member whose export was over the limit must not receive a
+		// file the server had already declared it would not produce. The job fails with
+		// its reason visible in the row.
 		document.Summary.Truncated = true
 		document.Omissions = append(document.Omissions, "the file exceeded its size limit and was not written")
-		// The row still records what was reached, so the member can see how much of
-		// their history the build covered even though no file was produced.
 		return s.recordTruncatedExport(ctx, tx, exportID, userID, document)
 	}
 
 	path := s.exportPath(exportID)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	// Written to a temporary name and renamed, so a reader never sees a half-written
-	// file and a crash never leaves one that looks complete.
-	temporary := path + ".partial"
-	if err := os.WriteFile(temporary, encoded, 0600); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
+	// Published through the durable-publication utility: written to a temporary file in
+	// the same directory, flushed to the device, renamed onto the final name, and the
+	// directory synchronized — so a reader never sees a half-written file and a crash
+	// never leaves one that looks complete. The earlier version wrote and renamed
+	// without flushing, so "the row promises a file" was only as durable as the page
+	// cache where the bytes were still sitting.
 	// The scope is the file's own list of conversations, taken from what was written
 	// rather than from what was selected. A conversation that failed to read and was
 	// omitted is not in the file and must not be in the scope, or a later download
@@ -429,6 +448,9 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 	if err != nil {
 		return err
 	}
+	if err := s.publishExport(path, encoded); err != nil {
+		return err
+	}
 	now := db.Now()
 	if _, err := tx.ExecContext(ctx, `UPDATE data_exports SET state='ready',completed_at=?,conversation_count=?,message_count=?,attachment_count=?,
 		bytes_written=?,truncated=?,omissions=?,expires_at=?,completed_by=?,scope=?
@@ -436,9 +458,26 @@ func (s *Server) buildExport(ctx context.Context, exportID, userID string) error
 		now, document.Summary.Conversations, document.Summary.Messages, document.Summary.Attachments,
 		int64(len(encoded)), boolToInt(document.Summary.Truncated), strings.Join(document.Omissions, "; "),
 		document.ExpiresAt, userID, string(encodedScope), exportID, userID); err != nil {
+		// The transaction that would have promised the file failed, so the file must
+		// not be left as a ready-looking export with no row — the orphan sweep would
+		// eventually reach it, but a crash here would leave a complete copy of a
+		// member's history on disk in the meantime. Removing it is the honest cleanup.
+		_ = os.Remove(path)
 		return err
 	}
 	return tx.Commit()
+}
+
+// publishExport writes the encoded document through the durable-publication utility.
+func (s *Server) publishExport(path string, encoded []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	_, err := app.Publish(filepath.Dir(path), filepath.Base(path), func(file *os.File) error {
+		_, err := file.Write(encoded)
+		return err
+	})
+	return err
 }
 
 // exportableConversations is the set this account may export, resolved with the same
@@ -528,7 +567,14 @@ func (s *Server) exportPeerName(ctx context.Context, q db.Queryer, conversationI
 // exportConversation reads one conversation's messages, returning nil when it could
 // not be read in full so the caller can say so rather than shipping a short file
 // without saying it.
-func (s *Server) exportConversation(ctx context.Context, q db.Queryer, conversation exportConversation, messages, attachments *int, truncated *bool) (*exportConversation, error) {
+//
+// The attachments and reactions for the whole conversation are read in one query each,
+// not one pair per message. The earlier shape issued two queries per message — a hundred
+// thousand for the largest permitted export — and the measurement showed what that cost:
+// the build held the store's single connection for 3.3 seconds while chat waited behind
+// it. Batching the reads to two per conversation removes the per-message queries, which
+// is the part that scaled with history rather than with the document.
+func (s *Server) exportConversation(ctx context.Context, q db.Queryer, conversation exportConversation, budget *exportBudget) (*exportConversation, error) {
 	rows, err := q.QueryContext(ctx, `SELECT id,user_id,content,created_at,COALESCE(edited_at,''),COALESCE(reply_to_id,''),COALESCE(thread_id,'')
 		FROM messages WHERE conversation_id=? ORDER BY id LIMIT ?`, conversation.ID, maxExportMessages+1)
 	if err != nil {
@@ -536,11 +582,21 @@ func (s *Server) exportConversation(ctx context.Context, q db.Queryer, conversat
 	}
 	defer rows.Close()
 	out := exportConversation{ID: conversation.ID, Kind: conversation.Kind, Title: conversation.Title, Messages: []exportMessage{}}
+	// kept maps a message id to its index in out.Messages, so the batched attachment and
+	// reaction reads can be distributed to the messages that were actually collected.
+	kept := map[string]int{}
 	for rows.Next() {
-		// The row ceiling is checked *inside* the read, so a conversation larger than
-		// the whole export's budget stops rather than being materialised first.
-		if *messages >= maxExportMessages {
-			*truncated = true
+		// Each ceiling is checked *inside* the read, so a conversation larger than the
+		// whole export's budget stops rather than being materialised first. The message
+		// and byte ceilings stop the build; the attachment and reaction ceilings only
+		// stop collecting those, because the messages after them are still the member's
+		// history.
+		if budget.messages >= maxExportMessages {
+			budget.messageLimit = true
+			break
+		}
+		if ceiling := s.exportByteCeiling; ceiling > 0 && budget.bytes >= ceiling {
+			budget.byteLimit = true
 			break
 		}
 		var message exportMessage
@@ -549,42 +605,108 @@ func (s *Server) exportConversation(ctx context.Context, q db.Queryer, conversat
 		}
 		message.Attachments = []exportAttachment{}
 		message.Reactions = []exportReaction{}
-		if *attachments < maxExportAttachments {
-			files, err := q.QueryContext(ctx, `SELECT a.id,a.file_name,a.mime_type,a.file_size,a.created_at
-				FROM attachments a JOIN messages m ON m.id=a.message_id WHERE m.id=?`, message.ID)
-			if err != nil {
-				return nil, err
-			}
-			for files.Next() {
-				var file exportAttachment
-				if err := files.Scan(&file.ID, &file.FileName, &file.MimeType, &file.Size, &file.CreatedAt); err != nil {
-					files.Close()
-					return nil, err
-				}
-				message.Attachments = append(message.Attachments, file)
-				*attachments++
-			}
-			files.Close()
-			reactions, err := q.QueryContext(ctx, `SELECT emoji,user_id,created_at FROM reactions WHERE message_id=?`, message.ID)
-			if err != nil {
-				return nil, err
-			}
-			for reactions.Next() {
-				var reaction exportReaction
-				if err := reactions.Scan(&reaction.Emoji, &reaction.UserID, &reaction.CreatedAt); err != nil {
-					reactions.Close()
-					return nil, err
-				}
-				message.Reactions = append(message.Reactions, reaction)
-			}
-			reactions.Close()
-		} else {
-			*truncated = true
-		}
+		kept[message.ID] = len(out.Messages)
 		out.Messages = append(out.Messages, message)
-		*messages++
+		budget.messages++
+		budget.bytes += int64(len(message.Content)) + 160
 	}
-	return &out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out.Messages) == 0 {
+		return &out, nil
+	}
+	if err := s.collectAttachments(ctx, q, conversation.ID, kept, &out, budget); err != nil {
+		return nil, err
+	}
+	if err := s.collectReactions(ctx, q, conversation.ID, kept, &out, budget); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// collectAttachments reads every attachment in the conversation in one pass and adds it
+// to the message it belongs to, stopping at the attachment ceiling. The ceiling is
+// checked per file rather than per message: a message with five files arriving at 1,999
+// must end at 1,999, not at 2,004.
+func (s *Server) collectAttachments(ctx context.Context, q db.Queryer, conversationID string, kept map[string]int, out *exportConversation, budget *exportBudget) error {
+	rows, err := q.QueryContext(ctx, `SELECT a.message_id,a.id,a.file_name,a.mime_type,a.file_size,a.created_at
+		FROM attachments a JOIN messages m ON m.id=a.message_id WHERE m.conversation_id=? ORDER BY a.message_id`, conversationID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if budget.attachments >= maxExportAttachments {
+			budget.attachmentLimit = true
+			continue
+		}
+		var messageID string
+		var file exportAttachment
+		if err := rows.Scan(&messageID, &file.ID, &file.FileName, &file.MimeType, &file.Size, &file.CreatedAt); err != nil {
+			return err
+		}
+		index, ok := kept[messageID]
+		if !ok {
+			continue
+		}
+		out.Messages[index].Attachments = append(out.Messages[index].Attachments, file)
+		budget.attachments++
+		budget.bytes += int64(len(file.FileName)) + int64(len(file.MimeType)) + 140
+	}
+	return rows.Err()
+}
+
+// collectReactions does the same for reactions. They are their own ceiling: a member who
+// has reached their attachment ceiling has not thereby stopped reacting, and the earlier
+// version read reactions inside the attachment-budget branch, so later reactions vanished
+// for a reason that was not about reactions.
+func (s *Server) collectReactions(ctx context.Context, q db.Queryer, conversationID string, kept map[string]int, out *exportConversation, budget *exportBudget) error {
+	rows, err := q.QueryContext(ctx, `SELECT r.message_id,r.emoji,r.user_id,r.created_at
+		FROM reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=? ORDER BY r.message_id`, conversationID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if budget.reactions >= maxExportReactions {
+			budget.reactionLimit = true
+			continue
+		}
+		var messageID string
+		var reaction exportReaction
+		if err := rows.Scan(&messageID, &reaction.Emoji, &reaction.UserID, &reaction.CreatedAt); err != nil {
+			return err
+		}
+		index, ok := kept[messageID]
+		if !ok {
+			continue
+		}
+		out.Messages[index].Reactions = append(out.Messages[index].Reactions, reaction)
+		budget.reactions++
+		budget.bytes += int64(len(reaction.Emoji)) + 140
+	}
+	return rows.Err()
+}
+
+// omissionReasons states, in the file, which ceiling the build reached. Each limit has
+// its own sentence, because "some things are missing" is not useful to a member trying
+// to work out what they have.
+func omissionReasons(budget *exportBudget) []string {
+	reasons := []string{}
+	if budget.messageLimit {
+		reasons = append(reasons, fmt.Sprintf("stopped after %d messages, this export's limit", maxExportMessages))
+	}
+	if budget.attachmentLimit {
+		reasons = append(reasons, fmt.Sprintf("stopped collecting attachments after %d files, this export's limit", maxExportAttachments))
+	}
+	if budget.reactionLimit {
+		reasons = append(reasons, fmt.Sprintf("stopped collecting reactions after %d, this export's limit", maxExportReactions))
+	}
+	if budget.byteLimit {
+		reasons = append(reasons, "stopped before this export's size limit")
+	}
+	return reasons
 }
 
 func (s *Server) exportPath(exportID string) string {
@@ -865,38 +987,37 @@ const (
 // server are both inside their bounds. Files go with the rows, in that order, so a
 // crash between the two leaves an orphan file rather than a row pointing at nothing —
 // and the maintenance sweep, which works from the directory, cleans up orphans.
+//
+// Building jobs count against both bounds alongside finished copies. The earlier version
+// counted only `ready`, so a server at its ceiling could admit any number of concurrent
+// jobs from different accounts — each saw room because none of the others had finished —
+// and the ceiling the product states was quietly the ceiling on *finished* files rather
+// than on the work. Counting both, inside the transaction that inserts the new job,
+// reserves every admitted build: the store's one connection serializes two admissions,
+// so the second sees the first's `building` row and is refused at the bound.
 func (s *Server) reclaimExportStorage(ctx context.Context, tx *sql.Tx, userID string) error {
 	// The server bound first, so one account cannot consume the whole allowance.
 	var server int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_exports WHERE state='ready'`).Scan(&server); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_exports WHERE state IN ('building','ready')`).Scan(&server); err != nil {
 		return err
 	}
 	var account int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_exports WHERE state='ready' AND user_id=?`, userID).Scan(&account); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM data_exports WHERE state IN ('building','ready') AND user_id=?`, userID).Scan(&account); err != nil {
 		return err
 	}
-	// The count is of *finished* copies and this runs before the new one is built, so
-	// the new one will make one more. The bound has to account for the copy being
-	// created, not only for what exists: an account at the limit that asks for another
-	// export is asking for the copy that tips it over.
+	// The count now includes the job this request is about to insert's own account
+	// (zero building rows for this account exist — the pending check refused the request
+	// if one did), so the account arithmetic is against finished copies as before.
 	excess := account - (maxReadyExportsPerAccount - 1)
 	// The server bound caps how much this account's excess may be relieved by: a
 	// server inside its allowance has not earned the right to hold more on an
 	// account's behalf, so a healthy server clamps nothing and a *full* one relieves
 	// only as much as the room allows.
-	//
-	// `excess` is what this account is over by; the slack is what the server has spare.
-	// The relief is the smaller of the two, and zero spare means no relief at all.
 	if slack := maxReadyExportsOnServer - server; slack < excess {
 		excess = slack
 	}
-	// A full server is a refusal, not a job admitted anyway.
-	//
-	// When the slack is zero the clamp above makes `excess` zero, the function returns
-	// "nothing to do", and the new export is inserted anyway — so the server ends up
-	// holding one more copy than its own ceiling says it should. The bound was
-	// therefore only ever enforced for the *account*, and quietly not enforced for the
-	// server at exactly the moment it mattered.
+	// A full server is a refusal, not a job admitted anyway. The count includes building
+	// jobs, so this is the ceiling on work in flight.
 	if server >= maxReadyExportsOnServer {
 		return errExportStorageFull
 	}
