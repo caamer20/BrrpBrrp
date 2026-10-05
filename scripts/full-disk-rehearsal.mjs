@@ -41,6 +41,7 @@ import {
   run,
   startServer,
   stopServer,
+  trackFilesystem,
 } from "./rehearsal-kit.mjs";
 const { checks, transcript, say, check } = createRehearsal();
 
@@ -166,7 +167,7 @@ async function main() {
     buildBinary(binary);
   }
 
-  const filesystem = createSmallFilesystem(workDir, 48, "small");
+  const filesystem = trackFilesystem(createSmallFilesystem(workDir, 48, "small"));
   if (!filesystem.ok) {
     say(`Full-disk rehearsal skipped: ${filesystem.reason}`);
     const summary = {
@@ -311,7 +312,7 @@ async function main() {
   // uploads are refused on a tiny volume — which a product that refused every upload would
   // also show — and the assertion that matters is that the guard refuses for the reason it
   // states.
-  const roomy = createSmallFilesystem(workDir, 640, "roomy");
+  const roomy = trackFilesystem(createSmallFilesystem(workDir, 640, "roomy"));
   if (!roomy.ok) {
     say(
       `  note: the control volume could not be created (${roomy.reason}), so the acceptance half is not rehearsed here`,

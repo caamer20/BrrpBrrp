@@ -35,17 +35,54 @@ export function killLiveChildren() {
   liveChildren.clear();
 }
 
-process.on("exit", killLiveChildren);
+// Every mounted filesystem a rehearsal creates is tracked here, for the same reason the
+// servers are: a failed check or an exception must not leave a disk image attached. Two
+// images were left attached on 30 September because the full-disk rehearsal detached its
+// volumes inline, on the path that happened to finish. The detach is wrapped to run once,
+// so the rehearsal's own successful detach and this registry cannot fight over a volume
+// that is already gone.
+export const liveFilesystems = new Set();
+
+export function trackFilesystem(filesystem) {
+  if (!filesystem?.detach) return filesystem;
+  const detachOnce = filesystem.detach.bind(filesystem);
+  let detached = false;
+  filesystem.detach = () => {
+    if (detached) return;
+    detached = true;
+    detachOnce();
+  };
+  liveFilesystems.add(filesystem);
+  return filesystem;
+}
+
+export function detachLiveFilesystems() {
+  for (const filesystem of liveFilesystems) {
+    try {
+      filesystem.detach();
+    } catch {
+      /* already detached */
+    }
+  }
+  liveFilesystems.clear();
+}
+
+process.on("exit", () => {
+  killLiveChildren();
+  detachLiveFilesystems();
+});
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, async () => {
     console.error(
-      `Rehearsal interrupted (${signal}); stopping rehearsal servers.`,
+      `Rehearsal interrupted (${signal}); stopping rehearsal servers and detaching volumes.`,
     );
     // SIGTERM first so a server can close its database cleanly; the exit-handler
-    // backstop and killLiveChildren cover one that refuses.
+    // backstop and killLiveChildren cover one that refuses. The exit handler that the
+    // process.exit below triggers detaches every mounted volume.
     for (const child of liveChildren) child.kill("SIGTERM");
     await new Promise((done) => setTimeout(done, 1500));
     killLiveChildren();
+    detachLiveFilesystems();
     process.exit(1);
   });
 }
