@@ -3,6 +3,35 @@
 Compact record of implementation tranches toward v1.0.0, per the review-17 handoff
 (`planning/handoff-agentic-coder-v1-review-17-2026-10-01.md`). One section per tranche.
 
+**Current status (4 October 2026 evening).** Read this first; the per-tranche sections
+below are evidence, some of them written when assignments were hazy, and two of them
+(11e and 11d) are at the tail and historical.
+
+- **Candidate:** 0.4.0-alpha.9 at `f810f0c` (digests in `dist/releases/SHA256SUMS`,
+  record at `docs/releases/0.4.0-alpha.9.md`). That record predates the independent
+  review of 3–4 October 2026 (`planning/v1-release-execution-plan-2026-10-03.md`) and
+  several of its claims are answered below; see the dated addendum in the record itself.
+  **Do not build on it as if it were current.** The shipped archive at `f810f0c` predates
+  the refused-share fix in `6a84fee`; any further packaging is a new version.
+- **What is closed, measured in the tree on this branch:** all fifteen Phase B rows
+  (ENG-01…ENG-15); the 1000-reply thread journey, the Arabic journey, the refusal
+  cleanup for a failed publication, the shared rehearsal kit, the acceptance and
+  negative matrices with their CI gates; the Firefox voice project (13/14 green) and
+  WebKit release subset (a red starting point over the Chromium fixture, see below).
+- **What is red right now on this tree at 4 October evening:** the independent review's
+  quota race reproduces exactly as reported (`committed=16 status=[201 201]` on a quota
+  of 10); Firefox's voice project has one red webview assertion (`node.playsInline` is
+  undefined there); WebKit's release subset shares its fixture with the Chromium
+  `release` project so its own journeys cannot run against a second installation; the
+  disk-image detaches and the stale worktree are cleaned up. Example failure shape, not
+  a catalogue.
+- **What is open and the owner owns it:** a private remote (settled: none), the two
+  feature gates (settled: only after the independent reviews and their P1s land), the
+  host/device/reviewer/profile requirements of the D–I phases (settled), a Windows
+  code-signing identity, and the long lead items listed in section 5 of the top-level
+  kickoff. The rest of this ledger's tail is historical; the owed list that follows it
+  accurately is the one the acceptance checker prints on any `make check`.
+
 ---
 
 ## Tranche 1 — Multiple-uncertain reply identity and revocable export delivery
@@ -1886,7 +1915,7 @@ owner's decisions have already fixed and the ones with no external dependency.
   owner; no release is named until a remote exists and hosted CI runs.
 
 
-### 11e. Where the next session starts
+### 11e. Where the next session starts *(historical — a handoff written before the local work it describes landed; the rows it names as still open are closed in sections 11f through 11x, and the authoritative current status is the index at the top of this file)*
 
 Phase B rows closed so far: **ENG-02** (keyframe feedback and late-join discovery,
 tranche 8), **ENG-03** (screen presets and the ingress ceiling, tranche 9), **ENG-05**
@@ -1935,7 +1964,7 @@ proofs still owed, Firefox/WebKit projects for the core journeys, the sharded ra
 convergence passes, the first hosted CI run, flipping the feature gates with the owner's
 approval, and cutting `1.0.0-beta.1`.
 
-### 11d. ENG-11 — a reconnect policy that meets the budget
+### 11d. ENG-11 — a reconnect policy that meets the budget *(historical — written after 11x in this file; it is the ENG-11 account, not a scheduling block)*
 
 - **What it was.** The socket's backoff doubled to a thirty-second ceiling, and nothing
   else was watching: no `online` trigger, no foreground resume, and no way to notice a
