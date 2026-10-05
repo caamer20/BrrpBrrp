@@ -89,6 +89,19 @@ test('a thousand replies are navigable, each appearing once, with the oldest rea
   let written = 0;
   const firstReplyContent = 'reply 0000 the oldest words in this thread';
   const lastReplyContent = `reply ${String(REPLY_TOTAL - 1).padStart(4, '0')} the newest words in this thread`;
+  // Every seeded reply's content, so the walk below can require the union of what it
+  // visited to equal exactly this set: no reply seeded and never shown, none shown twice,
+  // none invented.
+  const seededContent = new Set();
+  for (let index = 0; index < REPLY_TOTAL; index += 1) {
+    seededContent.add(
+      index === 0
+        ? firstReplyContent
+        : index === REPLY_TOTAL - 1
+          ? lastReplyContent
+          : `reply ${String(index).padStart(4, '0')}`
+    );
+  }
   for (let batch = 0; batch * batchSize < perSender; batch += 1) {
     const results = await Promise.all(
       senders.map(async (sender, senderIndex) => {
@@ -176,6 +189,11 @@ test('a thousand replies are navigable, each appearing once, with the oldest rea
   expect(new Set(initial).size, 'a reply was rendered twice on the first page').toBe(
     initial.length
   );
+  // The union of everything the walk renders. The window is bounded, so the *current*
+  // window is not the whole thread — but every reply the walk passes through is, and the
+  // claim this journey makes is that walking the thread shows each seeded reply and
+  // nothing else.
+  const visited = new Set(initial);
 
   const older = panel.getByRole('button', { name: 'Load earlier replies' });
   const threadLog = panel.getByRole('log', { name: 'Thread messages' });
@@ -197,6 +215,7 @@ test('a thousand replies are navigable, each appearing once, with the oldest rea
       )
       .toBeGreaterThan(0);
     const window = await rendered();
+    for (const text of window) visited.add(text);
     expect(
       window.length,
       `the rendered window grew past its bound: ${window.length} replies`
@@ -210,6 +229,17 @@ test('a thousand replies are navigable, each appearing once, with the oldest rea
   }
   expect(reachedTheOldest, 'the oldest reply was never reachable by walking back').toBe(true);
   await expect(panel.getByText(firstReplyContent)).toBeVisible();
+
+  // The union of the visited replies is exactly the seeded set: every seeded reply was
+  // shown at least once, and nothing that was not seeded appeared. This is the property a
+  // cursor that skips or repeats breaks — a skip leaves a seeded reply missing from the
+  // union, and an invented row adds one that was never written.
+  const missing = [...seededContent].filter((content) => !visited.has(content));
+  expect(missing, `replies seeded but never shown: ${missing.slice(0, 5).join(', ')}`).toEqual([]);
+  const invented = [...visited].filter((content) => !seededContent.has(content));
+  expect(invented, `replies shown but never seeded: ${invented.slice(0, 5).join(', ')}`).toEqual(
+    []
+  );
 
   // The panel shows the thread's replies and names the thread; the root message itself is
   // the channel's, which is where a reader met it. (An earlier version of this assertion
