@@ -2317,3 +2317,106 @@ records that the two product P1s are fixed with their regression proofs.
   minutes; the new quota regression fails on the old handler; `make check` and `go test
   ./...` green") is met; the browser runs use generated media and a loopback server, not
   physical devices.
+
+## Tranche 17 — W-02: the member export's limits are bounds on construction
+
+Source commit before: `8d4a69b`. Source commit: `2bd575a`. This closes W-02 (F-10).
+
+### 17a. Failing behaviour and reproduction
+
+Four faults in `internal/api/export.go`, each reproduced against the pre-fix file
+(`bc238a0`/`8d4a69b`, byte-identical) with a Go overlay:
+
+- **The attachment budget was checked once per message.** `exportConversation` tested
+  `*attachments < maxExportAttachments` *before* reading a message's files, so a
+  five-file message starting at 1,999 appended all five and ended at 2,004. Reproduced:
+  `TestAnExportAttachmentBoundIsNotExceededByAMultiFileMessage` against the overlay
+  reports `the export holds 2004 attachments, over its bound of 2000`.
+- **Reactions were read inside the attachment-budget branch.** Once the attachment
+  budget was spent the `else` set `truncated` and skipped both the files *and* the
+  reactions, so a later message's reactions vanished. Reproduced:
+  `TestAnExportCollectsReactionsIndependentlyOfItsAttachmentBound` against the overlay
+  reports `a reaction on a message after the attachment budget was spent was dropped`.
+- **The byte ceiling was applied to a materialized document.** `json.MarshalIndent` built
+  the whole document, then `len(encoded) > maxExportBytes` was checked — bounding what
+  was published, not what was built. The comment equating 4,000 characters with roughly
+  4,000 bytes was wrong for multibyte content.
+- **Admission counted only ready exports.** `reclaimExportStorage` counted
+  `state='ready'`, so a server at its ceiling admitted any number of concurrent builds
+  from different accounts (each saw room because none had finished).
+
+### 17b. Fix
+
+- `exportBudget` (one struct) tracks messages, attachments, reactions and bytes as the
+  document grows, with a separate flag per limit so each omission names the ceiling that
+  was actually reached. The message and byte ceilings stop the build; the attachment and
+  reaction ceilings only stop collecting those, because later messages are still the
+  member's history.
+- The attachment ceiling is checked per file; reactions have their own query and their
+  own ceiling (`maxExportReactions = 20_000`).
+- The build stops at `exportByteCeiling` (a `Server` field, `exportByteCeiling` by
+  default) as it grows; the shipped file ceiling stays a final guard on the marshalled
+  bytes.
+- `reclaimExportStorage` counts `state IN ('building','ready')` for both the per-account
+  and the server bound, inside the admitting transaction, so every admitted build is
+  reserved and two admissions cannot both pass (the store's one connection serializes
+  them).
+- Publication goes through `app.Publish` (write to a temp file, flush, rename, sync the
+  directory) instead of `os.WriteFile` + `os.Rename`; a failed metadata commit removes the
+  file rather than leaving a ready-looking copy of a member's history on disk.
+- Snapshot authority (`exportableConversations`), recent authentication, and revocable
+  delivery (`downloadExport`/`deliveries`) are unchanged.
+
+### 17c. Boundary tests
+
+`internal/api/export_bounds_test.go`: 1,999/2,000 with a multi-file message
+(`TestAnExportAttachmentBoundIsNotExceededByAMultiFileMessage`); reaction-only later
+messages (`TestAnExportCollectsReactionsIndependentlyOfItsAttachmentBound`); multibyte
+text at a lowered byte ceiling (`TestAnExportStopsAtItsByteCeilingWithMultibyteText`);
+a full server of concurrent building jobs
+(`TestAFullServerOfBuildingJobsRefusesANewExport`); a failed publication
+(`TestAnExportWhoseFileCannotBePublishedLeavesNoResidual` — non-201, no file, no row);
+and a restart serving the published file with no publication temporary left behind
+(`TestAnExportSurvivesARestartWithItsFilePresent`). The first two fail against the
+pre-fix overlay; the rest exercise the fixed code paths.
+
+### 17d. Load measurement
+
+`internal/api/export_load_test.go`, gated behind `BRRP_EXPORT_LOAD=1` (skips otherwise),
+seeds the message bound and measures the build in the same process:
+
+| Figure | Before batching | After batching |
+| --- | --- | --- |
+| Build duration (50,000 messages) | 3.3 s | **753 ms** |
+| Slowest ordinary chat send during the build | 3.3 s | **748 ms** |
+| Peppercentage Go heap peak | 89 MiB | 89 MiB |
+| Process peak RSS (high-water) | — | ~135 MiB |
+| Document bytes | 16.0 MiB | 16.0 MiB |
+
+The before figure is the first run, which also revealed the cost: the build issued two
+queries per message (a hundred thousand for the largest permitted export) and held the
+store's single connection for 3.3 s while chat waited behind it. Batching the
+attachments and reactions to two queries per conversation removed the per-message cost;
+the residual ~0.75 s is the build still holding the single connection, which is the
+architecture rather than a defect. The measurement is a real Go heap figure and the
+process's own RSS, not a serialized byte count relabelled as memory.
+
+### 17e. Commands and results
+
+- `go test ./internal/api -count=1`: **ok (225 s)**.
+- `go test ./internal/api -run <export bound tests> -count=1` against the pre-fix overlay:
+  **2 failed** (attachment bound 2,004; reaction dropped).
+- `BRRP_EXPORT_LOAD=1 go test ./internal/api -run TestExportLoadMeasurement -count=1 -v`:
+  **PASS**, figures above; **skips** without the variable.
+
+### 17f. What it does not prove
+
+- A genuine concurrent admission near the cap is proven at the invariant (the count
+  includes building jobs and the single connection serializes), not by a scheduler race;
+  the same seam argument as the quota regression.
+- The failed-publication test skips where directory permissions are not enforced.
+- Peak RSS is a process-lifetime high-water mark, an upper bound on this build's cost
+  rather than the build's own figure.
+- The load run is a development measurement on this machine, not the ratified
+  resource/latency contract; that stays with the plan's load run against a frozen
+  candidate.
