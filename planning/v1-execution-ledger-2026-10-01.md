@@ -20,7 +20,10 @@ below are evidence, some of them written when assignments were hazy, and two of 
   WebKit release subset (a red starting point over the Chromium fixture, see below).
 - **What is red right now on this tree at 4 October evening:** the independent review's
   quota race reproduces exactly as reported (`committed=16 status=[201 201]` on a quota
-  of 10); Firefox's voice project has one red webview assertion (`node.playsInline` is
+  of 10) *(closed in tranche 14)*; the F-02 deep-link boundaries — the panel comparing
+  a message id with a thread id and the `after` cursor answering the tail page for a
+  mid-history anchor — were likewise red on that tree and are **closed in tranche 13**;
+  Firefox's voice project has one red webview assertion (`node.playsInline` is
   undefined there); WebKit's release subset shares its fixture with the Chromium
   `release` project so its own journeys cannot run against a second installation; the
   disk-image detaches and the stale worktree are cleaned up. Example failure shape, not
@@ -2005,5 +2008,84 @@ approval, and cutting `1.0.0-beta.1`.
   browser's own event, not by unplugging a cable; and no measurement over a real network
   exists — the p95 the plan states needs the reference hardware and a lossy link.
 
+## Tranche 13 — V1-01: deep links into a named thread land at the reply they name
 
+- **What it was.** F-02 in the release-execution plan. Two boundaries conspired against
+  a link to an older thread reply. Server side, `listThreadMessages` answered `after=`
+  with a *descending* scan over the newer range and then reversed it for display, so a
+  panel landing mid-history received the page at the thread's *tail*, and every reply
+  between the anchor and the tail was silently absent. Client side, the workspace
+  recorded the jump as a bare message id and the mounted panel compared it against its
+  own *thread* id, so two records that never describe the same thing were being read
+  as if they could match; the consumption also lived in `onMount`, so a second link
+  into an already-mounted panel had its location never consumed at all.
+- **Fix.** `internal/api/threads.go`: the `after` cursor walks ascending (nearest row
+  first) and skips the display reversal; the `before` and newest-page shapes are
+  unchanged. `web/src/lib/workspace.svelte.ts`: the jump is now a `{threadId,
+  messageId}` pair — a message id and a thread id are different records, and the only
+  honest deep-link state names both. `web/src/lib/components/NamedThreadPanel.svelte`:
+  the single consumption point is an effect that fires on the pair changing, so a
+  mounted panel answers a later jump the same way a fresh one answers the first, and
+  the record is cleared as it is read. The pair is written with the thread id read
+  from the permalink's own target message.
+- **Reproduction, failing first.** A new rendered journey in `web/e2e/threads.spec.mjs`
+  ("a deep link to the middle of a long thread opens the thread at that middle") seeds
+  240 replies at the real per-author send pacing, then proves four landings: the
+  permalink to the middle shows the pivot and its next neighbour but not the first
+  page; a fresh entry at the tail shows the newest page; a quote click moves the
+  already-mounted panel to the anchor it references; and a fresh entry at an early
+  reply shows the early window. On the stashed pre-fix tree this journey failed at
+  `reply 61 of 240`'s window: the panel rendered replies 10–60 and 71–120 with rows
+  61–70 absent — the descending `after` scan dropping exactly the neighbourhood the
+  link asked for (artifacts: `/tmp/brrp-e2e/f02-honest3`). The focused Go regression
+  `TestThreadMessageCursorWalksNearestFromItsAnchor` failed before the fix with the
+  `after` page returning "reply 81" where the anchor's neighbour was owed, and the
+  panel-pair change is what makes leg 3 of the journey (the quote click inside the
+  already-mounted panel) possible at all: a mounted panel without a reactive
+  consumption point once ignored the later link entirely.
+- **Commands and results.** `go test ./internal/api -count=1`: **ok (222.99 s)**
+  including the new cursor test and the existing thousand-reply traversal.
+  `npm --prefix web run check`: 158 files, 0 errors, 0 warnings. Browser: threads
+  project in default mode — see run log `/tmp/brrp-e2e/f02-verify3.log`.
+- **What it does not prove.** V1-01's harder state-machine cases — legacy promotion,
+  root tombstones, restricted-parent revocation while a thread window is held, the
+  unread-cursor isolation — are covered by the existing journeys (`threads.spec.mjs`'s
+  reply-identity and archive journeys, `thread-scale.spec.mjs`'s thousand-reply walk);
+  this tranche adds no new proof for those, and the 200+-reply navigation proof lives
+  in a bounded e2e shape rather than the full-thousand browser run.
+
+## Tranche 14 — V1-02, first half: a quota decision made inside the admission transaction
+
+- **What it was.** F-01 in the release-execution plan: the upload handler read the
+  installation's storage quota in `quotaRefusal` and only afterwards opened `BeginTx`
+  and inserted the attachment row, so two concurrent uploads could each pass the check
+  before either committed and both would land. The review demonstrated the pairing
+  crashed past a 10-byte quota with 16 committed bytes. En route, the body-copy loop
+  refused any short read with "file too large" (F-06), and a body that ended exactly
+  at the per-file limit misclassified the same way, because the old `io.Copy` checked
+  `size > limit` after the write instead of refusing the read at the boundary.
+- **Fix.** `internal/api/uploads.go`: the quota question is now answered *inside* the
+  admission transaction (`quotaRefusalForTx`), so under the store's single writer no
+  second upload can sit between "this fits" and "this commits". The body loop now
+  distinguishes truncated (400) from too-large (413) from I/O failure, keeps the
+  disk-reserve answer (507) intact, and enforces the limit at the read boundary so a
+  body ending exactly on it is refused rather than committed. `router.go` took and
+  then gave back an admission-gate seam: with the read moved inside the transaction
+  the scheduling probe is moot, and the dead field was removed instead of left as
+  scaffolding.
+- **Reproduction, failing first.** `internal/api/uploads_quota_concurrency_test.go` —
+  `TestUploadQuotaAdmission` and siblings assert that two eight-byte uploads against a
+  quota of twenty commit, the third is refused with 507, a body at exactly the limit
+  fits, a truncated body is refused 400 (not 413), a cancelled body is refused 400, a
+  suspended account's write is refused, and a failed publication leaves no residual
+  file or row.
+- **Commands and results.** `go test ./internal/api -count=1`: **ok (222.99 s)**
+  including the new quota tests **and** the pre-existing `TestUploadsOwnershipAndLimit`,
+  which caught and pinned one real regression in the first cut of this tranche (the
+  `size > limit` check the new loop initially lost at the read boundary).
+- **What it does not prove.** The V1-02 export subtranche (message/attachment/byte
+  bounds under concurrency) is not part of this commit and is named as open work in
+  the plan; the full-volume and commit-failure scenarios the review listed under
+  V1-02's item 6 are unit-covered at the refusal shape, not measured against a real
+  nearly-full volume — that stays with V1-10's host runs.
 
