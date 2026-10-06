@@ -7,14 +7,15 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 32** (`3d45c29`). **Closed: W-01 through W-06, W-21 (part 1),
-  W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25**
-  (30) and **W-26** (31). **Tranche 32 is not a W-item — it is Part A's bookkeeping:** it
-  commits tranche 31's ledger (`44e4022`), gathers the five owner questions into the queue's
-  §5, and says in two guides how a member leaves today. **Open: W-07 through W-20, W-27
-  through W-32 and W-37** — W-27 is next, W-37 waits on W-28, which explains its consequence
-  where a new owner meets it, and W-21 still owes the two `docs/host-qualification.md`
-  corrections (tranche 27).
+- **Branch head after tranche 33** (`cda1b1d`). **Closed: W-01 through W-06, W-21, W-22,
+  W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25** (30),
+  **W-26** (31), and **W-21 (part 2)** (33). **Tranche 32 is not a W-item — it is Part A's
+  bookkeeping:** it commits tranche 31's ledger (`44e4022`), gathers the five owner questions
+  into the queue's §5, and says in two guides how a member leaves today. **Open: W-07 through
+  W-20, W-27 through W-32 and W-37** — W-27 is next, and W-37 waits on W-28, which explains
+  its consequence where a new owner meets it. **W-21 owes one thing still: the 100-account
+  reference fixture definition** (`F-T`), which needs the owner's approval of the
+  one-million-message / 20-GiB targets before it can be written; it is recorded in the queue.
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
@@ -3294,3 +3295,68 @@ None blocks an item in the queue's sections 2 or 4.
 No test, and no Go file changed. The confirmation is `make check` — its documentation-link
 audit walks both edited files — and a human read. The verification pass must run `make check`;
 there is nothing here that needs a browser or a test binary.
+
+## Tranche 33 — W-21 (part 2): the host procedures match the build
+
+Source commit before: `fc8557c` (tree clean). Source: `cda1b1d`. **Documents only; no
+behaviour changed.**
+
+### 33a. What was wrong
+
+The independent review of the host procedures left two items
+(`planning/v1-release-execution-plan-2026-10-03.md:179`): "compare the archive's computed
+hash with its archive checksum before extraction; compare an executable hash only with a
+separately recorded executable digest", and "remove unrealistic claims that LocalService
+can write literally nowhere outside the app data directory; test required application ACLs
+and the actual OS service security boundary".
+
+- **The hash step could not be carried out as written.** `docs/host-qualification.md` §1.1
+extracted the archive and ran `Get-FileHash .\extract\brrpbrrp.exe`, to be compared with
+"the release's published SHA256". The release publishes archive checksums only — every line
+of `dist/releases/SHA256SUMS` names a `.zip` — and an archive checksum is a hash of
+different bytes from the executable inside it, so the two never match even when the download
+is sound. The step would have failed a good archive, or taught an operator to trust the
+wrong pair.
+- **The `LocalService` claim was false and tested nothing.** §1.4 said LocalService "must be
+able to read the executable, write the data folder, and **nothing else**" and told the
+operator to confirm it by writing outside the data folder. A built-in service account is not
+a sandbox. What the installer actually does is narrower and checkable:
+`scripts/windows/install.ps1:11` (and `internal/installer/platform_windows.go:54`) remove
+inherited permissions from `%ProgramData%\BrrpBrrp` and grant exactly three well-known
+SIDs — Administrators full, SYSTEM full, LocalService modify — and add no ACE on any path
+outside the data folder. The service itself runs as `NT AUTHORITY\LocalService`
+(`cmd/brrpbrrp/platform_windows.go:123`).
+
+A third, smaller thing: the procedures named `0.4.0-alpha.8` archives and a
+`brrpbrrp:0.4.0-alpha.8` image in their examples, while `SHA256SUMS` now publishes
+`0.4.0-alpha.9` and the ledger's index calls the candidate stale — the qualification bytes
+will be a later release still.
+
+### 33b. The change
+
+- §1.1 now hashes the **archive** against its line in `SHA256SUMS` before extracting, and
+hashes the executable only against an executable digest recorded separately, with a
+sentence saying the two are not interchangeable. The record line distinguishes the archive
+pair from the executable pair, and the §4 evidence template says whose hex the `sha256`
+field holds.
+- §1.4 is retitled "The service account and the data-folder ACLs". It states plainly that
+LocalService is not a sandbox and names what the installer grants, then lists the checkable
+records: the data folder's three-entry ACL with inheritance removed, LocalService's read of
+the executable and write of its data folder, no ACE added outside the data folder, and the
+application's boundary being the operating system's.
+- The three version references become `<version>` placeholders, with a line in §1.1 and
+§2.1 saying the examples are the release under qualification.
+
+### 33c. Tests and static gates
+
+No test, and no Go file changed. The confirmation is `make check` — its documentation-link
+audit walks the file — and a human read. Nothing here needs a host to write; the host run
+itself is QUAL-01 (roadmap), which stays blocked on hardware the owner has not supplied.
+
+### 33d. Still owed from W-21
+
+The 100-account reference fixture (`F-T`) is not written. It needs the owner's approval of
+the retained-data targets — one million messages and 20 GiB are proposed in the plan and not
+ratified — before a fixture can be defined against them, and the Makefile's fixture default
+is still 250 accounts (`planning/v1-release-execution-plan-2026-10-03.md:363,372`). It stays
+recorded in the queue rather than guessed at.

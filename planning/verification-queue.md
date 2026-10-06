@@ -137,11 +137,32 @@ was not.*
 
 - **Created:** `planning/security-review-bundle.md`, `planning/accessibility-review-bundle.md`,
   `planning/beta-entry-checklist.md`, `planning/daily-ledger-template.md`.
-- **Still owed from W-21:** the two corrections to `docs/host-qualification.md` (its hash
-  procedure and its `LocalService` claim), and the 100-account reference fixture definition.
+- **Still owed from W-21:** the 100-account reference fixture definition (`F-T`). It waits on
+  the owner ratifying the retained-data targets the plan proposes (one million messages,
+  20 GiB); the Makefile's fixture default is still 250 accounts against the accepted
+  100-account bound. The two corrections to `docs/host-qualification.md` are done — see
+  W-21 (part 2) below.
 - **Must be confirmed by:** a human read of the security bundle against the review plan's own
   prerequisites, and a run of every command the bundle lists as runnable — none of which has
   been executed to write it.
+
+### W-21 (part 2) — the host procedures match the build (`cda1b1d`)
+
+- **Changed:** `docs/host-qualification.md` only. §1.1 now hashes the **archive** against its
+  line in `SHA256SUMS` before extracting, and hashes the executable only against a separately
+  recorded executable digest, because the release publishes archive checksums and the two are
+  not interchangeable. §1.4 no longer claims LocalService can write "nothing else"; it states
+  what the installer actually grants (`scripts/windows/install.ps1:11`,
+  `internal/installer/platform_windows.go:54`: Administrators full, SYSTEM full, LocalService
+  modify on `%ProgramData%\BrrpBrrp`, with inheritance removed and no ACE outside it) and
+  tests the rights the application needs against the real operating-system boundary. The
+  version references become `<version>` placeholders, since the bytes to qualify are whatever
+  the release publishes.
+- **Tests written:** none — documents only; no Go file, no route, no behaviour.
+- **Must be confirmed by:** `make check GO=$GO` (its documentation-link audit walks the file)
+  and a human read beside the review's own wording
+  (`planning/v1-release-execution-plan-2026-10-03.md:179`). The procedures themselves are
+  QUAL-01, which needs the Windows and Linux hosts and stays blocked.
 
 ### W-36 — the backup cadence is twelve hours (`9bc8237`)
 
