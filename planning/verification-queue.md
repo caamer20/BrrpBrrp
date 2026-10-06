@@ -205,6 +205,40 @@ was not.*
   takes the UDP port + 1 and + 2. If a future change adds controls for them, `docs/docker.md`
   and `docs/admin.md` say the ports "follow the UDP port" and would need updating with it.
 
+### W-26 — the example configuration documents every key the server reads (`af5f137`)
+
+- **Changed:** `scripts/env-keys.mjs` (new shared module — the one walk that finds a server's
+  `BRRP_*` reads, excluding `*_test.go`), `scripts/check-env-coverage.mjs` (new, with its own
+  `--self-test`), `.env.example` (rewritten to name every key), `.env.docker.example` (the
+  direct-message line), `docs/deployment.md` (three keys and both gates added to the settings
+  table, signature header named accurately), `docs/installation.md` (**Changing a setting
+  after installation**, with `server.env`'s path per platform), `Makefile` (the audit wired
+  into `check`, plus an `env-coverage` target), `scripts/release.go` (both new scripts into the
+  source package). **No Go file, no route, no behaviour.**
+- **Tests written:** none — the assertion is the audit, and an audit's own self-test is its
+  test. `scripts/check-env-coverage.mjs --self-test` runs it against four fixtures: an
+  undocumented key reported once per destination, a commented example that satisfies it, a
+  harness-only key ignored, and a missing destination reported as itself.
+- **Already run, and the run is the evidence:** the audit, against the *pre-fix* tree (a
+  temporary root symlinking the real source trees), reported **12 problems: nine for
+  `.env.example` and three for `docs/deployment.md`** — the exact list of five planned keys
+  plus `BRRP_DB_FILE`, `BRRP_UPLOAD_DIR`, `BRRP_SETUP_TOKEN_FILE`, `BRRP_LOG_FILE`,
+  `BRRP_SQLITE_SYNCHRONOUS` and the two gates. Afterwards it reports all 29 keys covered.
+  `make check` exit 0 with both audits wired in; the source package is 552 files.
+- **Must be confirmed by:** `make check GO=$GO` — static, and the only mechanical gate this
+  item has. Then **a person must read `.env.example` and `.env.docker.example` once**: they
+  are written for humans and an audit can only say that a key is named somewhere in them, not
+  that its sentence is true. On a Docker host, confirm `docker compose --env-file
+  .env.docker` still accepts the file after the comment edits.
+- **A consequence for future work, not a defect:** `make check` now fails when a new key read
+  outside a `*_test.go` file is absent from `.env.example` or `docs/deployment.md`. That is
+  the drift this item exists to stop. A deliberately undocumented development switch must
+  live in a test file (the load harness's knobs already do) or be documented.
+- **A figure the plan got wrong, recorded so nobody looks for it:** the assignment said the
+  installer writes thirteen keys. `Plan.configText()` (`internal/installer/settings.go:148`)
+  writes **nine** in `computer`/`network` mode and **eleven** in `proxy`. Nothing was changed
+  in the wizard; the ledger (tranche 31, §31d) carries the correction.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.

@@ -7,9 +7,9 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 30** (`6f481ea`). **Closed: W-01 through W-06, W-21 (part 1),
-  W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (tranche 29) and
-  **W-25** (tranche 30). **Open: W-07 through W-20, W-26 through W-32 and W-37** — W-26 is
+- **Branch head after tranche 31** (`af5f137`). **Closed: W-01 through W-06, W-21 (part 1),
+  W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25**
+  (30) and **W-26** (31). **Open: W-07 through W-20, W-27 through W-32 and W-37** — W-27 is
   next, and W-37 waits on W-28, which explains its consequence where a new owner meets it.
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
@@ -3143,3 +3143,100 @@ the *plain-TCP* port (the code comments say so; renaming it would silently reset
 installation's port), and the two fallback ports have no interface control even though the
 settings route validates them. Neither is a defect an operator meets today — the automatic
 choice is the sensible one — so both are recorded here rather than fixed in this tranche.
+
+## Tranche 31 — W-26: the example configuration documents every key the server reads
+
+Source commit before: `6f481ea` (tree clean). Source: `af5f137`. **Low risk; documents and a
+static audit.**
+
+### 31a. What was wrong
+
+`scripts/env-keys.mjs` reads the `BRRP_*` keys out of the server's own source. It finds 29.
+`compose.yaml` passed 16 of them before tranche 29 and now passes 25; `.env.example` 
+documented 20 and `docs/deployment.md`'s settings table listed 26. So the plan's five
+(`BRRP_ALERT_WEBHOOK`, `BRRP_ALERT_SECRET`, `BRRP_LOGIN_ATTEMPTS`,
+`BRRP_STORAGE_QUOTA_BYTES`, `BRRP_STORAGE_RESERVE_BYTES`) were a subset: the example file was
+also missing `BRRP_DB_FILE`, `BRRP_UPLOAD_DIR`, `BRRP_SETUP_TOKEN_FILE` and `BRRP_LOG_FILE`,
+and the guide's table was missing `BRRP_SQLITE_SYNCHRONOUS` and both feature gates.
+
+Two of the comments it did carry were false as well:
+
+- "voice state is still shared community-wide, so a restricted *voice* channel must not be
+  used until that work lands". It is not: `publishVoiceStates`
+  (`internal/api/voice_access.go:31`) delivers voice presence one channel at a time through
+  the same capability-aware audience as everything else, and `channel_access.go:51` reports
+  the gate to the client. WP-08 and R5-02 closed this.
+- "Experimental consented direct messages; keep disabled pending privacy acceptance", in both
+example files. Consented private conversations are a decided feature that ships switched off
+  until the owner flips it after the independent reviews — a gate, not an experiment — and
+  `.env.docker.example` added "test installations only", which is a claim about support the
+  project does not make.
+
+`docs/installation.md` said nothing about where `server.env` lives or how to change one, so
+an operator's only route to any of these keys was to find the example file themselves.
+
+### 31b. The change
+
+- `.env.example` gains the nine missing keys — four of them as comments, since their absence
+  is a sensible default — with a sentence each on what they do, and its two gate comments now
+  say what the features are and why they are off.
+- `.env.docker.example`'s direct-message line says the same thing without "Experimental" or
+  "test installations only".
+- `docs/deployment.md`'s table gains `BRRP_SQLITE_SYNCHRONOUS`, `BRRP_ALERT_WEBHOOK`,
+  `BRRP_ALERT_SECRET` and the two gates, with the signature header named accurately
+  (`X-Brrpbrrp-Signature: sha256=` over the timestamp and body, `internal/api/alerts.go:339`).
+- `docs/installation.md` gains **Changing a setting after installation**: a table of
+  `server.env`'s location on each platform (Windows `%ProgramData%\BrrpBrrp`, Linux
+  `/var/lib/brrpbrrp` from the wizard and `/etc/brrpbrrp` from the legacy script, macOS
+  `~/Library/Application Support/BrrpBrrp/data`), four steps to change one, and the line that
+  the file is read once at startup so the service must be restarted. It also separates the
+  settings a browser can change from the ones only the host can — the two gates,
+  `BRRP_BACKUP_COPY_DIR` and the two alert keys — which is why an admin panel cannot turn a
+  feature on or redirect an installation's alerts.
+
+### 31c. The audit, and the measured defect it reproduces
+
+`scripts/check-env-coverage.mjs` (new, with its own `--self-test`) fails when a key the server
+reads is absent from `.env.example` or `docs/deployment.md`. A name anywhere in the file
+counts, commented or not, because most of the example file is commented optional settings.
+
+Both audits now import `scripts/env-keys.mjs` for the walk over the source. That is the point:
+"which keys does the server read" is the half that must not drift, and a copy of it in each
+script would let one audit go blind while the other kept reporting success. The source-package
+audit's rule 3b then forced `env-keys.mjs` into the packaged set, which is why `release.go`
+lists it.
+
+Run against the pre-fix tree (a temporary root symlinking the real source trees), the coverage
+audit reported **12 problems: nine for `.env.example` and three for `docs/deployment.md`** —
+the exact list in §31a. That is a measurement rather than a reading, on the same footing as
+tranche 29's: a static audit, not a test.
+
+### 31d. A figure in the plan, corrected
+
+The assignment says "the native setup wizard writes thirteen keys and none of the optional
+ones". `Plan.configText()` (`internal/installer/settings.go:148`) writes eight in every mode
+plus one for `computer`/`network` and three for `proxy`: **nine keys for the first two modes,
+eleven for `proxy`**, and one of them is `BRRP_LOG_FILE`, which the example file did not
+mention. Nothing was changed in the wizard; the number is recorded here because a later
+reader will otherwise look for a thirteen-key list that does not exist.
+
+### 31e. Tests and static gates
+
+No test, and no Go file changed. The assertion is the audit and its self-test, which builds
+four fixtures: an undocumented key reported once per destination, a commented example that
+satisfies it, a harness-only key ignored, and a missing destination reported as itself.
+`make check` is exit **0** with both audits wired in; the source package is 552 files.
+
+The verification pass must run `make check`, and a person must read the two example files
+once — they are for humans, and an audit can only say that a key is named somewhere in them.
+A Docker host should confirm that `docker compose --env-file .env.docker` still accepts the
+file after the comment edits.
+
+### 31f. A consequence worth stating
+
+This audit changes the build's behaviour for future work: a new key read outside a `_test.go`
+file now fails `make check` until both `.env.example` and `docs/deployment.md` mention it. That
+is intended — it is the drift this tranche exists to stop — but it means a key that is
+deliberately undocumented (a development switch) must live in a test file or be documented.
+Test files remain excluded on purpose, which is what keeps the load harness's thirteen knobs
+out of an operator's promise.
