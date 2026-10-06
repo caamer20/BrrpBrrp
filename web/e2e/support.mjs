@@ -17,19 +17,55 @@ export const OWNER = { username: 'release_admin', password: 'release check passp
 // anywhere (2 October). It is deliberately *not* a retry: once the sign-in has succeeded
 // the form is gone, so a retry loop can only re-fill an element that no longer exists and
 // time out telling you nothing.
+//
+// What it *was* missing was a wait before deciding which surface is on screen. That wait
+// is the fix for the "Firefox loses its session right after sign-in" intermittent the
+// ledger carried as §11c, and it lives in `waitForSurface` below.
+
+// waitForSurface waits until the app has settled on one of the two surfaces it can show —
+// the sign-in form, or the workspace — and returns the form's locator so the caller can ask
+// whether the form is the one on screen.
+//
+// Which surface the app shows is decided by an *asynchronous* boot: it renders "Opening
+// your space…" until `/setup/status` and then `/state` have answered (`workspace.loading`
+// starts true). `goto` resolves at the load event, which is earlier than either answer, so
+// sampling visibility once asked "is the heading up yet?" and got "no" on some runs — the
+// form was then never filled, no sign-in was ever posted, and the caller's wait expired on
+// a page that honestly answered 401 to `/api/state` because nobody had signed in. That is
+// the whole of the "Firefox loses its session right after sign-in" intermittent recorded as
+// ledger §11c: not a lost session but a skipped sign-in, and the page dump's 401 was
+// evidence of it. Measured on this machine: the surface was absent at the instant `goto`
+// resolved in 3 of 30 fresh Firefox contexts, needing 36–153 ms more to appear.
+//
+// `workspaceReady` is the locator that proves the workspace is up. It differs by viewport —
+// the preferences control on a desktop, a channel heading at phone width where the header
+// is collapsed — so the caller names it.
+export async function waitForSurface(page, workspaceReady) {
+  const form = page.getByRole('heading', { name: 'Welcome back.' });
+  await expect
+    .poll(
+      async () =>
+        (await form.isVisible().catch(() => false)) ||
+        (await workspaceReady.isVisible().catch(() => false)),
+      {
+        timeout: 30000,
+        message: 'the app rendered neither the sign-in form nor the workspace'
+      }
+    )
+    .toBe(true);
+  return form;
+}
+
 export async function signIn(page, account) {
+  const workspaceReady = page.getByLabel('Your preferences');
   await page.goto('/');
-  if (
-    await page
-      .getByRole('heading', { name: 'Welcome back.' })
-      .isVisible()
-      .catch(() => false)
-  ) {
+  const form = await waitForSurface(page, workspaceReady);
+  if (await form.isVisible()) {
     await page.getByLabel('Username').fill(account.username);
     await page.locator('input[autocomplete="current-password"]').fill(account.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
   }
-  await expect(page.getByLabel('Your preferences')).toBeVisible({ timeout: 20000 });
+  await expect(workspaceReady).toBeVisible({ timeout: 20000 });
 }
 
 // signInOverApi uses its own cookie jar, so a journey can act as the owner while a

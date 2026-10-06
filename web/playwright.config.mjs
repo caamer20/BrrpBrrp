@@ -6,6 +6,19 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 60000,
+  // The whole run needs a ceiling, and Playwright takes this one only on the config:
+  // there is no per-project `globalTimeout`, so this single number covers every engine
+  // and every mode, which is what "give every engine project a global timeout" means
+  // here. Without it a journey that hangs — or a server that never finishes starting —
+  // holds the run until a person notices; one Firefox invocation produced no output for
+  // ten minutes on 4 October. The longest measured invocation is the private-
+  // conversations suite at 4.8 minutes and the longest single journey asks for seven
+  // minutes for itself, so twenty minutes is about four times the largest real run: long
+  // enough not to fail a slow host, short enough that a hang ends in a report rather
+  // than in silence. `--global-timeout` on the command line still wins over this, which
+  // is how the verification commands pin their own budget; BRRP_E2E_GLOBAL_TIMEOUT is
+  // for a caller that wants a different default without repeating the flag.
+  globalTimeout: Number(process.env.BRRP_E2E_GLOBAL_TIMEOUT || 0) || 20 * 60 * 1000,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   outputDir: './test-results',
   use: {

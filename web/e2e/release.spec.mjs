@@ -9,7 +9,8 @@ import {
   OWNER,
   setRolePermissions,
   signIn,
-  signInOverApi
+  signInOverApi,
+  waitForSurface
 } from './support.mjs';
 
 test('first setup, persistent chat, search and sign-out', async ({ page, context }) => {
@@ -608,20 +609,19 @@ test.describe('phone viewport', () => {
   test('a member reads and sends at phone width', async ({ page }) => {
     test.setTimeout(180000);
     // The shared signIn helper waits for the preferences control, which is behind the
-    // collapsed header at this width; the form is driven directly and the signed-in
-    // state is read from the workspace itself.
+    // collapsed header at this width; the form is driven directly and the signed-in state
+    // is read from the workspace itself. What it does share is the wait for the app to
+    // settle on a surface first (W-05): this journey carried the same one-shot visibility
+    // sample, so at phone width it could skip its own sign-in the same way.
+    const workspaceHeading = page.getByRole('heading', { name: 'general' });
     await page.goto('/');
-    if (
-      await page
-        .getByRole('heading', { name: 'Welcome back.' })
-        .isVisible()
-        .catch(() => false)
-    ) {
+    const signInForm = await waitForSurface(page, workspaceHeading);
+    if (await signInForm.isVisible()) {
       await page.getByLabel('Username').fill(OWNER.username);
       await page.locator('input[autocomplete="current-password"]').fill(OWNER.password);
       await page.getByRole('button', { name: 'Sign in' }).click();
     }
-    await expect(page.getByRole('heading', { name: 'general' })).toBeVisible({ timeout: 30000 });
+    await expect(workspaceHeading).toBeVisible({ timeout: 30000 });
     // The sidebar may be collapsed into a drawer at this width; opening it is the
     // supported way in.
     const openChannels = page.getByRole('button', { name: 'Open channels' });

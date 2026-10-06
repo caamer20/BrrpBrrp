@@ -222,6 +222,29 @@ test.afterEach(async ({ page, browser }, testInfo) => {
   // "the workspace never appeared" is not a cause. The probe answers whether the session
   // the page believes it has is still accepted by the server.
   for (const [index, context] of browser.contexts().entries()) {
+    // A page's own 401 cannot say which of three things happened: nobody signed in, the
+    // browser is not sending the cookie it holds, or the server has no such session. The
+    // three are told apart here and printed separately — what the context is holding,
+    // what the page's own fetch is answered, and what the server says when the harness
+    // sends back the exact cookie it read out of the browser. The ledger asked for this
+    // probe on 4 October; it is what turned the intermittent into a named cause.
+    const cookies = await context.cookies().catch(() => []);
+    const session = cookies.find((cookie) => cookie.name === 'brrp_session');
+    const cookieState = session
+      ? await fetch(`${process.env.BRRP_E2E_BASE_URL}/api/state`, {
+          headers: { cookie: `brrp_session=${session.value}` }
+        })
+          .then((response) => String(response.status))
+          .catch((error) => `threw:${String(error).slice(0, 40)}`)
+      : '(no cookie)';
+    console.log(
+      `CONTEXT-DUMP ctx=${index} cookies=${cookies.map((cookie) => cookie.name).join(',') || '(none)'}` +
+        ` session=${
+          session
+            ? `len=${session.value.length},secure=${session.secure},sameSite=${session.sameSite},httpOnly=${session.httpOnly}`
+            : 'absent'
+        } server-accepts-the-browser-cookie=${cookieState}`
+    );
     for (const [pageIndex, other] of context.pages().entries()) {
       const body = await other
         .locator('body')
@@ -723,13 +746,26 @@ test('a shared screen reaches another browser and stops cleanly', async ({
     // being decoded, and hiding the element would leave the decode running.
     const stage = viewer.locator('.screen-stage');
     await expect(stage).toBeVisible();
+    // "The element is inline" is asserted as the attribute the markup carries, and the
+    // `playsInline` IDL property is asserted *where the engine defines one*. Firefox does
+    // not define it, so reading `node.playsInline` there is `undefined` and the old
+    // assertion could only ever fail under that engine — a test-assertion defect, never a
+    // product one (the attribute is in the markup, and `web/tests/screen-receive.test.mjs`
+    // already asserts it). Asserting the attribute is the contract; asserting the
+    // reflected boolean as well keeps the stronger check on the engines that have it.
     const videoShape = await viewer.locator('video.shared-screen').evaluate((node) => ({
       muted: node.muted,
-      inline: node.playsInline,
+      attribute: node.hasAttribute('playsinline'),
+      reflected: typeof node.playsInline === 'boolean' ? node.playsInline : null,
       tracks: node.srcObject ? node.srcObject.getVideoTracks().length : 0
     }));
     expect(videoShape.muted, 'the screen element is not muted').toBe(true);
-    expect(videoShape.inline, 'the screen element is not inline').toBe(true);
+    expect(
+      videoShape.attribute,
+      'the screen element does not carry the playsinline attribute'
+    ).toBe(true);
+    if (videoShape.reflected !== null)
+      expect(videoShape.reflected, 'the element does not reflect playsinline').toBe(true);
     expect(videoShape.tracks, 'the viewer has no inbound video track').toBeGreaterThan(0);
 
     await stage.getByRole('button', { name: 'Audio only' }).click();
