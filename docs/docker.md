@@ -63,7 +63,7 @@ The container runs `serve` directly. Docker manages its lifecycle; there is no s
 | `BRRP_SQLITE_SYNCHRONOUS` | SQLite durability |
 | `BRRP_ALERT_WEBHOOK`, `BRRP_ALERT_SECRET` | where operator alerts are delivered |
 | `BRRP_BACKUP_HOST_DIR` | the host directory for backup copies (`compose.backup.yaml`) |
-| `BRRP_TURN_PORT` | the published TURN port (`compose.turn.yaml`) |
+| `BRRP_TURN_PORT`, `BRRP_TURN_TCP_PORT`, `BRRP_TURN_TLS_PORT` | the published TURN ports (`compose.turn.yaml`) |
 
 A setting written for a key this file does not pass would do nothing at all — no error, no log line, just a feature that stays off. `node scripts/check-compose-env.mjs`, part of `make check`, exists so that cannot happen: it reads the `BRRP_*` keys out of the Go source and fails when one is neither passed by a Compose file nor listed in the script as deliberately fixed. The four deliberate ones are the database, upload, setup-token and log paths, which stay under `/data` and the container's own logging driver.
 
@@ -118,8 +118,10 @@ Chat, pages and signaling use the web TCP port. Voice uses separate UDP ports:
 | --- | --- | --- |
 | Web/HTTPS and WebSocket signaling | TCP 8082 | `BRRP_WEB_PORT`, default 8082 |
 | WebRTC audio | UDP 50000–50100 | Same range; included in Compose |
-| Optional TURN listener | UDP 3478 by default | Same port; optional Compose file |
+| Optional TURN listener | UDP 3478 by default | `BRRP_TURN_PORT`; optional Compose file |
 | Optional TURN relay | UDP 49152–49999 | Same range; optional Compose file |
+| Optional TURN fallback, plain TCP | TCP 3479 by default | `BRRP_TURN_TCP_PORT`; optional Compose file |
+| Optional TURN fallback over TLS | TCP 3480 by default | `BRRP_TURN_TLS_PORT`; optional Compose file |
 
 Set `BRRP_VOICE_EXTERNAL_IP` to the host IP clients can reach. Through Docker bridge networking, advertising the container's private IP is usually insufficient. For internet access, forward UDP 50000–50100 through the router/firewall to the Docker host and retain the same port numbers. `BRRP_MEDIA_BIND_IP` controls the host interface for UDP mappings. A web-only HTTP tunnel or reverse proxy does not relay WebRTC audio.
 
@@ -129,7 +131,9 @@ If a restrictive network needs the built-in TURN relay, also publish its ports:
 docker compose --env-file .env.docker -f compose.yaml -f compose.turn.yaml up -d --build
 ```
 
-Then enable TURN in **Manage server → Settings**, set its reachable IPv4 address and matching port, and forward the listener and relay range at the firewall/router. `BRRP_TURN_PORT` controls the Docker mapping; it does not enable or configure TURN in the application. Continue using both Compose files for subsequent lifecycle commands. The built-in TURN service supports UDP only.
+Then enable TURN in **Manage server → Settings**, set its reachable IPv4 address and matching port, and forward the listener and relay range at the firewall/router. `BRRP_TURN_PORT` controls the Docker mapping; it does not enable or configure TURN in the application. Continue using both Compose files for subsequent lifecycle commands.
+
+The embedded relay also has two fallback transports, for a client network that blocks UDP but allows TCP: a plain-TCP listener and a TLS one on the server's own certificate. They are off by default. Switch on **Plain TCP fallback** and — if you want the last path a hostile network leaves — **TLS fallback** in **Manage server → Settings**. Their ports are not separate settings: the server takes the TURN UDP port + 1 for plain TCP and + 2 for TLS, so a listener on 3478 uses 3479 and 3480. That is what `BRRP_TURN_TCP_PORT` and `BRRP_TURN_TLS_PORT` publish by default, and it is why they must move together: Docker maps a host port to a *fixed* container port, so a changed `BRRP_TURN_PORT` needs the app's UDP port and both mappings changed to match, or the relay listens where nothing can reach it. The TLS listener reads the server's certificate, so it only starts when `BRRP_CERT_FILE` and `BRRP_KEY_FILE` are readable in the container; when they are not, the server logs why and still offers UDP and plain TCP.
 
 On a Linux host, host networking is another option when avoiding bridge NAT or large port mappings matters. Configure `network_mode: host`, remove the `ports` entries, and choose `BRRP_ADDR` for the host listener. This exposes configured listeners directly on the host; adjust its firewall accordingly. The supplied Compose file uses bridge networking. Validate a two-way voice call from another network before inviting users.
 

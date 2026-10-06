@@ -1,7 +1,16 @@
 # Add this file only when enabling the app's built-in TURN relay.
-# Its listen port must match Manage server > Settings > TURN port.
+# Its UDP port must match Manage server > Settings > TURN UDP port.
+#
+# The two TCP mappings are the relay's fallback transports, for a client network that
+# blocks UDP (ADR 0019 §7). Nothing listens on them until "Plain TCP fallback" or "TLS
+# fallback" is switched on in Manage server > Settings. Their ports are not separate
+# settings: the server takes the UDP port + 1 for plain TCP and + 2 for TLS, which is what
+# the defaults below publish. Docker maps a host port to a fixed container port, so a
+# changed BRRP_TURN_PORT needs both fallback mappings moved with it.
 services:
   brrpbrrp:
     ports:
       - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:${BRRP_TURN_PORT:-3478}:${BRRP_TURN_PORT:-3478}/udp"
       - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:49152-49999:49152-49999/udp"
+      - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:${BRRP_TURN_TCP_PORT:-3479}:${BRRP_TURN_TCP_PORT:-3479}/tcp"
+      - "${BRRP_MEDIA_BIND_IP:-0.0.0.0}:${BRRP_TURN_TLS_PORT:-3480}:${BRRP_TURN_TLS_PORT:-3480}/tcp"

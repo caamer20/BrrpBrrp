@@ -23,10 +23,12 @@ The installation wizard listens only on an ephemeral IPv4 loopback port. Its API
 | WebRTC media | UDP 50000–50100 | Direct voice paths |
 | TURN listener | UDP 3478 | Built-in relay enabled |
 | TURN relay sockets | UDP 49152–49999 | Built-in relay enabled |
+| TURN fallback, plain TCP | TCP 3479 by default | Built-in relay with the TCP fallback enabled |
+| TURN fallback over TLS | TCP 3480 by default | Built-in relay with the TLS fallback enabled |
 
-Forward UDP ranges through NAT to the server and set `BRRP_VOICE_EXTERNAL_IP` to the reachable IP when necessary. Do not overlap the media and relay ranges. Public STUN is used for address discovery (`stun.l.google.com:19302`); it does not carry chat messages or audio. WebRTC encrypts transport with DTLS-SRTP. This SFU terminates transport encryption to forward audio.
+Forward UDP ranges through NAT to the server and set `BRRP_VOICE_EXTERNAL_IP` to the reachable IP when necessary. Do not overlap the media and relay ranges. Address discovery uses whatever STUN server an operator configures; none is set by default, so no third party is contacted. It does not carry chat messages or audio. WebRTC encrypts transport with DTLS-SRTP. This SFU terminates transport encryption to forward audio.
 
-TURN credentials are temporary, available to authenticated voice participants and restricted to destinations on the server. The built-in relay supports IPv4/UDP, not TCP/TLS. A network that blocks UDP entirely needs a different route. Test with two devices on separate networks before inviting the group.
+TURN credentials are temporary, available to authenticated voice participants and restricted to destinations on the server. The built-in relay carries IPv4 only. It serves UDP by default, and it can additionally serve plain TCP and TLS on the server's own certificate — that is how a client network which blocks UDP gets a path at all. A network that blocks UDP and cannot reach the relay over either TCP transport has no route through this server. Test with two devices on separate networks before inviting the group.
 
 ## Application protections
 

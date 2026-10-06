@@ -80,9 +80,9 @@ Unclaimed uploads and unreferenced files older than 24 hours are cleaned hourly.
 
 ## TURN and networks
 
-The built-in TURN server is optional and supports UDP. Enter the server's reachable IPv4 address, open the configured TURN port (3478 by default), and open relay UDP ports 49152–49999. Configure the WebRTC range and external IP in the host settings too. Disable TURN and save before changing its address or port.
+The built-in TURN server is optional and serves UDP by default. Enter the server's reachable IPv4 address, open the configured TURN port (3478 by default), and open relay UDP ports 49152–49999. Configure the WebRTC range and external IP in the host settings too. Disable TURN and save before changing its address or port. Two fallback transports exist for a client network that blocks UDP: a plain-TCP listener and a TLS one on the server's own certificate. Each is off until switched on and needs its own open TCP port: the server takes the UDP port + 1 for **Plain TCP fallback** and + 2 for **TLS fallback**, so a listener on 3478 uses 3479 and 3480. In Docker those two numbers must be published as `BRRP_TURN_TCP_PORT` and `BRRP_TURN_TLS_PORT`, which `compose.turn.yaml` does by default.
 
-Relay credentials are issued for a voice session, expire after 24 hours and are revoked when that session ends through the API. Existing allocations can persist until the TURN protocol expires them; permitted destinations are limited to this server's addresses. Disabling TURN immediately closes its relay allocations. UDP-blocking client networks need a different network path; this release does not offer TURN over TCP/TLS.
+Relay credentials are issued for a voice session, expire after 24 hours and are revoked when that session ends through the API. Existing allocations can persist until the TURN protocol expires them; permitted destinations are limited to this server's addresses. Disabling TURN immediately closes its relay allocations. A client network that blocks UDP gets its path from the relay's TCP or TLS fallback when one is switched on; a network that blocks UDP *and* cannot reach the relay on either TCP transport has no route through this server.
 
 ## Backups and maintenance
 

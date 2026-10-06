@@ -202,8 +202,9 @@
     /></label
   >
   <p class="muted">
-    Allow UDP 49152–49999 for relay traffic and your configured media range. Disable TURN and save
-    before changing its address or port.
+    Allow UDP 49152–49999 for relay traffic and your configured media range. Each fallback adds one
+    TCP port to open: the UDP port + 1 for plain TCP, + 2 for TLS. Disable TURN and save before
+    changing its address or port.
   </p>
   <h3 class="section-divider">Network paths</h3>
   <div class="form-grid">

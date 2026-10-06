@@ -37,8 +37,8 @@ You manage DNS and any router/firewall forwarding. The app does not automaticall
 | --- | --- | --- |
 | HTTP/HTTPS | TCP 8082 by wizard default | Pages, chat, attachments and WebSocket signaling |
 | Voice media | UDP 50000–50100 | WebRTC audio between clients and the server |
-| Optional TURN | Configured relay ports | Reachability where clients cannot use a direct media path |
+| Optional TURN | Configured relay ports: UDP by default, plus a TCP and a TLS fallback | Reachability where clients cannot use a direct media path |
 
-An HTTP proxy alone does not carry voice media. When exposing the app through NAT, forward the configured UDP media range to the server and set `BRRP_VOICE_EXTERNAL_IP` to the reachable IP if needed. Permit the intended client networks in the server firewall. Use TURN where the network requires a relay, and review its separate listener and relay ranges in [security.md](security.md#firewall-and-voice).
+An HTTP proxy alone does not carry voice media. When exposing the app through NAT, forward the configured UDP media range to the server and set `BRRP_VOICE_EXTERNAL_IP` to the reachable IP if needed. Permit the intended client networks in the server firewall. Use TURN where the network requires a relay, and review its separate listener and relay ranges in [security.md](security.md#firewall-and-voice). If some clients are on a network that blocks UDP, switch on the relay's TCP fallback — and the TLS one if the certificate is readable — in **Manage server → Settings** and open the matching TCP ports; both are off by default.
 
 Test messaging, uploads and a two-way voice call from another network before inviting people. Keep automatic backups on a separate disk or host, and test restoring one. Public access is a separate deployment step from completing the local installation.
