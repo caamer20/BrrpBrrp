@@ -75,19 +75,17 @@ statement, and nothing here has been measured above it.
 
 ## Two owner decisions of 6 October 2026
 
-Both are decided and are recorded in `planning/v1-execution-ledger-2026-10-01.md`.
-They are carried by **W-36** and **W-37**, in the same session as this document; until
-those commits land, the shipped default is still 24 hours and scheduled backups still
-start switched off. This document says what the release will do, and the ledger entry for
-each item says what has actually changed:
+Both are decided and are recorded in `planning/v1-execution-ledger-2026-10-01.md`:
 
-- the default backup interval becomes **12 hours**, matching the recovery objective the
-  plan states (lose at most 24 hours); and
-- a **new installation starts with scheduled backups on**. Existing installations keep the
-  setting they already have, so an installation that deliberately switched backups off
-  stays off. Because a fresh installation has no off-host destination yet, its recovery
-  check reports the critical condition above from its first minute — that is the ratified
-  policy and it is true, not a defect.
+- the default backup interval is **12 hours**, matching the recovery objective the plan
+  states (lose at most 24 hours). An installation that already stores an interval keeps
+  it — the default changed, the stored row did not; and
+- a **new installation starts with scheduled backups on** (W-37; this document describes
+  the state once that item lands, and its ledger entry says what has actually changed).
+  Existing installations keep the setting they already have, so an installation that
+  deliberately switched backups off stays off. Because a fresh installation has no
+  off-host destination yet, its recovery check reports the critical condition above from
+  its first minute — that is the ratified policy and it is true, not a defect.
 
 ## What has been executed, and on what
 

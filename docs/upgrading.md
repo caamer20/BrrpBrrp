@@ -88,6 +88,12 @@ keeps that setting; a gate whose *default* changes is a release note, not a sile
 If a release introduces a key, it is documented in [deployment.md](deployment.md) and the
 example files before it is read.
 
+A changed *default* is the same kind of thing. The shipped backup interval is now **12
+hours**, the cadence the recovery objective of losing at most 24 hours assumes. An
+installation that already stores an interval keeps it across the upgrade; if yours is
+longer than 12 hours and you want the stated objective, set it to 12 in **Manage server →
+Maintenance**.
+
 ## If something goes wrong
 
 - **The service will not start.** Read the log first: a refusal to serve an unfinished

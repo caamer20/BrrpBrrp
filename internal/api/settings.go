@@ -27,11 +27,16 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request, user db.
 		return
 	}
 	settings := input.Settings
+	// A zero interval or copy count means the operator left the field empty, not
+	// that they asked for zero. Take the fallback from the same place a fresh
+	// installation gets it, so the submitted default and the shipped one cannot
+	// disagree the way they did while this pair was two literals.
+	defaults := db.DefaultSettings()
 	if settings.BackupHours == 0 {
-		settings.BackupHours = 24
+		settings.BackupHours = defaults.BackupHours
 	}
 	if settings.BackupKeep == 0 {
-		settings.BackupKeep = 7
+		settings.BackupKeep = defaults.BackupKeep
 	}
 	if settings.BackupHours < 1 || settings.BackupHours > 168 || settings.BackupKeep < 1 || settings.BackupKeep > 30 {
 		problem(w, 400, "Keep 1–30 backups and choose an interval of 1–168 hours.")

@@ -76,7 +76,7 @@ For a modest server, keep voice near 24–32 kbps and encourage low resource mod
 
 Retention is off by default. To enable it, choose a positive number of days and type the current server name. Shortening an active retention period requires confirmation again. Cleanup runs hourly; once enabled, old messages may disappear at the next run. Keep enough free disk for the database, its WAL, uploads and backup snapshots.
 
-Unclaimed uploads and unreferenced files older than 24 hours are cleaned hourly. Audit records expire after 90 days. Logs sent to a configured file rotate at 10 MB with three archives. Maintenance offers a backup interval of 1–168 hours and retention of 1–30 copies (default 7). Each successful UI/scheduled backup removes older app-created UUID archives. Manually named CLI archives are retained. Export copies you need to keep longer.
+Unclaimed uploads and unreferenced files older than 24 hours are cleaned hourly. Audit records expire after 90 days. Logs sent to a configured file rotate at 10 MB with three archives. Maintenance offers a backup interval of 1–168 hours (default **12**) and retention of 1–30 copies (default 7). The 12-hour default is the cadence the recovery objective assumes: at most 24 hours of loss. Staleness is judged from the newest independently recoverable snapshot, and the thresholds scale with whatever interval you choose — a warning at one and a half intervals and critical at twice it, so 18 and 24 hours by default. Each successful UI/scheduled backup removes older app-created UUID archives. Manually named CLI archives are retained. Export copies you need to keep longer.
 
 ## TURN and networks
 

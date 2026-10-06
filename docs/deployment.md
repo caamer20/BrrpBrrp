@@ -44,10 +44,13 @@ current conditions and the delivery history. A configured destination that has n
 delivered is worse than no destination, because it looks like coverage — and the
 operator finds that out during a restore.
 
-The conditions are: a verified backup older than three times the configured interval,
-consecutive failed backup attempts, an independent copy that is behind or failing, and
-low free space on the data volume. The first two are marked critical because a server
-that is running fine and cannot be recovered is the worst state to be in.
+The conditions are: a recoverable snapshot older than one and a half times the configured
+interval (warning) or twice it (critical), consecutive failed backup attempts, an
+independent copy that is behind or failing, and low free space on the data volume. With
+the 12-hour default interval that is a warning at 18 hours and critical at 24, the cadence
+the recovery objective of at most 24 hours of loss assumes. A failed job or copy is
+critical at once, because a server that is running fine and cannot be recovered is the
+worst state to be in.
 
 An unchanged condition raises one alert rather than repeating every pass, and the
 history is bounded: repeated notices for a problem nobody has fixed are how operators

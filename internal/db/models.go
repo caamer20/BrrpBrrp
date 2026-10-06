@@ -192,8 +192,12 @@ type Settings struct {
 	RequirePrivilegedMFA bool `json:"require_privileged_mfa"`
 }
 
+// DefaultSettings is what a server that has not been set up yet carries in memory,
+// and the base a stored settings row is decoded over. The 12-hour backup interval is
+// the ratified cadence behind the plan's recovery objective — at most 24 hours of
+// loss — and the staleness thresholds scale with whatever interval an operator picks.
 func DefaultSettings() Settings {
-	return Settings{ServerName: "BrrpBrrp", LinkPreviews: true, GIFEmbeds: true, Typing: true, Presence: true, Voice: true, TURNPort: 3478, VoiceBitrate: 24, MaxUploadBytes: 12 << 20, Audit: true, Push: true, Theme: "dark", BackupHours: 24, BackupKeep: 7, BackupUploads: true, RequirePrivilegedMFA: true}
+	return Settings{ServerName: "BrrpBrrp", LinkPreviews: true, GIFEmbeds: true, Typing: true, Presence: true, Voice: true, TURNPort: 3478, VoiceBitrate: 24, MaxUploadBytes: 12 << 20, Audit: true, Push: true, Theme: "dark", BackupHours: 12, BackupKeep: 7, BackupUploads: true, RequirePrivilegedMFA: true}
 }
 
 // TURNTCPPort is the plain-TCP fallback port the server will actually listen on:
