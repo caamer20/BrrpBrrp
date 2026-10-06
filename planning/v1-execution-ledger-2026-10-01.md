@@ -7,10 +7,10 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 19** (`1faeb92`); **W-01 through W-04 are closed.** The two
-  independent-review product P1s — the quota race (F-01) and the thread deep-link defect
-  (F-02) — are fixed **and** carry regressions that fail without the fix (the quota one
-  proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
+- **Branch head after tranche 20** (`65935f3`); **W-01 through W-04 and W-22 are closed.**
+  The two independent-review product P1s — the quota race (F-01) and the thread deep-link
+  defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
+  one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
   `go test ./...`, both Chromium feature modes with nothing excluded, `thread-scale`, and
   the full-disk rehearsal are green on this tree.
 - **Candidate:** 0.4.0-alpha.9 at `f810f0c` (digests in `dist/releases/SHA256SUMS`,
@@ -25,7 +25,8 @@ below are evidence, some of them written when assignments were hazy, and two of 
   tranche 16's W-01 items 1 through 8; tranche 17's W-02 (F-10, member export limits
   enforced as the document is built); tranche 18's W-03 (F-11, one recovery-health model
   shared by `production-check` and alerts); tranche 19's W-04 (F-12, metric names that say
-  what they measure).
+  what they measure); tranche 20's W-22 (the status index, a garbled table label and the
+  alpha.9 record's list of open decisions).
 - **What is open and the owner owns it:** a private remote (settled: none), the two
   feature gates (settled: only after the independent reviews and their P1s land), the
   host/device/reviewer/profile requirements of the D–I phases (settled), a Windows
@@ -36,7 +37,8 @@ below are evidence, some of them written when assignments were hazy, and two of 
   assertion (`node.playsInline` is undefined there — a test-assertion defect, W-05);
   WebKit's release subset shares its fixture with the Chromium `release` project, so its
   own journeys cannot run against a second installation (W-06); **W-07 onward are open.**
-  W-01 through W-04 are closed, one tranche each (16–19).
+  W-05 and W-06 are the next two items; W-01 through W-04 and W-22 are closed, one tranche
+  each (16–20).
 
 ---
 
@@ -2574,8 +2576,8 @@ OverThePausesThatHappened` (only written slots count).
 
 ## Tranche 20 — W-22: three corrections to the record
 
-Source commit before: `1faeb92` (tree clean). Source: the working tree; W-22 edits only
-ledger and release prose, so it is recorded here without a commit in this pass.
+Source commit before: `1faeb92` (tree clean). Source: `65935f3` (W-22's own commit; it
+edits only ledger and release prose).
 
 ### 20a. The three stale entries
 
@@ -2619,5 +2621,4 @@ ledger and release prose, so it is recorded here without a commit in this pass.
   replacement text is present.
 - It makes the index accurate as of tranche 19, not complete: the two red engine items
   (W-05, W-06) and W-07 onward remain open until their own tranches.
-- No commit was made in this pass, so the per-checkpoint bundle will cover this change
-  only once it is committed.
+- Committed as `65935f3`; the checkpoint bundle at HEAD covers it.
