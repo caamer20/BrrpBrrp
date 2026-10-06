@@ -5,14 +5,14 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 
 **Current status (5 October 2026).** Read this first; the per-tranche sections
 below are evidence, some of them written when assignments were hazy, and two of them
-(11e and 11d) are at the tail and historical.
+(11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 16:** see the top of the file for the commit; W-01 is
-  closed. The two independent-review product P1s — the quota race (F-01) and the
-  thread deep-link defect (F-02) — are fixed **and** carry regressions that fail without
-  the fix (the quota one proven against a pre-fix overlay; the deep-link one a rendered
-  journey). `make check`, `go test ./...`, both Chromium feature modes with nothing
-  excluded, `thread-scale`, and the full-disk rehearsal are green on this tree.
+- **Branch head after tranche 19** (`1faeb92`); **W-01 through W-04 are closed.** The two
+  independent-review product P1s — the quota race (F-01) and the thread deep-link defect
+  (F-02) — are fixed **and** carry regressions that fail without the fix (the quota one
+  proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
+  `go test ./...`, both Chromium feature modes with nothing excluded, `thread-scale`, and
+  the full-disk rehearsal are green on this tree.
 - **Candidate:** 0.4.0-alpha.9 at `f810f0c` (digests in `dist/releases/SHA256SUMS`,
   record at `docs/releases/0.4.0-alpha.9.md`). That archive predates several fixes; any
   further packaging is a new version (`0.4.0-alpha.10`). **Do not build on it as if it
@@ -22,7 +22,10 @@ below are evidence, some of them written when assignments were hazy, and two of 
   cleanup for a failed publication, the shared rehearsal kit, the acceptance and
   negative matrices with their CI gates; the Firefox voice project (13/14 green) and
   WebKit release subset (a red starting point over the Chromium fixture, see below);
-  tranche 16's W-01 items 1 through 8.
+  tranche 16's W-01 items 1 through 8; tranche 17's W-02 (F-10, member export limits
+  enforced as the document is built); tranche 18's W-03 (F-11, one recovery-health model
+  shared by `production-check` and alerts); tranche 19's W-04 (F-12, metric names that say
+  what they measure).
 - **What is open and the owner owns it:** a private remote (settled: none), the two
   feature gates (settled: only after the independent reviews and their P1s land), the
   host/device/reviewer/profile requirements of the D–I phases (settled), a Windows
@@ -32,7 +35,8 @@ below are evidence, some of them written when assignments were hazy, and two of 
 - **Still red or owed on this branch:** Firefox's voice project has one red webview
   assertion (`node.playsInline` is undefined there — a test-assertion defect, W-05);
   WebKit's release subset shares its fixture with the Chromium `release` project, so its
-  own journeys cannot run against a second installation (W-06); W-02 onward are open.
+  own journeys cannot run against a second installation (W-06); **W-07 onward are open.**
+  W-01 through W-04 are closed, one tranche each (16–19).
 
 ---
 
@@ -2389,7 +2393,7 @@ seeds the message bound and measures the build in the same process:
 | --- | --- | --- |
 | Build duration (50,000 messages) | 3.3 s | **753 ms** |
 | Slowest ordinary chat send during the build | 3.3 s | **748 ms** |
-| Peppercentage Go heap peak | 89 MiB | 89 MiB |
+| Go heap peak | 89 MiB | 89 MiB |
 | Process peak RSS (high-water) | — | ~135 MiB |
 | Document bytes | 16.0 MiB | 16.0 MiB |
 
@@ -2567,3 +2571,53 @@ OverThePausesThatHappened` (only written slots count).
 - `diagnostics.go` and the admin overview still take a live `directorySize`; they are
   explicit operator actions rather than a periodic scrape, and the metrics endpoint is
   the surface F-12 named.
+
+## Tranche 20 — W-22: three corrections to the record
+
+Source commit before: `1faeb92` (tree clean). Source: the working tree; W-22 edits only
+ledger and release prose, so it is recorded here without a commit in this pass.
+
+### 20a. The three stale entries
+
+- **The status index was stale.** The index at the top still declared W-02 onward open
+  and pinned the head to a post-tranche-16 commit, although tranches 17–19 closed W-02
+  (F-10), W-03 (F-11) and W-04 (F-12). It now names the head after tranche 19 (`1faeb92`),
+  records W-01 through W-04 as closed with the tranche that closed each, marks W-05 and W-06
+  as the two red engine items, states that W-07 onward are open, and says the index is
+  refreshed at every tranche.
+- **A garbled table row.** Tranche 17's export-load table labelled its Go heap row with a
+  mangled prefix glued onto the front; it now reads plainly "Go heap peak". The figure
+  (89 MiB) is unchanged and was never in question.
+- **The alpha.9 record kept two settled questions open.** `docs/releases/0.4.0-alpha.9.md`,
+  "The path from here", still offered the 250-account profile and the VP8 fallback as the
+  owner's open decisions. Both were settled on 2 October (VP8 accepted; the 250-account
+  profile deferred for the 100-account v1 bound), and the addendum above already says so.
+  The section now lists only the remote and the gate flip as the owner's remaining
+  decisions and cites the addendum.
+
+### 20b. Verification
+
+- The stale index phrase, the garbled row label and the two settled-decision phrases were
+  each searched for across `planning/` and `docs/`: **0 matches each** (one each before this
+  tranche). The search terms are deliberately not repeated in this entry, so that the entry
+  does not match them itself.
+- The replacement text is present: the index records **W-01 through W-04 as closed**, and
+  the export-load table's row now reads **Go heap peak**.
+- The two red engine projects were re-measured against a binary built from this tree
+  (`dist/brrpbrrp-e2e`), so the index's red claims are current rather than inherited:
+  Firefox `voice-firefox` **13 / 1 / 0 / 0** (2.3 min; the failure is the inline assertion
+  at `web/e2e/voice.spec.mjs:732`, W-05) and WebKit `release-webkit` **10 / 6 / 0 / 0**
+  (2.3 min; the six are the release journeys run over the Chromium fixture, W-06). No
+  leftover server process remained after either run.
+- `git diff --stat`: two prose files changed; no code, test, configuration or artifact
+  touched.
+
+### 20c. What it does not prove
+
+- W-22 is a record correction: it changes no behaviour, so there is no failing-before fix
+  to demonstrate and no test to add. The proof is that the stale strings are gone and the
+  replacement text is present.
+- It makes the index accurate as of tranche 19, not complete: the two red engine items
+  (W-05, W-06) and W-07 onward remain open until their own tranches.
+- No commit was made in this pass, so the per-checkpoint bundle will cover this change
+  only once it is committed.
