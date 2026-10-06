@@ -3,6 +3,8 @@
   import { api, errorMessage, requiresFreshAuthentication } from '../../api';
   import { workspace } from '../../workspace.svelte';
   import BackupSettings from './BackupSettings.svelte';
+  import type { Settings } from '../../types';
+  import { firstRunLines, type FirstRunLine } from '../../first-run';
   interface Diagnostics {
     https_configured: boolean;
     local_only: boolean;
@@ -47,7 +49,19 @@
     target_id: string;
     created_at: string;
   }
+  interface Mfa {
+    enabled: boolean;
+    required: boolean;
+  }
+  interface AlertStatus {
+    configured: boolean;
+    delivered: string;
+    destination: string;
+  }
   let health = $state<Health | null>(null);
+  let settings = $state<Settings | null>(null);
+  let mfa = $state<Mfa | null>(null);
+  let alerts = $state<AlertStatus | null>(null);
   let entries = $state<Audit[]>([]);
   let error = $state('');
   let busy = $state(false);
@@ -65,6 +79,47 @@
   const canViewServer = $derived(workspace.can('settings.manage'));
   const canReadAudit = $derived(workspace.can('audit.read'));
   const canBackUp = $derived(workspace.can('operator.backup'));
+  const canInvite = $derived(workspace.can('invite.manage'));
+  const canDesignate = $derived(workspace.can('operator.ownership_transfer'));
+  function openAccountSecurity() {
+    workspace.preferencesSection = 'Account';
+    workspace.settingsOpen = true;
+  }
+  function openTab(name: string) {
+    workspace.adminTab = name;
+    workspace.adminOpen = true;
+  }
+  function scrollToBackups() {
+    document.getElementById('backup-schedule')?.scrollIntoView({ block: 'start' });
+  }
+  // The first-run checklist. Every line is derived from state the server already
+  // reports — none of it is a flag this panel stores — and each unfinished line says
+  // where it is fixed. The titles state what the server can see, not a verdict: it can
+  // report that HTTPS is configured on a public address, and only a second device can
+  // report that the address is reachable. The wording and the state come from
+  // first-run.ts, which is a value function with no browser in it; this is the only
+  // part that needs the panel, because a fix is a thing to click.
+  const readiness = $derived(
+    firstRunLines({
+      mfa,
+      ownerDesignated: workspace.state?.authorization.owner_designated ?? false,
+      others: (workspace.state?.users ?? []).filter(
+        (user) => !user.is_banned && !user.is_deleted && user.id !== workspace.user?.id
+      ).length,
+      canInvite,
+      canDesignate,
+      diagnostics,
+      settings,
+      alerts
+    })
+  );
+  function runFix(line: FirstRunLine) {
+    if (line.action === 'account-security') return openAccountSecurity();
+    if (line.action === 'people') return openTab('People');
+    if (line.action === 'invitations') return openTab('Invitations');
+    if (line.action === 'backups') return scrollToBackups();
+    openTab('Settings');
+  }
   function bytes(value: number) {
     if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} GB`;
     if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`;
@@ -77,7 +132,13 @@
       if (canViewServer) {
         health = await api<Health>('/admin/health');
         diagnostics = await api('/admin/diagnostics');
+        settings = await api<Settings>('/admin/settings');
       }
+      if (canBackUp) {
+        alerts = await api<AlertStatus>('/admin/alerts');
+      }
+      // Own enrolment state, so it needs no capability beyond being signed in.
+      mfa = await api<Mfa>('/me/mfa');
       if (canReadAudit) {
         const page = await api<Audit[]>('/admin/audit-logs');
         entries = page;
@@ -156,28 +217,24 @@
     )}m
   </p>{/if}
 {#if canViewServer}<section class="admin-form">
-    <h3>Setup checks</h3>
+    <h3>Is this server ready?</h3>
+    <p class="muted">
+      What a new installation still needs, in the order it is worth doing. Each line is something
+      the server can see about itself — a line that reads as done is the server's answer rather than
+      a check somebody ran, and reachability is left to the device at the other end.
+    </p>
+    <ul class="readiness">
+      {#each readiness as line (line.id)}
+        <li class:done={line.done}>
+          <div>
+            <strong>{line.title}</strong><small>{line.detail}</small>
+            {#if line.fix}<button class="secondary" onclick={() => runFix(line)}>{line.fix}</button
+              >{/if}
+          </div>
+        </li>
+      {/each}
+    </ul>
     {#if diagnostics}<div class="diagnostic-list">
-        <div>
-          <strong
-            >{diagnostics.local_only
-              ? 'Local access configured'
-              : diagnostics.https_configured
-                ? 'HTTPS address configured'
-                : 'HTTPS needs attention'}</strong
-          ><small
-            >{diagnostics.base_url} · {diagnostics.local_only
-              ? 'This address is available on the server itself. Configure HTTPS before inviting people on other devices.'
-              : 'Open this address on a second device and confirm there is no certificate warning.'}</small
-          >
-        </div>
-        <div>
-          <strong>Voice connections</strong><small
-            >Media address: {diagnostics.voice_ip || 'Automatic'} · UDP {diagnostics.voice_port_min}–{diagnostics.voice_port_max}
-            · Relay {diagnostics.turn_enabled ? 'enabled' : 'off'}. Confirm two-way audio from
-            another device.</small
-          >
-        </div>
         <div>
           <strong>{bytes(diagnostics.free_disk_bytes)} available</strong><small
             >Backup archives: {bytes(diagnostics.backups_bytes)}. {diagnostics.storage_warning ||

@@ -38,7 +38,7 @@
   }
 </script>
 
-{#if settings}<form class="admin-form" onsubmit={save}>
+{#if settings}<form class="admin-form" id="backup-schedule" onsubmit={save}>
     <h3>Automatic backups</h3>
     <label class="check-label"
       ><input type="checkbox" bind:checked={settings.backup_enabled} />Back up on a schedule</label
