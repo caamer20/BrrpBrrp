@@ -3,7 +3,13 @@
 // accessibility sweep inside the screen-share journey, not by reading the stylesheet.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { avatarStyle, contrast, channelsOf, luminance } from '../src/lib/avatar-ink.ts';
+import {
+  AVATAR_PALETTE,
+  avatarStyle,
+  contrast,
+  channelsOf,
+  luminance
+} from '../src/lib/avatar-ink.ts';
 
 test('the colours are read in both shorthand forms, and rubbish is refused', () => {
   assert.deepEqual(channelsOf('#fff'), [255, 255, 255]);
@@ -34,6 +40,22 @@ test('the ink clears the minimum on the colours the product actually uses', () =
     const { background: drawn, ink } = avatarStyle(background);
     const ratio = contrast(ink, drawn);
     assert.ok(ratio !== null && ratio >= 4.5, `${background} -> ${ink} on ${drawn} is ${ratio}`);
+  }
+});
+
+test('the colours a member chooses from all clear the minimum', () => {
+  // The Preferences form offers exactly this list, so the rule has to hold for every entry
+  // rather than for the ones a test happened to name. A duplicate or a mistyped colour is
+  // caught here too, because each has to be a real six-digit hex to be offered at all.
+  assert.ok(AVATAR_PALETTE.length >= 4);
+  const seen = new Set();
+  for (const color of AVATAR_PALETTE) {
+    assert.match(color, /^#[0-9a-f]{6}$/);
+    assert.ok(!seen.has(color), `${color} is offered twice`);
+    seen.add(color);
+    const { background, ink } = avatarStyle(color);
+    const ratio = contrast(ink, background);
+    assert.ok(ratio !== null && ratio >= 4.5, `${color} -> ${ink} on ${background} is ${ratio}`);
   }
 });
 

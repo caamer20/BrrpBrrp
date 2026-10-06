@@ -13,6 +13,15 @@
 // property test that walks a coarse sweep of the RGB cube asserting every result clears
 // 4.5:1.
 
+/**
+ * The colours a new account's avatar is seeded from, in the order the server cycles them.
+ *
+ * It mirrors `internal/api/admin.go`'s own list, and it is a set of choices rather than a
+ * rule: the server accepts any six-digit hex, so an account whose colour an administrator
+ * set outside this list keeps it and simply shows no choice as selected.
+ */
+export const AVATAR_PALETTE = ['#89a8f4', '#e9af7e', '#b3d693', '#c5a4e8', '#7ac5c5', '#e59cae'];
+
 /** The dark ink, legible on mid and light backgrounds. */
 const DARK_INK = '#10161f';
 /** The light ink, legible on mid and dark backgrounds. */

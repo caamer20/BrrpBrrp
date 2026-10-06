@@ -184,6 +184,94 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, user db.User) {
 	respond(w, 200, user)
 }
 
+// updateMe lets a member change the two parts of their own identity that the community
+// already sees — their display name and their avatar color — without asking an
+// administrator to do it for them. Every other field the administrator route can change
+// is authority, access or somebody else's data, and stays there.
+//
+// The validation is deliberately the administrator route's own rules — the same 80-byte
+// bound on a display name and the same six-digit hex pattern — so the two routes cannot
+// accept different values for the same two columns.
+func (s *Server) updateMe(w http.ResponseWriter, r *http.Request, user db.User) {
+	var input struct {
+		DisplayName *string `json:"display_name"`
+		AvatarColor *string `json:"avatar_color"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	// What the request sent is validated before the transaction and applied after the
+	// account is re-read inside it. The field the request does not name keeps the value
+	// the committing transaction sees, not the session's older copy of it, so a color
+	// changed a moment ago by the administrator's route is not written back from a
+	// stale row by a rename.
+	if input.DisplayName != nil && len(*input.DisplayName) > 80 {
+		problem(w, 400, "Display name is too long.")
+		return
+	}
+	if input.AvatarColor != nil && !avatarColorPattern.MatchString(*input.AvatarColor) {
+		problem(w, 400, "Choose a six-digit hex color.")
+		return
+	}
+	tx, err := s.store.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.failed(w, err)
+		return
+	}
+	defer tx.Rollback()
+	// The account is read inside the committing transaction, exactly as on the
+	// administrator's route: a ban, deactivation or removal that committed while this
+	// request was in flight is what the change is decided against, not the session's
+	// older copy of the row. It is the difference between a rename landing on an account
+	// that was deactivated a moment ago and being refused.
+	target, err := s.store.Account(r.Context(), tx, user.ID)
+	if !s.found(w, err) {
+		return
+	}
+	if target.IsDeleted {
+		problem(w, http.StatusConflict, "A removed account cannot be edited.")
+		return
+	}
+	if target.IsDeactivated || target.IsBanned {
+		problem(w, http.StatusForbidden, "This account cannot be changed while it is deactivated or suspended.")
+		return
+	}
+	displayName, avatarColor := target.DisplayName, target.AvatarColor
+	if input.DisplayName != nil {
+		displayName = strings.TrimSpace(*input.DisplayName)
+	}
+	if input.AvatarColor != nil {
+		avatarColor = *input.AvatarColor
+	}
+	if _, err := s.authorizeInTx(r.Context(), tx, user); err != nil {
+		s.authorityFailed(w, err)
+		return
+	}
+	if _, err := tx.Exec(`UPDATE users SET display_name=?,avatar_color=?,updated_at=? WHERE id=?`, displayName, avatarColor, db.Now(), target.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
+	// A rename is a visible identity change, and it has its record for the same reason
+	// an administrator's edit does: the audit log says who changed an account and when.
+	if err := s.auditTx(r.Context(), tx, user.ID, "user.updated", target.ID); err != nil {
+		s.failed(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		s.failed(w, err)
+		return
+	}
+	target.DisplayName, target.AvatarColor = displayName, avatarColor
+	// The same event the administrator's route emits, so every list that shows this
+	// account's name or color refreshes without a reload.
+	s.hub.Broadcast("user.updated", map[string]string{"id": target.ID})
+	// The response has the shape of GET /api/me, including the caller's own timeout
+	// state, so a client can replace its copy of the account with it rather than
+	// keeping two accounts in its head.
+	s.describeOwnTimeout(r.Context(), &target)
+	respond(w, 200, target)
+}
+
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, user db.User) {
 	var input struct {
 		Current string `json:"current_password"`

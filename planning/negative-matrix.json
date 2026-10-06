@@ -555,6 +555,13 @@
     "reason": "the response is the caller's own account record"
   },
   {
+    "route": "/api/me",
+    "method": "PATCH",
+    "beyond_community": true,
+    "outsider_denied_by": "self",
+    "reason": "it changes only the caller's own display name and color; another account's id cannot reach it and an outsider has no session to change anything with"
+  },
+  {
     "route": "/api/me/activity",
     "method": "GET",
     "capability": "message.send",

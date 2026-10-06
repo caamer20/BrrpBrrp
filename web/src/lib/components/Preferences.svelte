@@ -6,10 +6,20 @@
   import Modal from './Modal.svelte';
   import AudioSettings from './AudioSettings.svelte';
   import AccountSecurity from './AccountSecurity.svelte';
+  import { AVATAR_PALETTE, avatarStyle } from '../avatar-ink';
+  import type { User } from '../types';
   let currentPassword = $state('');
   let newPassword = $state('');
   let busy = $state(false);
-  const sections = ['Appearance', 'Audio', 'Notifications', 'Account'];
+  const sections = ['Profile', 'Appearance', 'Audio', 'Notifications', 'Account'];
+  // The two fields a member may change about themselves. They are seeded from the
+  // account as it is now, and the server is what decides what they become: this form
+  // sends them and shows the answer.
+  let displayName = $state(workspace.user?.display_name ?? '');
+  let avatarColor = $state(workspace.user?.avatar_color ?? AVATAR_PALETTE[0]);
+  const initials = $derived(
+    (displayName.trim() || workspace.user?.username || '?').slice(0, 2).toUpperCase()
+  );
   let section = $state(workspace.preferencesSection);
   const select = (item: string) => {
     section = item;
@@ -28,6 +38,27 @@
       workspace.stop();
       workspace.state = null;
       workspace.showToast('Password changed. Sign in with your new password.');
+    } catch (error) {
+      workspace.showToast(errorMessage(error));
+    } finally {
+      busy = false;
+    }
+  }
+  async function profile(event: SubmitEvent) {
+    event.preventDefault();
+    busy = true;
+    try {
+      const updated = await api<User>('/me', 'PATCH', {
+        display_name: displayName,
+        avatar_color: avatarColor
+      });
+      // The server's answer, not the form's, is what is shown next: a trimmed name or a
+      // shortened one is the stored value. The account's own snapshot follows from the
+      // user.updated event every client receives, which is how the new name reaches the
+      // member list, the message authors and the sidebar at once.
+      displayName = updated.display_name;
+      avatarColor = updated.avatar_color;
+      workspace.showToast('Your name and colour are saved.');
     } catch (error) {
       workspace.showToast(errorMessage(error));
     } finally {
@@ -65,7 +96,40 @@
     aria-labelledby={`${tabId}-tab-${sections.indexOf(section)}`}
     tabindex="0"
   >
-    {#if section === 'Appearance'}
+    {#if section === 'Profile'}
+      <form class="settings-section" onsubmit={profile}>
+        <h3>Your name and colour</h3>
+        <label
+          >Display name<input
+            bind:value={displayName}
+            maxlength="80"
+            autocomplete="nickname"
+            aria-describedby={`${tabId}-name-hint`}
+          /></label
+        >
+        <p class="muted" id={`${tabId}-name-hint`}>
+          This is the name other people see. Leave it empty to show your handle instead.
+        </p>
+        <fieldset class="colour-choices">
+          <legend>Avatar colour</legend>
+          {#each AVATAR_PALETTE as color}<button
+              type="button"
+              class="colour-choice"
+              class:selected={avatarColor.toLowerCase() === color}
+              aria-pressed={avatarColor.toLowerCase() === color}
+              aria-label={`Use the colour ${color}`}
+              style:background={avatarStyle(color).background}
+              style:color={avatarStyle(color).ink}
+              onclick={() => (avatarColor = color)}>{initials}</button
+            >{/each}
+        </fieldset>
+        <p class="muted">
+          Initials are drawn in whichever ink stays readable on your colour, and the colour the
+          panel shows is the colour your avatar uses.
+        </p>
+        <button class="secondary" disabled={busy}>Save name and colour</button>
+      </form>
+    {:else if section === 'Appearance'}
       <div class="settings-section">
         <h3>Appearance</h3>
         <div class="theme-options">

@@ -71,6 +71,7 @@ var handDenials = map[string]struct {
 	// The caller's own account and credentials. An outsider holds somebody else's id, which
 	// every one of these ignores: they answer about the authenticated account only.
 	"GET /api/me":                    {deniedBySelf, "the response is the caller's own account record"},
+	"PATCH /api/me":                  {deniedBySelf, "it changes only the caller's own display name and color; another account's id cannot reach it and an outsider has no session to change anything with"},
 	"GET /api/me/mfa":                {deniedBySelf, "the caller's own enrolment state"},
 	"POST /api/me/mfa/setup":         {deniedBySelf, "acts on the caller's own factor"},
 	"POST /api/me/mfa/enable":        {deniedBySelf, "acts on the caller's own factor"},

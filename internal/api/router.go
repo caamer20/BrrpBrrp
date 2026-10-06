@@ -327,6 +327,11 @@ func (s *Server) routes() []route {
 		// timeout behave as a ban — and without this the client cannot show them why the
 		// community is closed, or let them change the password they are signed in with.
 		{http.MethodGet, "/api/me", routePolicy{BeyondCommunity: true, Note: "the caller's own account; a timed-out member is still signed in and needs to be told why"}, s.me},
+		// The two fields here are the ones an administrator's route treats as content rather
+		// than authority. A member should not have to ask somebody else to fix their own
+		// name, and a timeout is a community decision that does not take a person's name
+		// away from them — the account is still theirs.
+		{http.MethodPatch, "/api/me", routePolicy{BeyondCommunity: true, Note: "changes the caller's own display name and avatar color, the two fields the administrator route treats as content; nothing an outsider holds is touched"}, s.updateMe},
 		{http.MethodGet, "/api/me/mfa", routePolicy{BeyondCommunity: true, Note: "own enrollment state"}, s.mfaStatus},
 		{http.MethodPost, "/api/me/mfa/setup", routePolicy{BeyondCommunity: true, Note: "own second factor; a timed-out member must still be able to secure the account they hold"}, s.setupMFA},
 		{http.MethodPost, "/api/me/mfa/enable", routePolicy{BeyondCommunity: true, Note: "own second factor, confirming a password and a code"}, s.enableMFA},

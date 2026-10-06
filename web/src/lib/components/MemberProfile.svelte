@@ -44,6 +44,23 @@
     {#if user.is_deactivated}
       <p class="profile-note">This account is deactivated; its history is still here.</p>
     {/if}
+    {#if user.id === workspace.user?.id}
+      <!--
+        Your own profile is where you notice your own name is wrong, so it is where the
+        control to fix it belongs. It opens Preferences on the Profile section rather than
+        editing in place, so there is one form that writes these two fields.
+      -->
+      <div class="profile-actions">
+        <button
+          class="secondary"
+          onclick={() => {
+            workspace.profileUser = null;
+            workspace.preferencesSection = 'Profile';
+            workspace.settingsOpen = true;
+          }}>Edit profile</button
+        >
+      </div>
+    {/if}
   </div>
 </Modal>
 
@@ -81,5 +98,8 @@
     margin: 1rem 0 0;
     color: var(--muted);
     font-size: 0.85rem;
+  }
+  .profile-actions {
+    margin-top: 1rem;
   }
 </style>

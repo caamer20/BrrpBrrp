@@ -100,7 +100,8 @@ are argued rather than assumed:
 - **[negative-matrix.json](negative-matrix.json)** — every registered route and method,
   with the capability it needs if any and the class that denies an outsider:
   `capability`, `audience`, `channel`, `conversation`, `recipient`, `authorship` or
-  `self`. The plan and the ledger record **132 routes** as classified; the reviewer should
+  `self`. The ledger names **133 routes** as classified (132 until W-27 added `PATCH
+  /api/me`); the reviewer should
   take the figure from the file itself rather than from this sentence, because it is
   regenerated. It is produced from the route table by the two tests named in §6.3, so it
   cannot drift from the code without the build failing.
