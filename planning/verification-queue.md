@@ -89,6 +89,60 @@ was not.*
   now exits non-zero with the one-sentence message rather than running the Chromium
   projects first.
 
+### W-23 — the browser suites make no sound (`18308ca`)
+
+- **Changed:** `web/playwright.config.mjs` (`--mute-audio`, and `media.volume_scale` on the
+  Firefox project), `web/e2e/support.mjs` (the suite now exports its own `test`, whose `page`
+  fixture silences media elements), and the `test` import in all eleven spec files.
+- **Tests written:** none new; this changes no assertion by design. **Read before trusting
+  it:** every audio assertion in `voice.spec.mjs` reads peer-connection counters or an
+  element's `muted` attribute, and nothing anywhere reads an output volume or an audio level.
+- **Must be confirmed by:** one invocation per engine — default and private Chromium,
+  `voice-firefox`, `release-webkit`. The result to check is not only green: the machine must
+  be silent while the voice journeys run. **A load failure in any spec would be immediate and
+  obvious** (all eleven now import `test` from `./support.mjs`), which is the risk this change
+  carries.
+
+### W-33 — wording that is no longer true (`3e46e27`)
+
+- **Changed:** `README.md`, `docs/roadmap.md`, `docs/production-readiness.md`,
+  `docs/acceptance.md`, `docs/architecture.md`, `docs/v1-implementation-plan.md` §2.3,
+  `internal/api/admin.go` (one refusal string), `web/src/lib/components/admin/Channels.svelte`.
+- **Must be confirmed by:** `make check` (already exit 0 here, including `svelte-check`), and
+  then the journeys that render the administrator's channel editor — `privacy` and the private
+  suite — with the gate **off**, which is how it ships. The two notices are the only rendered
+  behaviour that changed.
+- **Left alone deliberately:** `docs/implementation.md` and the completed review records still
+  carry the 10–20-user profile as dated accounts of what was measured then.
+
+### W-34 — the documents a public 1.0 needs (`84de26f`)
+
+- **Created:** `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `SUPPORT.md`, `docs/compatibility.md`,
+  `docs/known-limitations.md`, `docs/upgrading.md`, `docs/releases/1.0.0-notes-draft.md`,
+  `docs/releases/readme-1.0.0-draft.md`, `.github/pull_request_template.md`. **Changed:**
+  `scripts/release.go`, so both packages ship the three new top-level documents.
+- **Must be confirmed by:** `make check` only (548 files / 60 native documents, all links
+  resolved). Two documents need a human read rather than a run: the Windows and Docker gaps in
+  `docs/known-limitations.md`, and the 1.0 notes draft, which must not be mistaken for a
+  release record.
+
+### W-35 — the gate flip as one reviewed commit (`4155b12`)
+
+- **Created:** `planning/gate-flip-checklist.md`. Nothing was flipped.
+- **Must be confirmed by:** nothing yet. When the owner flips the gates, the pass is the whole
+  suite in both gate states — which is W-07's exercise of restricted channels, plus the private
+  suite — and the four questions in §5 of the checklist need answering first.
+
+### W-21 (part 1) — the review and beta bundles (`ab79e57`)
+
+- **Created:** `planning/security-review-bundle.md`, `planning/accessibility-review-bundle.md`,
+  `planning/beta-entry-checklist.md`, `planning/daily-ledger-template.md`.
+- **Still owed from W-21:** the two corrections to `docs/host-qualification.md` (its hash
+  procedure and its `LocalService` claim), and the 100-account reference fixture definition.
+- **Must be confirmed by:** a human read of the security bundle against the review plan's own
+  prerequisites, and a run of every command the bundle lists as runnable — none of which has
+  been executed to write it.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.

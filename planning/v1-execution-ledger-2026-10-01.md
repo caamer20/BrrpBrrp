@@ -7,8 +7,11 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 22** (`e0c6280`); **W-01 through W-06 and W-22 are closed.**
-  The two independent-review product P1s — the quota race (F-01) and the thread deep-link
+- **Branch head after tranche 27** (`ab79e57`). **Closed: W-01 through W-06, W-21 (part 1),
+  W-22, W-23 and W-33 through W-35**, one tranche each (16–27). **Open: W-07 through W-20,
+  W-24 through W-32, W-36 and W-37** — the last two are the owner's 6 October decisions and
+  are the next items in order.
+- **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
   `go test ./...`, both Chromium feature modes with nothing excluded, `thread-scale`, and
@@ -45,10 +48,11 @@ below are evidence, some of them written when assignments were hazy, and two of 
 - **Red or owed on this branch, as last measured:** Firefox's voice project and WebKit's
   release subset were both red at `1faeb92` — the `playsInline` assertion (W-05) and the
   fixture the WebKit pass shared with the Chromium `release` project (W-06). Both are
-  addressed in tranches 21 and 22, which the verification pass must confirm; nothing is
-  known red meanwhile, and nothing after `1faeb92` has been run. **W-07 onward and W-23
-  onward are open**, and the verification-only items listed at the end of
-  `planning/verification-queue.md` remain owed exactly as previously specified.
+  addressed in tranches 21 and 22. Nothing is known red meanwhile, and **nothing after
+  `1faeb92` has been run**; every figure quoted after tranche 22 is a static-gate result
+  (`make check`, `svelte-check`, `go vet`, the frontend build) or a reading of the source.
+  The verification-only items listed in `planning/verification-queue.md` remain owed exactly
+  as previously specified.
 
 ---
 
@@ -2774,3 +2778,154 @@ must confirm it.
 - The WebKit subset is still the *core* journeys only and its exclusions are unchanged: the
   journeys that drive offline/recovery and the media/setup counts are not in it. Playwright's
   WebKit is not Safari on a device, and this pass does not claim to be.
+
+## Tranche 23 — W-23: the browser suites make no sound
+
+Source commit before: `a312aaf` (tree clean). Source: `18308ca`. **Written, not run.**
+
+- **What was wrong.** The voice journeys push a real 440 Hz tone and a real 660 Hz screen
+  tone through the server (`web/e2e/voice.spec.mjs`, the Web Audio stubs), and the receiving
+  browser plays them — and the join/leave chime, `web/src/lib/voice-chime.ts` — out of
+  whatever speakers the machine has. Nothing muted the test browsers.
+- **The change.** `web/playwright.config.mjs` gains `--mute-audio` in the top-level
+  Chromium launch arguments and `firefoxUserPrefs: { 'media.volume_scale': '0.0' }` on the
+  `voice-firefox` project. The Firefox value is deliberately a **string**: `media.volume_scale`
+  is declared as a string in Gecko and read back as a float, so a number would be stored as
+  the wrong pref type and ignored. WebKit has no launch switch, so `web/e2e/support.mjs` now
+  exports the suite's own `test` — Playwright's `test` with the `page` fixture wrapped by
+  `silenceMedia` — and all eleven specs import `test` from `./support.mjs` instead of
+  `@playwright/test` (which they still use for `expect` and `request`). The wrapper forces the
+  `muted` and `volume` **setters** on `HTMLMediaElement.prototype` rather than muting once,
+  because `web/src/lib/voice.svelte.ts` re-applies both from its own state while a call is
+  running; the getters are untouched, so a journey that reads an element's own `muted` still
+  reads what the application set.
+- **Read before writing, because this must change no assertion.** Every audio statement in
+  the suite reads the peer connection's own counters — `bytesReceived`, `bytesSent`,
+  `framesDecoded`, `trackIdentifier`, and whether an inbound video track is `enabled` — or the
+  shared screen's `muted` attribute. Nothing reads an output device or an audio level; `grep`
+  for `.level` and `.volume` across `web/e2e` returns no assertion. Muting the output is
+  therefore invisible to every result.
+- **Boundaries, recorded in the code rather than left implicit.** The fixture covers its own
+  `page`; Chromium and Firefox need no more because their silencing is at launch, and no
+  journey in the WebKit project opens a context of its own. A *future* WebKit journey that
+  calls `browser.newContext()` would have to silence its own page, and the chime is an
+  `AudioContext` rather than a media element, so on WebKit it is reached only by a journey
+  that joins a call — none in that subset.
+- **What the verification pass must run.** One invocation per engine: the default and private
+  Chromium suites, `voice-firefox`, and `release-webkit`. The check is not only "green": it is
+  that the machine is silent while the voice journeys run, which is an observation the runner
+  makes, and that no journey changed its result.
+
+## Tranche 24 — W-33: wording that is no longer true
+
+Source commit before: `18308ca` (tree clean). Source: `3e46e27`. **Documentation and one
+product string; no behaviour changed.**
+
+- **What was wrong, and where.** `README.md` opened on "a small, self-hosted place for 10–20
+  people" and limited voice to "10 simultaneous" participants; `docs/roadmap.md` said "ten
+  concurrent voice participants"; `docs/production-readiness.md` and `docs/acceptance.md`
+  described a "10–20-user" profile; `docs/architecture.md` said "the server cap is 10 voice
+  participants" and listed screen sharing among the things not provided; and
+  `docs/v1-implementation-plan.md` §2.3's "current limits" said "ten simultaneous voice
+  participants serverwide". The code enforces 100 accounts (`internal/limits/limits.go`) and
+  carries 20 voice participants serverwide and 10 in one room, one screen publisher per room
+  and two serverwide (`internal/rtc/sfu.go`), and screen sharing with its own audio shipped.
+- **The product string.** `internal/api/admin.go` refused the account that fills the server
+  with "This server supports up to 100 accounts and is intended for 10–20 concurrent users."
+  It now states the limit and stops there: the second clause described a product this is not.
+- **Pre-release commentary inside the product.** `web/src/lib/components/admin/Channels.svelte`
+  told the administrator that "the independent privacy review [is] still pending, so treat a
+  restricted voice channel as unreviewed", and its gate-off notice said private channels are
+  "refused at the API until the privacy checks are complete". The gate-off notice now
+  describes the setting and how an operator changes it, and the private-voice notice is shown
+  only while the gate is on (`access.restricted_enabled`, the flag the server already sends)
+  and states the documented limit instead of a review that has not happened.
+- **Two documents deliberately left alone.** `docs/implementation.md` and the completed
+  review records are dated accounts of what was measured at the time, and rewriting them
+  would be rewriting history; the ledger records that they still carry the old profile. The
+  plan's §2.3 was corrected rather than annotated because it is the contract's own statement
+  of *current* limits and it contradicted the target row further down the same document.
+- **Static gates.** `make check` exit 0 after the change, including `svelte-check` (0 errors,
+  0 warnings) and the frontend Prettier check, which the channel editor's new mark-up needed.
+- **What the verification pass must run.** Nothing behavioural: `make check` is the whole
+  gate, plus the journeys that render the administrator's channel editor (`privacy`, and the
+  private-conversation suite) to confirm the notice still reads correctly with the gate off,
+  which is how it ships.
+
+## Tranche 25 — W-34: the documents a public 1.0 needs
+
+Source commit before: `3e46e27` (tree clean). Source: `84de26f`. **No code risk.**
+
+- **What was missing.** None of these existed: `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, a support
+  policy, `docs/compatibility.md`, `docs/known-limitations.md`, `docs/upgrading.md`, a
+  pull-request template, and the 1.0 release notes and README as drafts. All are created here,
+  and each says on its own first screen that it is a draft where it is one.
+- **What they do not do.** The Covenant is adopted **by reference** with the enforcement
+  contact left as a marked owner decision — no address, person or URL was invented. The
+  compatibility numbers were read from `internal/db/migrations.go`, `internal/backup/manifest.go`,
+  `internal/ws/protocol.go` and `internal/limits/limits.go` rather than from prose. The
+  platform table in `docs/known-limitations.md` states what has been executed on this machine
+  and what has not, including that the container image has never been built here.
+- **The packaging lists are not optional.** The first `make check` after these documents
+existed failed the source-package audit with five complaints: `docs/releases/readme-1.0.0-draft.md`
+  linked to `SUPPORT.md` and `CODE_OF_CONDUCT.md`, which the package did not contain, and
+  `docs/compatibility.md` linked to `v1-implementation-plan.md`, which a *native* package
+  deliberately excludes. `scripts/release.go` now ships `CHANGELOG.md`, `CODE_OF_CONDUCT.md`
+  and `SUPPORT.md` in both the source and the native document sets, and `docs/compatibility.md`
+  names the plan's compatibility section in prose rather than linking to a document the binary
+  package does not carry. That is the audit doing its job; the documents were not "added"
+  properly until this was fixed.
+- **Static gates.** `make check` exit 0 afterwards: 548 files in the source package and 60
+  native package documents, with every documented local link resolved in both sets.
+- **What the verification pass must run.** `make check` only. Two documents need a human read
+  rather than a run: `docs/known-limitations.md`'s statement of the Windows and Docker gaps,
+  and the 1.0 notes draft, which must not be mistaken for a record of a release that happened.
+
+## Tranche 26 — W-35: the gate flip as one reviewed commit
+
+Source commit before: `84de26f` (tree clean). Source: `4155b12`. **No behaviour change.**
+
+- **What it is.** `planning/gate-flip-checklist.md`: 28 rows across four groups (the files that
+  decide a deployment's value, the guides, the interface's disabled-state copy, and the harness
+  and CI), each with the file, the exact current line and its replacement. Nothing was flipped.
+- **Two findings worth keeping.** Neither gate has a constant to change: `boolean()` in
+  `internal/app/config.go` returns `false` for an unset variable, so "on by default" lives
+  entirely in the files that set a value, and the native setup wizard's `configText()`
+  (`internal/installer/settings.go`) writes neither key — a native install inherits the
+  shipped default without a wizard edit, which is recorded as deliberate rather than accidental.
+- **Recorded, not resolved.** Four questions the reading could not settle are listed as
+  questions in the document, including whether the harness should follow the product default
+  or keep forcing `false` (which decides what the "default feature set" CI job means), and
+  whether the flip commit may claim the independent privacy review is complete —
+  `docs/admin.md` and the private-voice notice would otherwise assert a review that has not
+  happened.
+- **Static gates.** `make check` exit 0 (the document is a plan file, outside the packaged
+  sets, and its relative links resolve).
+- **What the verification pass must run.** Nothing yet. When the owner flips the gates, the
+  checklist's rows are the diff to review, and the pass is the full suite in both gate states,
+  which is W-07's exercise of restricted channels plus the private-conversation suite.
+
+## Tranche 27 — W-21 (part 1): the review and beta bundles
+
+Source commit before: `4155b12` (tree clean). Source: `ab79e57`. **Documents only.**
+
+- **What was missing.** The owner has no reviewers and no pilot communities, so nothing said
+  what a reviewer would be handed or what an operator would fill in during a beta.
+  `planning/security-review-bundle.md`, `planning/accessibility-review-bundle.md`,
+  `planning/beta-entry-checklist.md` and `planning/daily-ledger-template.md` are created.
+- **What each is.** The security bundle is the reviewer's index: scope, the reading order
+  through the ADRs, the route and event inventories, the runnable adversarial scenarios with
+  their commands, and — stated as plainly as what exists — the candidate artifact, remote and
+  environment that do not. The accessibility bundle states its claim boundary first (the axe
+  tags stop at `wcag2a`/`wcag2aa`, so later WCAG 2.2 criteria are outside automation) and then
+  the keyboard, screen-reader, zoom and motion journeys a human must walk. The beta checklist
+  is the owner's gate, taken from the plan's actual prerequisites. The daily template is the
+  form an operator fills in.
+- **What it does not do.** It does not name a host, device, reviewer, date or address, and it
+  does not claim any review has happened. The route count is attributed to the plan and the
+  ledger rather than asserted from a run.
+- **Still owed from W-21:** `docs/host-qualification.md` needs the two corrections the review
+  found (its hash procedure and its `LocalService` claim), and the 100-account reference
+  fixture has not been written. Both are recorded in the verification queue rather than
+  claimed here.
+- **Static gates.** `make check` exit 0.
