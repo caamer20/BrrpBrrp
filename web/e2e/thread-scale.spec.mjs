@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
-import { expectAccessible, signIn, signInOverApi } from './support.mjs';
+import { expect } from '@playwright/test';
+import { expectAccessible, signIn, signInOverApi, test } from './support.mjs';
 
 // T-THREAD-01's owed half: a thread with a thousand replies, navigated in a real browser.
 //

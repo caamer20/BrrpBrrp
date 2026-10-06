@@ -1,6 +1,6 @@
 import { crc32, deflateSync } from 'node:zlib';
-import { expect, test } from '@playwright/test';
-import { createAccount, setRolePermissions, signIn, signInOverApi } from './support.mjs';
+import { expect } from '@playwright/test';
+import { createAccount, setRolePermissions, signIn, signInOverApi, test } from './support.mjs';
 
 // The rendered half of R2-05. The store tests prove the model, but the claim under
 // test is about what a person can still see, so this journey takes a real reading

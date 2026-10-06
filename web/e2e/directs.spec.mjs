@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   assignOnly,
   captureGeneratedAudio,
@@ -9,7 +9,8 @@ import {
   setRolePermissions,
   signIn,
   signInOverApi,
-  signOut
+  signOut,
+  test
 } from './support.mjs';
 
 // Reactions to an invalidation are observed, never guessed: watchResponse yields a

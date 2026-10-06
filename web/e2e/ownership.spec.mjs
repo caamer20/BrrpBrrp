@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { createAccount, OWNER, signIn, signOut, totpCode } from './support.mjs';
+import { expect } from '@playwright/test';
+import { createAccount, OWNER, signIn, signOut, test, totpCode } from './support.mjs';
 
 // Ownership is the one authority no role can delegate, so its journey is about the
 // boundary rather than about a form: the ceremony completes the installation's first

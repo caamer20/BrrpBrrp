@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { createAccount, OWNER, signIn, signInOverApi, signOut } from './support.mjs';
+import { expect } from '@playwright/test';
+import { createAccount, OWNER, signIn, signInOverApi, signOut, test } from './support.mjs';
 
 // R4-02, rendered. The store regression proves the captured account/session identity; this
 // journey proves the same rule through the real interface, where the consequence is

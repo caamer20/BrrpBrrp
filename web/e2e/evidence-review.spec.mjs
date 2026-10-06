@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { OWNER, createAccount, signIn, signInOverApi } from './support.mjs';
+import { expect } from '@playwright/test';
+import { OWNER, createAccount, signIn, signInOverApi, test } from './support.mjs';
 
 // The reviewer journey lives in its own file and its own Playwright project, which
 // runs after the ownership journey. It needs an account holding

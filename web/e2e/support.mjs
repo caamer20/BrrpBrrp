@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { expect } from '@playwright/test';
+import { expect, test as base } from '@playwright/test';
 
 // Shared setup for the journeys that run against the installation the first journey
 // created. Anything here is arrangement: every journey still reads the rendered page
@@ -211,3 +211,69 @@ export async function captureGeneratedAudio(page) {
     };
   });
 }
+
+/**
+ * Mutes a page's media elements for the whole of its life.
+ *
+ * WebKit has no launch switch for output volume, so the page is silenced from the harness
+ * instead. Chromium and Firefox are silenced at launch (`--mute-audio` in the top-level
+ * launch arguments, and `media.volume_scale` on the Firefox project), and this is the same
+ * intent one layer down — which is the only layer WebKit exposes.
+ *
+ * Two property setters are wrapped rather than the elements being muted once, because the
+ * voice client assigns `audio.muted` and `audio.volume` from its own state while a call is
+ * running (`web/src/lib/voice.svelte.ts`, where inbound audio is attached and volumes are
+ * applied), so a one-time mute is undone the next time volumes are applied. The getters are
+ * untouched, so a journey that reads an element's own `muted` still reads what the
+ * application set — `voice.spec.mjs` asserts exactly that for the shared screen — and the
+ * outgoing side is unaffected: a microphone track has no media element and is not muted by
+ * this.
+ */
+async function silenceMedia(page) {
+  await page.addInitScript(() => {
+    const force = (name, value) => {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
+      if (!descriptor || typeof descriptor.set !== 'function') return;
+      Object.defineProperty(HTMLMediaElement.prototype, name, {
+        ...descriptor,
+        set() {
+          descriptor.set.call(this, value);
+        }
+      });
+    };
+    force('muted', true);
+    force('volume', 0);
+  });
+}
+
+/**
+ * The `test` every journey should use.
+ *
+ * It is Playwright's own `test` with one addition: every page this suite opens is silenced
+ * before the application loads (see `silenceMedia`). Import this rather than
+ * `@playwright/test` — `expect`, `request` and everything else still come from there.
+ *
+ * No assertion can see the difference: every statement about audio in this suite reads the
+ * peer connection's own counters or an element's `muted` attribute, never an output device
+ * or an audio level. That was checked by reading each audio assertion in `voice.spec.mjs`
+ * before this was added (W-23).
+ *
+ * **Boundary.** Three things this does not reach, all recorded rather than solved:
+ *  - a page a journey opens through the `browser` fixture rather than `page`. Chromium and
+ *    Firefox need no more than the fixture's own page — their silencing is at launch and
+ *    therefore covers every context — and the WebKit project opens none today, its subset
+ *    being the core journeys. A future WebKit journey that calls `browser.newContext()`
+ *    would have to silence its own page; the workaround is a patched `browser` fixture and
+ *    it buys nothing that is exercised now.
+ *  - sound the application makes with Web Audio rather than a media element. The join and
+ *    leave chime is an `AudioContext` (`web/src/lib/voice-chime.ts`), so on WebKit it is
+ *    reached only by whichever journey joins a call — none in that project's subset. The
+ *    launch switches silence it on the engines that have them.
+ *  - the machine's own volume, which nothing here should ever touch.
+ */
+export const test = base.extend({
+  page: async ({ page }, use) => {
+    await silenceMedia(page);
+    await use(page);
+  }
+});

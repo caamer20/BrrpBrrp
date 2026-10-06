@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { OWNER, createAccount, signIn, signInOverApi, signOut } from './support.mjs';
+import { expect } from '@playwright/test';
+import { OWNER, createAccount, signIn, signInOverApi, signOut, test } from './support.mjs';
 
 // A community timeout is a *community* restriction, and the member is the only person
 // entitled to be told about it. This journey asserts the rendered interface for that

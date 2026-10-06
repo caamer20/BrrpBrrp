@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   assignOnly,
   captureGeneratedAudio,
@@ -8,7 +8,8 @@ import {
   OWNER,
   setRolePermissions,
   signIn,
-  signInOverApi
+  signInOverApi,
+  test
 } from './support.mjs';
 
 // R2-04's acceptance is about media, not about peer state: withdrawing voice.speak must stop

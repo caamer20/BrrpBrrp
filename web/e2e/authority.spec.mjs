@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   assignOnly,
   createAccount,
@@ -7,7 +7,8 @@ import {
   setRolePermissions,
   signIn,
   signInOverApi,
-  signOut
+  signOut,
+  test
 } from './support.mjs';
 
 // These journeys need the accounts and channels the first journey creates, and the

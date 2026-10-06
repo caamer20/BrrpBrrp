@@ -34,7 +34,17 @@ export default defineConfig({
       args: [
         '--use-fake-device-for-media-stream',
         '--use-fake-ui-for-media-stream',
-        '--autoplay-policy=no-user-gesture-required'
+        '--autoplay-policy=no-user-gesture-required',
+        // The suite must make no sound. The voice journeys push a real 440 Hz tone and a
+        // real 660 Hz screen tone through the server, and the receiving browser plays them
+        // — and the join/leave chime — through whatever speakers this machine has. Every
+        // assertion about audio reads the peer connection's own counters (`bytesReceived`,
+        // `bytesSent`, `framesDecoded`, and whether an inbound track is enabled), never an
+        // output device or an audio level, so muting the output cannot change a result.
+        // `--mute-audio` mutes the device, not the pipeline: RTP is still received, still
+        // decoded and still counted. Read every audio assertion in voice.spec.mjs before
+        // relying on that; it was done once, when this was added (W-23).
+        '--mute-audio'
       ]
     }
   },
@@ -122,7 +132,14 @@ export default defineConfig({
             name: 'voice-firefox',
             testMatch: 'voice.spec.mjs',
             dependencies: ['release'],
-            use: { ...devices['Desktop Firefox'] }
+            use: {
+              ...devices['Desktop Firefox'],
+              // Firefox has no equivalent of `--mute-audio`; this is its own switch for the
+              // same thing, and it is a *string* preference deliberately —
+              // `media.volume_scale` is declared as a string in Gecko and read back as a
+              // float, so a number here would be stored as the wrong type and ignored.
+              firefoxUserPrefs: { 'media.volume_scale': '0.0' }
+            }
           }
         ]
       : []),

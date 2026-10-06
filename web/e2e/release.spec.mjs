@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createAccount,
   expectAccessible,
@@ -10,6 +10,7 @@ import {
   setRolePermissions,
   signIn,
   signInOverApi,
+  test,
   waitForSurface
 } from './support.mjs';
 
