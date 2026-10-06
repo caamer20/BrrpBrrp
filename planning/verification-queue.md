@@ -308,6 +308,30 @@ was not.*
   handler is the only new writer of `display_name`/`avatar_color`, and it writes only the
   caller's own row.
 
+### W-28 — a new owner is walked to a recoverable installation (`388920e`)
+
+- **Changed:** `web/src/lib/first-run.ts` (new — the checklist as a value function),
+  `web/tests/first-run.test.mjs` (new — six cases), `web/src/lib/components/admin/Maintenance.svelte`
+  (**Setup checks** becomes **Is this server ready?**), `web/src/lib/components/admin/BackupSettings.svelte`
+  (`id="backup-schedule"` so the schedule line can reach it), `web/src/app.css` (the list's
+  styles). **No Go file, no route, no schema change, no server behaviour.**
+- **Tests written, not run:** the six cases in `web/tests/first-run.test.mjs` — the fresh
+  installation's line order and wording, the copy line saying "not recovery" and naming
+  `BRRP_BACKUP_COPY_DIR` while offering no button, 24 hours called out and 12 not (with
+  7 × 12 h written as 3.5 days), an account without `invite.manage` not being told to invite,
+  a settled installation reading as done throughout, and a configured destination that has
+  never delivered not counting as working. **Frontend test count 367 → 373.**
+- **Must be confirmed by:** `npm --prefix web test` (367 → 373) and a browser read of
+  **Manage server → Maintenance** on a fresh installation, because the lines are drawn from
+  four fetched reports — `/api/admin/health`, `/api/admin/diagnostics`, `/api/admin/settings`,
+  `/api/admin/alerts` — plus `/api/me/mfa` and the workspace snapshot, and only a browser
+  shows them together. W-37's entry below names the journeys that read this panel.
+- **What a wrong answer would look like:** a line claiming a check nobody ran (the voice line
+  is the one this tranche rewrote to stop doing that); a button opening a tab the account
+  cannot use (the invite line's button is withheld without `invite.manage`); or an interval
+  longer than twelve hours passing without a sentence, which would let the recovery objective
+  and the schedule disagree in silence.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.

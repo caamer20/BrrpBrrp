@@ -7,15 +7,17 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 34** (`f66ad04`). **Closed: W-01 through W-06, W-21, W-22,
+- **Branch head after tranche 35** (`388920e`). **Closed: W-01 through W-06, W-21, W-22,
   W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25** (30),
-  **W-26** (31), **W-21 (part 2)** (33) and **W-27** (34). **Tranche 32 is not a W-item — it is Part A's
-  bookkeeping:** it commits tranche 31's ledger (`44e4022`), gathers the five owner questions
-  into the queue's §5, and says in two guides how a member leaves today. **Open: W-07 through
-  W-20, W-28 through W-32 and W-37** — W-28 is next, and W-37 waits on W-28, which explains
-  its consequence where a new owner meets it. **W-21 owes one thing still: the 100-account
-  reference fixture definition** (`F-T`), which needs the owner's approval of the
-  one-million-message / 20-GiB targets before it can be written; it is recorded in the queue.
+  **W-26** (31), **W-21 (part 2)** (33), **W-27** (34) and **W-28** (35).
+- **Tranche 32 is not a W-item — it is Part A's bookkeeping:** it commits tranche 31's
+  ledger (`44e4022`), gathers the five owner questions into the queue's §5, and says in two
+  guides how a member leaves today.
+- **Open: W-07 through W-20, W-29 through W-32 and W-37** — **W-37 is next**, and it is
+  unblocked: W-28 (35) explains its consequence where a new owner meets it.
+- **W-21 owes one thing still: the 100-account reference fixture definition** (`F-T`), which
+  needs the owner's approval of the one-million-message / 20-GiB targets before it can be
+  written; it is recorded in the queue.
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
@@ -3429,7 +3431,75 @@ new audits in the chain.
 
 ### 34f. What the verification pass must run
 
-`$GO test ./internal/api/ -count=1` — the API package, which is where the five new tests
-live — and `npm --prefix web test`, where the only expected change is 366 → 367. The browser suites do not touch this route; if a journey is added later that does,
+`$GO test ./internal/api/ -count=1` — the API package, which is where the five new testslive — and `npm --prefix web test`, where the only expected change is 366 → 367.
+The browser suites do not touch this route; if a journey is added later that does,
 it belongs in the queue beside this tranche. The socket test is the one to watch: it is the
 only place the delivered event is checked.
+
+## Tranche 35 — W-28: a new owner is walked to a recoverable installation
+
+Source commit before: `335accd` (tree clean). Source: `388920e`. **Low risk; interface
+only.** No route, no schema change, no server behaviour.
+
+### 35a. What was wrong
+
+The setup wizard's last page lists what to do next, and the application then never
+mentions it again: the run of "Next: enable two-factor authentication, invite a friend and
+set up automatic backups" ends at that page. The Maintenance tab did have a section called
+**Setup checks** (`web/src/lib/components/admin/Maintenance.svelte`), but it was four
+independent facts with no order, and three of them — the address, the voice ports, the
+storage figure — were as much a health readout as a to-do list. Nothing anywhere connected
+"the wizard said to" to "this installation now has it", and nothing said the thing that
+matters most: that a copy on the same machine is not a recovery point.
+
+### 35b. The change
+
+`web/src/lib/first-run.ts` (new) is the checklist as a value function: given the reports
+the panel already fetches, it returns the lines, each with a stable id, a title that states
+what the server can see, a detail, the place it is fixed, and — where that place is a
+control — the button's words. The lines, in the order a new owner should work through them:
+a second factor on the account; an owner designated; somebody else having joined; the HTTPS
+address; the voice ports and relay; scheduled backups; a copy that has left this machine; an
+alert destination that has delivered.
+
+- The HTTPS line answers from `diagnostics.https_configured` and `local_only`, as before.
+- The voice line is **done when the relay is on**, and its detail says plainly that only two
+devices on the real networks can answer whether audio arrives. It previously read "Confirm
+two-way audio from another device" under a heading that implied the check had happened.
+- The backup line states the cadence, the retention and the resulting history — and calls
+out an interval longer than the twelve hours the recovery objective assumes (W-36) in one
+plain sentence.
+- The copy line is the W-37 consequence written where a new owner meets it: *a backup kept
+only on this machine is not recovery — it recovers a mistake, not a lost host*, with
+`BRRP_BACKUP_COPY_DIR` named, because that setting is host configuration and cannot be a
+button in the panel.
+- The alert line reports what was **delivered**, not what is configured, which is the same
+distinction the route's own note makes (`internal/api/router.go:376`).
+- The panel maps each line's `action` to a control: Preferences → Account for the factor, the
+People tab for the owner, Invitations for the fourth line, Settings for the address and the
+voice configuration, and the backup form (`BackupSettings.svelte`, which gains
+`id="backup-schedule"`) for the schedule. The two host-only lines have no button and say so
+in words.
+- The four old `diagnostic-list` facts become the checklist's own lines; the storage figure
+and the latest-archive details (digest, download link, recorded error) stay beneath it.
+
+### 35c. Tests written, not run
+
+`web/tests/first-run.test.mjs` (new, six cases): the fresh installation's line order and
+wording; the copy line saying "not recovery" and naming the variable while offering no
+button; an interval of 24 hours called out and 12 hours not, with 7 × 12 h written as 3.5
+days; an account without `invite.manage` not being told to invite anybody; a settled
+installation reading as done throughout; and a configured destination that has never
+delivered being reported as not working. Frontend test count 367 → **373**. No Go test and
+no route inventory change.
+
+### 35d. Static gates
+
+`$GO vet ./...` clean, `svelte-check` 0 errors and 0 warnings, prettier clean, `make check`
+exit **0**. Nothing here runs in a browser, so no browser suite is owed for this tranche.
+
+### 35e. What the verification pass must run
+
+`npm --prefix web test` — 367 → 373 — and a browser read of Manage server → Maintenance on
+a fresh installation, because the lines are drawn from four fetched reports and only a
+browser shows them together. W-37's queue entry names the journeys that read this panel.
