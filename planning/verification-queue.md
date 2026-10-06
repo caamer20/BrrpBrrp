@@ -143,6 +143,32 @@ was not.*
   prerequisites, and a run of every command the bundle lists as runnable — none of which has
   been executed to write it.
 
+### W-36 — the backup cadence is twelve hours (`9bc8237`)
+
+*Owner decision of 6 October 2026. No schema change.*
+
+- **Changed:** `internal/db/models.go` (`DefaultSettings().BackupHours` 24 → 12, with a
+  comment), `internal/api/settings.go` (the route's zero fallback now comes from
+  `DefaultSettings()` for the interval *and* the copy count), and seven documents.
+- **Tests written, not run:** `internal/api/settings_test.go` —
+  `TestFreshSetupStoresTheTwelveHourBackupInterval` and
+  `TestAStoredBackupIntervalSurvivesTheDefault`. Read, and deliberately untouched because
+  they name their own interval: `internal/api/backup_schedule_test.go:169,172,521,589`,
+  `internal/api/alerts_test.go:258`. No frontend test or journey asserts an interval default.
+- **Must be confirmed by:** `$GO test ./internal/api/ ./internal/app/ ./internal/db/ -count=1`.
+  The one number worth reading is the default in the API package's settings tests; then the
+  recovery-threshold tests, which must still show 18 h warning and 24 h critical at a 12-hour
+  interval (`app.RecoveryThresholds` returns 1.5× and 2×).
+- **What a wrong answer would look like, and its blast radius:** if a stored 24 came back as
+  12, an existing installation's cadence would silently change and the alert thresholds with
+  it; if a fresh setup stored 24, the recovery objective would not match the plan. Both are
+  asserted directly. **A migration was deliberately not written**, so nothing here rewrites an
+  operator's stored interval.
+- **Documents changed, for a human read rather than a run:** `docs/admin.md` (line 79),
+  `docs/deployment.md` (an alert sentence that said "three times the configured interval"
+  where the thresholds are 1.5× and 2×), `docs/docker.md`, `docs/production-readiness.md`,
+  `docs/upgrading.md`, `docs/known-limitations.md`, `docs/releases/1.0.0-notes-draft.md`.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.

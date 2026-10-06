@@ -7,10 +7,10 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 27** (`ab79e57`). **Closed: W-01 through W-06, W-21 (part 1),
-  W-22, W-23 and W-33 through W-35**, one tranche each (16–27). **Open: W-07 through W-20,
-  W-24 through W-32, W-36 and W-37** — the last two are the owner's 6 October decisions and
-  are the next items in order.
+- **Branch head after tranche 28** (`9bc8237`). **Closed: W-01 through W-06, W-21 (part 1),
+  W-22, W-23 and W-33 through W-36**, one tranche each (16–28). **Open: W-07 through W-20,
+  W-24 through W-32 and W-37** — W-24 is next, and W-37 waits on W-28, which explains its
+  consequence where a new owner meets it.
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
@@ -2524,6 +2524,11 @@ blocking implementation.
   12-hour cadence; the shipped `BackupHours` default remains the operator's setting at
   24 h, and its thresholds scale accordingly. Ratifying a 12-hour default is a product
   decision recorded here, not made silently.
+- **Update, 6 October 2026.** The owner ratified the 12-hour default. It is implemented as
+  W-36 (tranche 28): `DefaultSettings()` returns 12, the settings route's zero fallback is
+  taken from that same function, and an installation whose stored row names an interval
+  keeps it. The sentences above describing "the operator's setting at 24 h" are left as the
+  record of what was true when tranche 18 was written.
 - Host-side external outage probing is not part of this tranche; it belongs with the
   host/external tooling in V1-14 and the operator guide.
 
@@ -2929,3 +2934,74 @@ Source commit before: `4155b12` (tree clean). Source: `ab79e57`. **Documents onl
   fixture has not been written. Both are recorded in the verification queue rather than
   claimed here.
 - **Static gates.** `make check` exit 0.
+
+## Tranche 28 — W-36: the backup cadence is twelve hours
+
+Source commit before: `e5a6ccc` (tree clean). Source: `9bc8237`. **Owner decision of
+6 October 2026; no schema change.**
+
+### 28a. What was wrong
+
+The plan sets a 12-hour backup-and-copy cadence to support an RPO of at most 24 hours
+(`docs/v1-implementation-plan.md`, near line 936), and tranche 18's §18e recorded that the
+shipped default was still 24 with a note that ratifying 12 was a product decision. The owner
+made it. Two things disagreed beyond the number itself: `internal/db/models.go:196`
+(`DefaultSettings()`) shipped 24, and `internal/api/settings.go:30` fell back to a *literal*
+24 when a submitted settings object carried no interval, so the two could drift apart again.
+
+### 28b. The change
+
+- `DefaultSettings()` returns `BackupHours: 12`, with a comment stating that this is the base
+a stored row is decoded over and the cadence the recovery objective assumes.
+- The settings route's zero fallback now comes from `db.DefaultSettings()` — interval and
+  copy count both — so the submitted default and the shipped one cannot disagree.
+- Nothing else moved. `internal/api/backup_schedule.go:622` and `internal/api/alerts.go:431`
+  already derive their window from the stored interval, and `app.RecoveryThresholds` already
+  returns 1.5× (warning) and 2× (critical), so 12 hours yields the ratified 18 h and 24 h.
+
+### 28c. Existing installations
+
+No migration, by design. The interval has no `omitempty`, so every row written since the
+setting was introduced (alpha.5, `3ef614d`) names it explicitly and a stored 24 stays 24. A
+row *older* than that lacks the key and would read 12 — but such a row also lacks
+`backup_enabled`, so its scheduled backups are off and the interval is inert. Saying that
+here is the whole argument for not writing a migration that rewrites an operator's choice.
+
+### 28d. Tests written, not run
+
+`internal/api/settings_test.go` (new):
+
+- `TestFreshSetupStoresTheTwelveHourBackupInterval` — sets a server up through `/api/setup`,
+  then checks all three readers agree: the in-memory settings, the `public` row the setup
+  route wrote, and `GET /api/admin/settings`.
+- `TestAStoredBackupIntervalSurvivesTheDefault` — seeds the `public` row an installation set
+  up before this release holds (`backup_interval_hours: 24`), creates the operator through
+  offline setup (which inserts its own settings with `INSERT OR IGNORE`, so the seeded row is
+  the one kept), builds the server over that store, and asserts the interval is still 24 both
+  in memory and through the authenticated settings route.
+
+Read, and left alone because they name their own interval rather than the default:
+`internal/api/backup_schedule_test.go:169,172,521,589` and `internal/api/alerts_test.go:258`.
+`internal/api/alerts_recovery_test.go` already uses 12. No frontend test or journey asserts a
+backup interval default (`web/tests`, `web/e2e`).
+
+### 28e. Static gates, and what the verification pass must run
+
+`make check` exit 0; the source package is now 549 files (one new Go file). `go vet` clean on
+`./internal/api/` and `./internal/db/`. **Nothing was run**: both tests above are written and
+compile, and no suite was executed.
+
+The pass must run `go test ./internal/api/ ./internal/app/ ./internal/db/ -count=1`, which
+covers the two new tests, the settings route and `RecoveryThresholds`. The documents changed
+here need a read rather than a run.
+
+### 28f. Words changed
+
+`docs/admin.md` (line 79) states the 12-hour default beside the range and the recovery
+objective; `docs/deployment.md` corrects an alert sentence that said "three times the
+configured interval" — the thresholds are 1.5× and 2×, so at 12 hours they are 18 h and 24 h;
+`docs/docker.md` and `docs/production-readiness.md` state the cadence where they tell an
+operator to enable a schedule; `docs/upgrading.md` gains the changed-default note (an existing
+installation keeps its interval; set 12 to meet the objective); `docs/known-limitations.md`
+now states the interval as decided and W-37's half as still carried by that item;
+`docs/releases/1.0.0-notes-draft.md` says the upgrade does not change a stored interval.
