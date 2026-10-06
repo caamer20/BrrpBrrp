@@ -52,12 +52,25 @@ export default defineConfig({
     // permalink, formatting, Back/Forward, phone viewport) against a different engine for
     // everything else - and its exclusions are stated, because a project that silently
     // skips would pass nothing real. Requires `npx playwright install webkit`.
+    //
+    // Safari's engine runs that subset in its own invocation, against its own server and
+    // data directory:
+    //
+    //   BRRP_E2E_WEBKIT=1 BRRP_E2E_BINARY=… npm run test:e2e -- --project=release-webkit
+    //
+    // It must not depend on the Chromium `release` project, which is how it was first
+    // wired and why it was red: a dependency runs that project first against the one
+    // server this invocation starts, so the setup token was already spent (the setup
+    // journey read a file that no longer existed), the three accounts this subset creates
+    // already existed (409), and nothing the WebKit pass measured was its own. One
+    // installation serves one setup, so an engine that exercises setup needs an
+    // installation of its own. `run.mjs` refuses an invocation that would put both
+    // projects in one run rather than leaving that to be rediscovered.
     ...(process.env.BRRP_E2E_WEBKIT === '1'
       ? [
           {
             name: 'release-webkit',
             testMatch: 'release.spec.mjs',
-            dependencies: ['release'],
             use: { ...devices['Desktop Safari'] },
             grep: /first setup|member requests their data export|detectable violations|message permalink|Arabic message|Back and Forward|phone width/
           }

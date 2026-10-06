@@ -442,14 +442,33 @@ test('a message permalink opens the message, and an upload can be stopped', asyn
     .first();
   await expect(message).toBeVisible();
 
-  // Copy link. The clipboard permission is granted here so the real path runs; the
-  // fallback is exercised by the assertion below that a link is offered either way.
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  // Copy link. The clipboard permission is granted where the engine defines it: WebKit's
+  // Playwright implementation has none called `clipboard-write`, so asking for it throws
+  // ("Unknown permission: clipboard-write") and failed a journey whose subject is the
+  // permalink rather than the clipboard. The grant is therefore attempted and remembered,
+  // and each branch asserts the outcome that engine can actually produce — the copied text
+  // read back where there is a clipboard to read, and the product's own answer to a refused
+  // clipboard (it prints the link rather than claiming a copy) where there is not. Both
+  // branches carry a real permalink into the navigation below.
+  const clipboardGranted = await context
+    .grantPermissions(['clipboard-read', 'clipboard-write'])
+    .then(() => true)
+    .catch(() => false);
   await message.getByRole('button', { name: /^Actions for message/ }).click();
   await page.getByRole('button', { name: 'Copy link' }).click();
-  await expect(page.getByText('Link copied.')).toBeVisible();
-  const link = await page.evaluate(() => navigator.clipboard.readText());
-  expect(link).toContain('#message=');
+  const toast = page.locator('.toast[role="status"]');
+  await expect(toast).toBeVisible();
+  let link;
+  if (clipboardGranted) {
+    await expect(toast).toContainText('Link copied.');
+    link = await page.evaluate(() => navigator.clipboard.readText());
+  } else {
+    // It is deliberately one outcome per branch rather than either outcome: this is the
+    // line that says so if an engine that offered no permission to grant copied anyway.
+    await expect(toast).toContainText('Copy this link:');
+    link = /https?:\/\/\S*#message=\S*/.exec(await toast.innerText())?.[0] ?? '';
+  }
+  expect(link, `the permalink the journey follows: ${JSON.stringify(link)}`).toContain('#message=');
 
   // Following the link in a fresh load lands on the message, not on whatever the
   // account last had open. Navigating away first is what makes this a real test of the
@@ -641,12 +660,14 @@ test.describe('phone viewport', () => {
     // is being sent, rather than whichever state the race happened to land on. That row
     // used to be faded to half opacity, which put the text they had just typed — and the
     // "Sending…" line — below the contrast minimum whenever the two raced (2 October).
+    let held = 0;
     await page.route('**/api/**/messages', async (route) => {
       // A read is not what this holds back. `fallback()` rather than `continue()`: a
       // handler that continues a request another handler already owns throws "Route is
       // already handled", which this journey produced twice on 3 October while the sweep
       // and the send were racing (see the ledger).
       if (route.request().method() !== 'POST') return route.fallback();
+      held += 1;
       await new Promise((done) => setTimeout(done, 1500));
       try {
         return await route.continue();
@@ -657,6 +678,13 @@ test.describe('phone viewport', () => {
     });
     await composer.fill('a message from a phone-sized viewport');
     await composer.press('Enter');
+    // Named before the row is, because under WebKit this journey failed at the next line
+    // with "element(s) not found" and a screenshot cannot tell "the send never left the
+    // composer" from "the send left and the pending row never rendered". W-06 queues the
+    // answer; this is the assertion that will give it.
+    await expect
+      .poll(() => held, { timeout: 10000, message: 'no send reached the intercepted route' })
+      .toBeGreaterThan(0);
     await expect(page.getByText('Sending…')).toBeVisible();
     await expectAccessible(page);
     await expect(

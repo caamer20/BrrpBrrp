@@ -59,6 +59,18 @@ async function ready(url) {
 }
 
 async function run() {
+  // The WebKit project is the one engine pass that cannot share an invocation. Its subset
+  // includes the setup journey, and an installation can only be set up once, so a run that
+  // also contains the Chromium `release` project spends the setup token before WebKit
+  // reaches it: that is exactly how the project was red the first time (W-06), and it read
+  // as six unrelated failures rather than one cause. Refuse the invocation and name the one
+  // that works, instead of leaving that again to be rediscovered from a screenshot.
+  const args = process.argv.slice(2);
+  if (process.env.BRRP_E2E_WEBKIT === '1' && !args.some((arg) => arg.startsWith('--project')))
+    throw new Error(
+      'BRRP_E2E_WEBKIT=1 needs its own server and cannot run beside the Chromium projects: ' +
+        'pass --project=release-webkit.'
+    );
   const port = await freePort();
   const baseURL = `http://127.0.0.1:${port}`;
   const cleanEnv = Object.fromEntries(
