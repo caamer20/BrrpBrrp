@@ -180,6 +180,11 @@ func releaseDocPaths() []string {
 	paths := []string{
 		"README.md", "CONTRIBUTING.md", "LICENSE", "SECURITY.md", "CLA.md", "CLA-SIGNATORIES.md",
 		"THIRD-PARTY-NOTICES.md", ".env.example", "scripts/backup.sh", "scripts/restore.sh",
+		// The project documents a release ships. The source package lists these again in
+		// dockerSourcePaths, and this is the list a *binary* package stages: a document
+		// added here and not there would make the two packages disagree about what is
+		// shipped, which is what the packaging check compares.
+		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md",
 	}
 	for _, path := range docsTree() {
 		if nativeSkipDocs[path] {
@@ -258,6 +263,7 @@ func dockerSourcePaths() []string {
 	paths := []string{
 		"Dockerfile", ".dockerignore", ".env.docker.example", "compose.yaml", "compose.turn.yaml", "compose.backup.yaml",
 		"go.mod", "go.sum", "README.md", "CONTRIBUTING.md", "LICENSE", "CLA.md", "CLA-SIGNATORIES.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "Makefile",
+		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md",
 		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json",
 	}
 	// The workflows are shipped so a consumer can see and reproduce the checks the
