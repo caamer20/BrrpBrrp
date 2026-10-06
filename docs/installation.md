@@ -54,6 +54,38 @@ If service registration or startup fails after files have been installed, setup 
 
 To keep the same server and accounts, open setup from the newly extracted release and use **Update this installation**. It preserves data/settings, saves the previous executable, and restarts the service. Export a backup first. Manually changed settings and legacy script installations use the [manual update procedure](deployment.md#updates-and-rollback).
 
+## Changing a setting after installation
+
+The wizard writes the settings it asked about into `server.env`, next to the data folder. Every
+other key is optional and simply absent; the server uses its built-in default for each.
+
+| Platform | `server.env` |
+| --- | --- |
+| Windows (wizard, or `scripts\windows\install.ps1`) | `%ProgramData%\BrrpBrrp\server.env` |
+| Linux (wizard) | `/var/lib/brrpbrrp/server.env` |
+| Linux (legacy `scripts/linux/install.sh`) | `/etc/brrpbrrp/server.env` |
+| macOS | `~/Library/Application Support/BrrpBrrp/data/server.env` |
+
+To change or add one:
+
+1. Stop the service.
+2. Open that file in an editor with the rights to write it — on Windows and Linux that usually
+   means an administrator editor.
+3. Add `BRRP_NAME=value`, or change the line that is already there. Values are literal: there is
+   no shell expansion, and on Windows a backslash inside a double-quoted value is an escape
+   character, so prefer unquoted paths.
+4. Start the service again. The file is read once at startup, so a change takes effect then and
+   not before.
+
+[.env.example](../.env.example) lists every key the server reads, with its default and a
+sentence on what it changes, and [deployment.md](deployment.md#configuration) describes the same
+settings in the context of a running service. Settings the server keeps in its database — the
+server name, upload limit, TURN configuration, retention and the backup schedule — are changed
+in **Manage server → Settings** instead, and take effect without a restart. The two feature
+gates, `BRRP_BACKUP_COPY_DIR` and the two alert keys are deliberately host configuration only:
+there is no way to set them from the browser, so nobody who can use the admin panel can turn a
+feature on or redirect an installation's alerts.
+
 ## Uninstall an old version and start fresh
 
 Open setup from a newly extracted release, outside the installed application folder. Choose **Uninstall an existing version**, review the displayed locations and confirm **Uninstall and keep data**. This handles the standard Windows, Linux and macOS locations used by both the wizard and the older installation scripts, including a service that failed to start. A custom data directory is read from the existing settings file.

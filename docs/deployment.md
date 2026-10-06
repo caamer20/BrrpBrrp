@@ -113,12 +113,17 @@ The `production-check --config PATH` command is safe while the service is runnin
 | `BRRP_LOG_LEVEL` | `info`; debug/info/warn/error/off |
 | `BRRP_LOG_FILE` | Empty means stderr; `logs/server.log` enables bounded file rotation |
 | `BRRP_MAX_UPLOAD_BYTES` | `12582912`; installation cap, maximum 12 MiB |
+| `BRRP_SQLITE_SYNCHRONOUS` | `FULL`; durability of committed transactions. `NORMAL` may lose recent commits after an operating-system crash or power loss, and is only appropriate for a disposable installation |
 | `BRRP_STORAGE_QUOTA_BYTES` | `0` (no quota); total attachment storage the server will hold. An upload that would exceed it is refused with the bytes used and the limit, and the file is not kept |
 | `BRRP_STORAGE_RESERVE_BYTES` | `536870912` (512 MiB); free space the server keeps in hand. An upload that would leave less is refused, because an installation that fills its volume cannot write the backup that would recover it. Counted against the largest upload this installation accepts, so the floor holds whatever arrives |
 | `BRRP_LOGIN_ATTEMPTS` | `20`; sign-in attempts per address per five minutes. Raise it when everyone signs in from one address — an office NAT, a VPN or a reverse proxy that does not forward the client address — because the budget is shared by every account behind that address |
+| `BRRP_ALERT_WEBHOOK` | Empty means no destination, and conditions are only recorded and shown in the interface. An `http(s)` URL receives a `POST` with the alert; delivery is host configuration, so the browser cannot redirect an installation's alerts |
+| `BRRP_ALERT_SECRET` | Optional. Signs the payload (`X-Brrpbrrp-Signature: sha256=…` over the timestamp and body), so a receiver can tell a real alert from one forged against a URL that leaked |
 | `BRRP_VOICE_EXTERNAL_IP` | Optional reachable media IP for NAT mapping |
 | `BRRP_VOICE_PORT_MIN` / `BRRP_VOICE_PORT_MAX` | UDP 50000–50100 |
 | `BRRP_BACKUP_COPY_DIR` | Optional absolute destination for extra copies; grant the service account write access |
+| `BRRP_ENABLE_RESTRICTED_CHANNELS` | `false`; the restricted-channel feature gate (ADR 0003). Shipped off, and the owner flips it after the independent reviews |
+| `BRRP_ENABLE_PRIVATE_CONVERSATIONS` | `false`; the consented-private-conversation feature gate (ADR 0012). Consent is required by the product rather than by this switch. Shipped off, and the owner flips it after the independent reviews |
 
 ### What the disk reserve guarantees
 
