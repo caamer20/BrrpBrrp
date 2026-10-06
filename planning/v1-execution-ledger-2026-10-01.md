@@ -3,16 +3,25 @@
 Compact record of implementation tranches toward v1.0.0, per the review-17 handoff
 (`planning/handoff-agentic-coder-v1-review-17-2026-10-01.md`). One section per tranche.
 
-**Current status (5 October 2026).** Read this first; the per-tranche sections
+**Current status (6 October 2026).** Read this first; the per-tranche sections
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 20** (`65935f3`); **W-01 through W-04 and W-22 are closed.**
+- **Branch head after tranche 22** (`e0c6280`); **W-01 through W-06 and W-22 are closed.**
   The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
   `go test ./...`, both Chromium feature modes with nothing excluded, `thread-scale`, and
-  the full-disk rehearsal are green on this tree.
+  the full-disk rehearsal were green at `1faeb92`. From tranche 23 onward the last verified
+  state of the tree is that commit.
+- **From tranche 23 the owner suspended test runs.** No browser suite, Go test, frontend
+  unit test or rehearsal is run in these tranches. The static gates are run after every item
+  — `make check`, which builds the frontend, vets, formats, type-checks and runs the
+  documentation, packaging and workflow audits — and every behavioural change carries tests
+  that have **not** been executed. `planning/verification-queue.md` is the owner's single-pass
+  checklist for them, and it opens with the order the pass should take. **An entry that
+  quotes a figure says whether it was measured before the suspension**, which is true of
+  tranches 21 and 22 and of nothing later.
 - **Candidate:** 0.4.0-alpha.9 at `f810f0c` (digests in `dist/releases/SHA256SUMS`,
   record at `docs/releases/0.4.0-alpha.9.md`). That archive predates several fixes; any
   further packaging is a new version (`0.4.0-alpha.10`). **Do not build on it as if it
@@ -33,12 +42,13 @@ below are evidence, some of them written when assignments were hazy, and two of 
   code-signing identity, and the long lead items listed in section 5 of the top-level
   kickoff. The rest of this ledger's tail is historical; the owed list that follows it
   accurately is the one the acceptance checker prints on any `make check`.
-- **Still red or owed on this branch:** Firefox's voice project has one red webview
-  assertion (`node.playsInline` is undefined there — a test-assertion defect, W-05);
-  WebKit's release subset shares its fixture with the Chromium `release` project, so its
-  own journeys cannot run against a second installation (W-06); **W-07 onward are open.**
-  W-05 and W-06 are the next two items; W-01 through W-04 and W-22 are closed, one tranche
-  each (16–20).
+- **Red or owed on this branch, as last measured:** Firefox's voice project and WebKit's
+  release subset were both red at `1faeb92` — the `playsInline` assertion (W-05) and the
+  fixture the WebKit pass shared with the Chromium `release` project (W-06). Both are
+  addressed in tranches 21 and 22, which the verification pass must confirm; nothing is
+  known red meanwhile, and nothing after `1faeb92` has been run. **W-07 onward and W-23
+  onward are open**, and the verification-only items listed at the end of
+  `planning/verification-queue.md` remain owed exactly as previously specified.
 
 ---
 
@@ -2622,3 +2632,145 @@ edits only ledger and release prose).
 - It makes the index accurate as of tranche 19, not complete: the two red engine items
   (W-05, W-06) and W-07 onward remain open until their own tranches.
 - Committed as `65935f3`; the checkpoint bundle at HEAD covers it.
+
+## Tranche 21 — W-05: the Firefox assertion, and the sign-in that never happened
+
+Source commit before: `cd77c5f` (tree clean). Source: `496e90a`.
+
+**Run, not written-only — but by the session that preceded this one**, before the owner
+suspended test runs. Every figure below is that session's report; this tranche re-measured
+nothing, and the entry says so where it matters.
+
+### 21a. The inline assertion, and why only Firefox failed it
+
+- **What was wrong.** `web/e2e/voice.spec.mjs` read `node.playsInline` from the shared
+  screen's `<video>` and asserted it was `true`. Firefox does not define that IDL property,
+  so the value was `undefined` and the journey could only ever fail under that engine. The
+  markup has carried `playsinline` all along (`web/src/lib/components/ScreenStage.svelte:78`,
+  `web/src/lib/components/MessageItem.svelte:293`) and `web/tests/screen-receive.test.mjs:85`
+  already asserts it, so this was a test-assertion defect and never a product one.
+- **The change.** The assertion now checks `node.hasAttribute('playsinline')` — the markup's
+  contract, and the same thing the unit test checks — and additionally asserts the reflected
+  boolean wherever `typeof node.playsInline === 'boolean'`. That is strictly stronger than
+  the old assertion on the engines that define the property, and correct on the one that
+  does not.
+
+### 21b. The intermittent was a skipped sign-in, not a lost session
+
+- **What the record said.** Ledger §11c: roughly one Firefox invocation in three failed at
+  `signIn` with `getByLabel('Your preferences')` never appearing, the page left on the
+  sign-in form, and a probe from that page showing **`/api/state` answering 401** after a
+  sign-in that had returned 200 and set the cookie. It read as a session the server had lost.
+- **What it was.** `signIn` navigated and then sampled the sign-in heading's visibility
+  *once*, at the instant `goto` resolved. The app's boot is asynchronous: it renders
+  "Opening your space…" until `/setup/status` and then `/state` have answered
+  (`web/src/lib/workspace.svelte.ts:71` — `loading = $state(true)` — with `start()` at 575
+  and `enter()` at 596), which is later than the load event. A `false` from that one sample
+  was read as "this account is already signed in", so the form was never filled, no sign-in
+  was ever posted, and the twenty-second wait expired on a page that honestly answered 401
+  because **nobody had signed in in that run**. The 401 in the dump was evidence of the
+  skipped sign-in, not of a lost session; the earlier "the POST returned 200 and set the
+  cookie" measurement came from a different run.
+- **Measured, by the session that made the change.** In 30 fresh Firefox contexts the
+  surface was absent at the instant `goto` resolved **3 times**, needing 36–153 ms more to
+  appear (median 45 ms). A slowed boot makes the race deterministic: with `/api/state`
+  delayed 400 ms through the fixture's own route interception, the pre-fix helper failed
+  **0 of 3** attempts — each after about 20 s, at the same `toBeVisible` on `Your
+  preferences` — and the fixed helper passed **3 of 3** in about 2 s.
+- **The change.** `web/e2e/support.mjs` gains `waitForSurface(page, workspaceReady)`: it
+  polls until the app has settled on the sign-in form or the workspace before the caller
+  decides which it is, and takes the locator that proves the workspace up (the preferences
+  control on a desktop, a channel heading at phone width where the header is collapsed).
+  `signIn` uses it, and `web/e2e/release.spec.mjs`'s phone-viewport journey — which carried
+  the same one-shot sample inline — now uses it too.
+- **Global timeout.** `web/playwright.config.mjs` gains a top-level `globalTimeout` of twenty
+  minutes, about four times the longest measured invocation, overridable by
+  `--global-timeout` on the command line (which wins over the config) or by
+  `BRRP_E2E_GLOBAL_TIMEOUT`. Playwright has no per-project `globalTimeout`, so this one
+  number is what gives every engine project a ceiling; before it, a hung run held the
+  harness until a person noticed.
+- **The failure dump.** `voice.spec.mjs`'s `afterEach` already printed every page with a
+  `/api/state` probe. It now also prints, per browser context, the cookie names the context
+  holds, the session cookie's length/`Secure`/`SameSite`/`HttpOnly`, and the status the
+  server returns when the harness sends that exact cookie back. That is the probe ledger
+  §11c asked the next session to make: it distinguishes "no session was ever created" from
+  "the browser is not sending the cookie it holds".
+
+### 21c. What it reported, and what it does not prove
+
+- **Reported by the session that made the change, not re-measured here.** Twenty consecutive
+  `voice-firefox` invocations, every one **14 passed / 0 failed / 0 skipped / 0 did not
+  run**, 81–105 s each; Chromium default **30 / 0 / 0 / 0** (3.3 min) and private **45 / 0 /
+  0 / 0** (4.7 min) afterwards with nothing excluded; `npm --prefix web test` 366 / 0 / 0 / 0;
+  Prettier clean. The twenty runs were made against the helper as first written; the only
+  later edit to those files was comment re-wrapping, so the executable lines the runs
+  exercised are the committed ones.
+- **It does not prove** the race is gone on other hardware: the fix removes a single-sample
+  read, and every figure above is this host's timing. It does not cover WebKit — that is
+  tranche 22 — and a green Firefox run says nothing about the assertions the journey makes
+  when the media itself misbehaves.
+
+## Tranche 22 — W-06: the WebKit pass gets its own installation
+
+Source commit before: `496e90a` (tree clean). Source: `e0c6280`.
+
+**Written, not run.** The owner suspended test runs before this tranche, so the change is
+judged by reading and by the static gates; `planning/verification-queue.md` carries what
+must confirm it.
+
+### 22a. Six failures with one cause
+
+- **What was measured before this tranche**, by the session that preceded it, against
+  `dist/brrpbrrp-e2e` built from this tree: `BRRP_E2E_WEBKIT=1 … --project=release-webkit` →
+  **10 passed / 6 failed / 0 skipped / 0 did not run** in 1.2 min. The Chromium `release`
+  project ran its nine journeys first and green; then the WebKit project ran its own seven,
+  six of which failed:
+  - `first setup` — `ENOENT …/setup-token`, because the Chromium pass had consumed it.
+  - `a member requests their data export`, `Back and Forward`, `Arabic message` — `409` from
+    `createAccount`; `export_member`, `walk_member` and `arabic_member` already existed.
+  - `message permalink` — `browserContext.grantPermissions: Unknown permission:
+    clipboard-write`.
+  - `phone viewport` — `getByText('Sending…')` not found (see 22c).
+- **The cause of the first five.** The project declared `dependencies: ['release']`, and a
+  Playwright dependency runs that project first **against the one server this invocation
+  starts** (`web/e2e/run.mjs` gives each invocation one data directory). One installation
+  serves one setup, so an engine whose subset includes the setup journey cannot share an
+  installation with another engine's pass. The dependency's mission is to produce a fixture;
+  here it consumed the fixture.
+- **The change.** The dependency is removed, so `--project=release-webkit` runs the WebKit
+  subset and nothing else, against its own server and data directory; and `run.mjs` throws
+  with the exact invocation to use when `BRRP_E2E_WEBKIT=1` is set without a `--project`,
+  because that invocation would run the Chromium projects beside it and fail the same way.
+  A runner that forgets now gets one sentence instead of six unrelated failures.
+
+### 22b. The clipboard permission belongs to the engine
+
+- `grantPermissions(['clipboard-read', 'clipboard-write'])` threw before the permalink
+  journey could begin, because Playwright's WebKit has no permission by that name. The
+  journey's subject is the permalink, not the clipboard, so the grant is now attempted and
+  remembered, and each branch asserts the outcome that engine can produce: with the
+  clipboard, the toast says the link was copied and `navigator.clipboard.readText()` must
+  hold a URL containing `#message=`; without it, the product's own answer to a refused
+  clipboard — `MessageItem.svelte`'s `copyLink` catch, which prints `Copy this link: <link>`
+  rather than claiming a copy — is asserted, and that printed permalink is what the
+  navigation below follows. It is deliberately one outcome per branch, not either outcome:
+  the comment says which line reports an engine that writes with no permission to grant.
+
+### 22c. The phone-viewport failure is still unexplained, and now it will name itself
+
+- The WebKit pass failed at `await expect(page.getByText('Sending…')).toBeVisible()` with
+  "element(s) not found", while the send was held 1.5 s by the journey's own route handler.
+  Two causes fit and a screenshot cannot separate them: the composer's Enter never submitted
+  (so no request existed at all), or the request was held and the optimistic pending row
+  never rendered. The journey now counts the POSTs its route handler intercepts and asserts
+  that at least one arrived *before* it asserts the row, so the first verification pass will
+  say which half failed. No hypothesis is recorded here as a diagnosis.
+
+### 22d. What this tranche does not prove
+
+- Nothing in it has been run. The static gates are clean — `make check` exit 0 after the
+  change, `node --check` and Prettier on the three files — which says the files parse, the
+  frontend still builds and the audits still pass. It does not say the WebKit pass is green.
+- The WebKit subset is still the *core* journeys only and its exclusions are unchanged: the
+  journeys that drive offline/recovery and the media/setup counts are not in it. Playwright's
+  WebKit is not Safari on a device, and this pass does not claim to be.
