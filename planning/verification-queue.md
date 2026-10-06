@@ -205,7 +205,7 @@ was not.*
   takes the UDP port + 1 and + 2. If a future change adds controls for them, `docs/docker.md`
   and `docs/admin.md` say the ports "follow the UDP port" and would need updating with it.
 
-### W-26 — the example configuration documents every key the server reads (`af5f137`)
+### W-26 — the example configuration documents every key the server reads (`af5f137`, ledger `44e4022`)
 
 - **Changed:** `scripts/env-keys.mjs` (new shared module — the one walk that finds a server's
   `BRRP_*` reads, excluding `*_test.go`), `scripts/check-env-coverage.mjs` (new, with its own
@@ -238,6 +238,19 @@ was not.*
   installer writes thirteen keys. `Plan.configText()` (`internal/installer/settings.go:148`)
   writes **nine** in `computer`/`network` mode and **eleven** in `proxy`. Nothing was changed
   in the wizard; the ledger (tranche 31, §31d) carries the correction.
+
+### Tranche 32 — how a member leaves today, and the owner's questions (`3d45c29`)
+
+*Not a W-item: documents and this queue. **No behaviour changed.***
+
+- **Changed:** `docs/community-guide.md` and `docs/known-limitations.md` — a member can take
+  their own data (**Your data export**) but cannot remove their own account; only an
+  administrator can, so a member who wants to leave asks an operator. Plus this queue's §5
+  (the five owner questions) and the ledger's tranche 32. The ledger commit for W-26,
+  `44e4022`, is bookkeeping and is named in W-26's entry above.
+- **Tests written:** none — documents only; no Go file, no route, no behaviour.
+- **Must be confirmed by:** `make check GO=$GO` (its documentation-link audit walks both
+  files) and a human read. Nothing here needs a browser or a test binary.
 
 ## 3. What the pass must not assume
 
@@ -275,5 +288,34 @@ of them as closed by the work above.
 
 ## 5. Questions recorded for the owner
 
-None yet. Add them here as they arise, and keep the section honest: an item whose answer is
-not known does not become an item whose answer was assumed.
+None of these blocks anything in section 2 or 4: each is a decision only the owner can make,
+and the code and documents around them already say so rather than guessing. They are gathered
+here from wherever they first arose, so one reading covers all of them.
+
+1. **Who receives a code-of-conduct report?** The Contributor Covenant requires an
+   enforcement contact and the project does not have one. A report reaches the person who
+   published the release you run, as a fallback; a guessed address reaches nobody.
+   Where it arose: `CODE_OF_CONDUCT.md`, “Reporting and enforcement”; also recorded as
+   owner item PUB-05 in `planning/v1-roadmap-2026-10-01.md`, beside the CLA decision.
+2. **What are the support response expectations?** There is no hosted CI, no released 1.0.0
+   and no maintainer rota, so any response target written today would be invented. The
+   owner decides, when there is something to support, which channels exist and how a
+   data-safety report is escalated. Where it arose: `SUPPORT.md`, “Response expectations”.
+3. **Does the browser harness follow the shipped gate default, or keep forcing `false`?**
+   Following the default is the only way the default job tests what a new installation gets;
+   forcing it is the only way the opted-in/opted-out pair stays symmetrical in CI. The answer
+   decides two rows in the checklist and the `check.yml` assertion. Where it arose:
+   `planning/gate-flip-checklist.md` §5 item 1.
+4. **Is `docs/community-guide.md` a living guide or a dated record?** Its first line pins it
+   to `0.4.0-alpha.5` and says direct messages “are still planned”, which is no longer true.
+   If it is living it needs an edit beyond the gate flip; if it is a record it should be left
+   alone. Where it arose: `planning/gate-flip-checklist.md` §5 item 2.
+5. **Should v1 let a member remove their own account?** Today a member can export their own
+   data — **Your data export**, gated on a recent strong sign-in — but cannot leave on their
+   own: only an administrator with the member-management capability can deactivate, remove or
+   erase an account (`DELETE /api/admin/users/{id}`, `POST /api/admin/users/{id}/anonymize` in
+   `internal/api/router.go`; `PATCH /api/admin/users/{id}` is likewise the only route that
+   changes a member's `display_name` or `avatar_color` until W-27 adds `PATCH /api/me`).
+   Nothing here builds a self-service departure; `docs/community-guide.md` and
+   `docs/known-limitations.md` now state plainly how a member leaves today. Where it arose:
+   the account-removal review in this session.

@@ -7,10 +7,14 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 31** (`af5f137`). **Closed: W-01 through W-06, W-21 (part 1),
+- **Branch head after tranche 32** (`3d45c29`). **Closed: W-01 through W-06, W-21 (part 1),
   W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25**
-  (30) and **W-26** (31). **Open: W-07 through W-20, W-27 through W-32 and W-37** — W-27 is
-  next, and W-37 waits on W-28, which explains its consequence where a new owner meets it.
+  (30) and **W-26** (31). **Tranche 32 is not a W-item — it is Part A's bookkeeping:** it
+  commits tranche 31's ledger (`44e4022`), gathers the five owner questions into the queue's
+  §5, and says in two guides how a member leaves today. **Open: W-07 through W-20, W-27
+  through W-32 and W-37** — W-27 is next, W-37 waits on W-28, which explains its consequence
+  where a new owner meets it, and W-21 still owes the two `docs/host-qualification.md`
+  corrections (tranche 27).
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
@@ -3240,3 +3244,53 @@ is intended — it is the drift this tranche exists to stop — but it means a k
 deliberately undocumented (a development switch) must live in a test file or be documented.
 Test files remain excluded on purpose, which is what keeps the load harness's thirteen knobs
 out of an operator's promise.
+
+## Tranche 32 — how a member leaves today, and the owner's open questions
+
+Source commit before: `44e4022` (tree clean; tranche 31's ledger — W-26 — committed then).
+Source: `3d45c29`. **Documents and the verification queue; no source change, no behaviour.**
+
+### 32a. What was wrong
+
+`docs/community-guide.md`'s "Remove or deactivate an account" section described only the
+administrator's controls — deactivation, remove-account-keep-messages,
+erase-account-and-messages — and `docs/known-limitations.md` did not mention the case at all.
+A member *can* take their own data: `POST`/`GET /api/me/export` and the export panel behind
+**Your data export** (`internal/api/router.go:367-370`, `web/src/lib/components/Workspace.svelte:298`).
+A member *cannot* remove their own account: the only routes are `DELETE /api/admin/users/{id}`
+and `POST /api/admin/users/{id}/anonymize` (`router.go:421-422`), both `authz.MemberManage`.
+So leaving a community is a request to an operator, and neither guide said so.
+
+### 32b. The change
+
+- `docs/community-guide.md` gains a paragraph in the account-removal section: no self-service
+departure, so ask an operator; take your data first with **Your data export**; whether v1 adds
+a departure is an open owner question, not a hidden setting.
+- `docs/known-limitations.md` gains **Leaving a community**, saying the same and pointing at
+the queue's §5.
+
+The community guide is itself owner question 4 — living guide or dated record. This paragraph
+describes behaviour that is true of the shipped build under either answer, so it is safe
+regardless; if the owner calls the file a dated record, it is the kind of edit that question
+is about, and the answer may supersede it.
+
+### 32c. The owner questions, gathered
+
+Four questions were recorded elsewhere and one is new; all five now sit in
+`planning/verification-queue.md` §5, each with a pointer to where it arose:
+
+1. the code-of-conduct enforcement contact (`CODE_OF_CONDUCT.md`; also owner item PUB-05 in
+   `planning/v1-roadmap-2026-10-01.md`);
+2. the support response expectations (`SUPPORT.md`);
+3. whether the browser harness follows the shipped gate default or keeps forcing `false`
+   (`planning/gate-flip-checklist.md` §5, item 1);
+4. whether `docs/community-guide.md` is a living guide or a dated record (same §5, item 2);
+5. whether v1 should let a member remove their own account (this tranche).
+
+None blocks an item in the queue's sections 2 or 4.
+
+### 32d. Tests and static gates
+
+No test, and no Go file changed. The confirmation is `make check` — its documentation-link
+audit walks both edited files — and a human read. The verification pass must run `make check`;
+there is nothing here that needs a browser or a test binary.
