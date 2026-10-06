@@ -169,6 +169,24 @@ was not.*
   where the thresholds are 1.5× and 2×), `docs/docker.md`, `docs/production-readiness.md`,
   `docs/upgrading.md`, `docs/known-limitations.md`, `docs/releases/1.0.0-notes-draft.md`.
 
+### W-24 — the settings an operator sets in `.env.docker` reach the container (`437082e`)
+
+- **Changed:** `compose.yaml` (eight variables passed as `${NAME:-}`), `.env.docker.example`
+  (the eight, blank, with a comment), `docs/docker.md` (a table of what an operator may set),
+  `Makefile` (the audit wired into `check`, plus a `compose-env` target),
+  `scripts/release.go` (the new script added to the source package). **No Go file changed.**
+- **Tests written:** none — the assertion is the audit, and an audit's own self-test is its
+  test. `scripts/check-compose-env.mjs --self-test` runs it against four fixtures (unpassed
+  key, repaired tree, test-only key, deliberate list).
+- **Already run, and the run is the evidence:** the audit, against the *pre-fix* Compose file,
+  reported exactly the eight keys with one complaint each. `make check` exit 0 with the audit
+  wired in, the source package at 550 files.
+- **Must be confirmed by:** nothing on this machine. On a Docker host, the container run
+  `scripts/check-docker.mjs` (owed anyway) is what proves `docker compose` accepts the file
+  with `${NAME:-}` values — the audit parses Compose, it does not interpret it. Add one manual
+  check there: set `BRRP_MAX_UPLOAD_BYTES` and `BRRP_STORAGE_QUOTA_BYTES` in `.env.docker`,
+  start the container, and confirm both take effect in **Manage server → Settings**.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.

@@ -7,10 +7,10 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 28** (`9bc8237`). **Closed: W-01 through W-06, W-21 (part 1),
-  W-22, W-23 and W-33 through W-36**, one tranche each (16–28). **Open: W-07 through W-20,
-  W-24 through W-32 and W-37** — W-24 is next, and W-37 waits on W-28, which explains its
-  consequence where a new owner meets it.
+- **Branch head after tranche 29** (`437082e`). **Closed: W-01 through W-06, W-21 (part 1),
+  W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** in tranche 29.
+  **Open: W-07 through W-20, W-25 through W-32 and W-37** — W-25 is next, and W-37 waits on
+  W-28, which explains its consequence where a new owner meets it.
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
@@ -3005,3 +3005,66 @@ operator to enable a schedule; `docs/upgrading.md` gains the changed-default not
 installation keeps its interval; set 12 to meet the objective); `docs/known-limitations.md`
 now states the interval as decided and W-37's half as still carried by that item;
 `docs/releases/1.0.0-notes-draft.md` says the upgrade does not change a stored interval.
+
+## Tranche 29 — W-24: the settings an operator sets in `.env.docker` reach the container
+
+Source commit before: `9bc8237` (tree clean). Source: `437082e`. **Low risk, packaging.**
+
+### 29a. What was wrong
+
+`compose.yaml` passed a fixed list of variables into the container — sixteen of them. The
+server reads twenty-nine `BRRP_*` names in non-test Go code. Eight of the difference were
+operator settings with no other route into the container: `BRRP_ENABLE_RESTRICTED_CHANNELS`,
+`BRRP_ALERT_WEBHOOK`, `BRRP_ALERT_SECRET`, `BRRP_STORAGE_QUOTA_BYTES`,
+`BRRP_STORAGE_RESERVE_BYTES`, `BRRP_LOGIN_ATTEMPTS`, `BRRP_MAX_UPLOAD_BYTES` and
+`BRRP_SQLITE_SYNCHRONOUS`. An operator on the Linux Docker deployment could write all eight
+into `.env.docker` and get no restricted channels, no alerting and no quota — silently, on
+one of the two required deployments. It is exactly the class of defect a static gate can
+catch and no test would ever notice, because each file is correct on its own.
+
+### 29b. The change
+
+- `compose.yaml` passes all eight as `${NAME:-}`. An empty value already means "unset"
+  throughout the configuration surface — `env` and `boolean` in `internal/app/config.go`
+  fall back on an empty string, `number` goes through `env`, and `alertTarget()` in
+  `internal/api/alerts.go` (line 305) returns no destination for an empty
+  `BRRP_ALERT_WEBHOOK` — so an operator who sets nothing sees no change.
+- `scripts/check-compose-env.mjs` (new, 270 lines with its self-test) reads the `BRRP_*`
+  literals out of non-test Go files under `internal/` and `cmd/`, parses the `environment:`
+  blocks of all three Compose files, and fails when a key the server reads is neither passed
+  nor on its short deliberate list (database, upload, setup-token and log paths, which belong
+  to the container layout rather than to `.env.docker`). Test files are excluded on purpose:
+  the load harnesses read their own knobs (`BRRP_EXPORT_LOAD`, `BRRP_VIDEO_LOAD_SECONDS`, and
+  the rest) which are a developer's, not an operator's.
+- Wired into `make check` and a `compose-env` target, and added to `dockerSourcePaths()` in
+  `scripts/release.go` so the source package ships it (`check-source-package.mjs` requires
+  every script the Makefile runs to be packaged).
+- `.env.docker.example` gains the eight, each blank, with a comment that an empty value is
+  the built-in default; `docs/docker.md` gains a table of what an operator may set, and the
+  reason the audit exists.
+
+### 29c. The audit was checked against the defect it was written for
+
+The self-test builds disposable fixtures: a tree whose server reads a key no Compose file
+passes (must fail, naming it), the same tree repaired (must pass), a test-only key (must be
+ignored), and a tree whose only unpassed key is on the deliberate list (must pass). It was
+also run against the *pre-fix* `compose.yaml` (`git show 9bc8237:compose.yaml` in a temporary
+root that symlinks the real source trees): it reported **exactly the eight keys above**, one
+complaint each. That is the one figure in this tranche that is a measurement rather than a
+reading — it is a static audit, not a test or a container run.
+
+### 29d. Tests
+
+None, and none is the right shape here: this is a packaging change whose whole assertion is a
+static audit, which is the audit's own self-test. No Go file changed. The verification pass
+must still run `make check` (already exit 0) and, on a Docker host, the container lifecycle
+check `scripts/check-docker.mjs`, which is owed anyway.
+
+### 29e. What is deliberately not claimed
+
+`compose.yaml` is parsed, not interpreted: the audit understands the mapping and list forms
+of an `environment:` block and nothing else about Compose. It does not build an image, start a
+container, or prove that `docker compose` accepts the file. It also deliberately does not
+check the reverse direction — a Compose variable the server never reads — because
+`BRRP_BIND_IP`, `BRRP_WEB_PORT`, `BRRP_MEDIA_BIND_IP`, `BRRP_TURN_PORT` and
+`BRRP_BACKUP_HOST_DIR` are `docker compose`'s own, and flagging them would be noise.
