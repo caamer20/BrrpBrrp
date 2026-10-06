@@ -273,6 +273,41 @@ was not.*
 - **Must be confirmed by:** `make check GO=$GO` (its documentation-link audit walks both
   files) and a human read. Nothing here needs a browser or a test binary.
 
+### W-27 — a member can change their own name and colour (`f66ad04`)
+
+- **Changed:** `internal/api/auth.go` (`updateMe` — the handler), `internal/api/router.go`
+  (the route), `internal/api/negative_matrix_test.go` (its hand classification),
+  `planning/negative-matrix.json` (regenerated), `internal/api/profile_test.go` (new — the
+  tests), `web/src/lib/components/Preferences.svelte` (a **Profile** section),
+  `web/src/lib/components/MemberProfile.svelte` (**Edit profile** on your own profile),
+  `web/src/lib/avatar-ink.ts` (`AVATAR_PALETTE`), `web/src/app.css` (the swatch styles),
+  `web/tests/avatar-ink.test.mjs` (the palette case), and one route figure in
+  `planning/security-review-bundle.md`. **No schema change.**
+- **Tests written, not run:** `internal/api/profile_test.go` —
+  `TestAMemberChangesTheirOwnDisplayNameAndAvatarColor`,
+  `TestARenameRefusesExactlyWhatTheAdministratorRouteRefuses`,
+  `TestARenameLeavesEveryOtherAccountAlone`,
+  `TestADeactivatedAccountCannotRenameItself` (the second half calls the handler directly,
+  with a comment saying why a deactivated account cannot reach it over HTTP),
+  `TestARenameAnnouncesItselfOnTheAccountSocket`. `web/tests/avatar-ink.test.mjs` — "the
+  colours a member chooses from all clear the minimum".
+- **The one test that was run:** the route-inventory generator
+  (`$GO test ./internal/api -run
+  'TestEveryRouteDeclaresHowAnOutsiderIsDenied|TestEveryRouteDeclaresItsPolicy' -count=1
+  -update-negative-matrix`), exit 0 in 0.7 s, as section 6 allows for a new route. It took
+  the matrix from 132 to **133** rows; the diff is the one new `PATCH /api/me` entry.
+- **Must be confirmed by:** `$GO test ./internal/api/ -count=1` (the five new tests), and
+  `npm --prefix web test`, where the only expected change is **366 → 367** passed — one new
+  case in `avatar-ink.test.mjs`. The socket test is the one to watch: it is the only place
+  the delivered `user.updated` event is checked. The browser suites do not exercise this
+  route today.
+- **What a wrong answer would look like, and its blast radius:** if the handler wrote a
+  field the request did not name, an administrator's colour change could be reverted by a
+  later rename; if the deactivation check were missing, a rename could land on an account
+  that was deactivated while the request was in flight. Both are asserted directly. The
+  handler is the only new writer of `display_name`/`avatar_color`, and it writes only the
+  caller's own row.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.

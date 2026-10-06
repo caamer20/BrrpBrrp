@@ -7,12 +7,12 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 33** (`cda1b1d`). **Closed: W-01 through W-06, W-21, W-22,
+- **Branch head after tranche 34** (`f66ad04`). **Closed: W-01 through W-06, W-21, W-22,
   W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25** (30),
-  **W-26** (31), and **W-21 (part 2)** (33). **Tranche 32 is not a W-item — it is Part A's
+  **W-26** (31), **W-21 (part 2)** (33) and **W-27** (34). **Tranche 32 is not a W-item — it is Part A's
   bookkeeping:** it commits tranche 31's ledger (`44e4022`), gathers the five owner questions
   into the queue's §5, and says in two guides how a member leaves today. **Open: W-07 through
-  W-20, W-27 through W-32 and W-37** — W-27 is next, and W-37 waits on W-28, which explains
+  W-20, W-28 through W-32 and W-37** — W-28 is next, and W-37 waits on W-28, which explains
   its consequence where a new owner meets it. **W-21 owes one thing still: the 100-account
   reference fixture definition** (`F-T`), which needs the owner's approval of the
   one-million-message / 20-GiB targets before it can be written; it is recorded in the queue.
@@ -3360,3 +3360,76 @@ the retained-data targets — one million messages and 20 GiB are proposed in th
 ratified — before a fixture can be defined against them, and the Makefile's fixture default
 is still 250 accounts (`planning/v1-release-execution-plan-2026-10-03.md:363,372`). It stays
 recorded in the queue rather than guessed at.
+
+## Tranche 34 — W-27: a member can change their own name and colour
+
+Source commit before: `f255695` (tree clean). Source: `f66ad04`. **Low risk; adds one route
+and one panel.** No schema change.
+
+### 34a. What was wrong
+
+`display_name` and `avatar_color` had exactly one writer: `PATCH /api/admin/users/{id}`
+(`internal/api/admin.go:205-389`), behind `authz.MemberManage`. The route table had no
+`PATCH` or `PUT` on `/api/me` (`internal/api/router.go:329-339` before this tranche), so a
+member with a typo in their own name had to ask an administrator to fix it. The two fields
+are the ones that route treats as *content* rather than authority: an administrator sets
+them for somebody else and holds no decision the member is not entitled to make about
+themselves.
+
+### 34b. The change
+
+- `PATCH /api/me` (`internal/api/auth.go:190-277`) takes `display_name` and `avatar_color`,
+and nothing else. `decode` refuses unknown fields (`router.go:563-580`), so there is no id to
+point at another account. The rules are the administrator route's own: the 80-byte bound and
+`avatarColorPattern` (`admin.go:23`).
+- It reads the account inside the committing transaction (`s.store.Account`) and refuses a
+deleted account (`409`) or a deactivated or banned one (`403`) before the write — the same
+shape as `admin.go:250-262`, and the reason is the same: a deactivation that commits while
+the request is in flight must stop the rename, not race it.
+- `authorizeInTx` re-establishes the session inside the transaction, as `changePassword`
+does.
+- The change is audited as `user.updated` with the member as the actor, the same action the
+administrator route records, and `user.updated` is broadcast after the commit — the event
+the client's workspace already refreshes on (`web/src/lib/workspace.svelte.ts:2213-2221`).
+- The route declares `BeyondCommunity`: a moderation timeout suspends participation, and a
+member's own name is theirs throughout (`internal/api/router.go:330-334`).
+- **Interface:** `Preferences.svelte` gains a **Profile** section (name, and the six palette
+colours drawn through `avatarStyle`, so the swatches are the actual contrast rule rather than
+something that looks like it); `MemberProfile.svelte` gains **Edit profile** on the member's
+own profile, which opens that section. `AVATAR_PALETTE` is exported from `avatar-ink.ts` and
+carries the note that it mirrors `admin.go:134`.
+
+### 34c. Tests written, not run
+
+`internal/api/profile_test.go` (new): `TestAMemberChangesTheirOwnDisplayNameAndAvatarColor`
+(the accepted case — trimmed name, colour, reads back on `/api/me`, visible in another
+member's `/api/state` snapshot, and no authority field moved),
+`TestARenameRefusesExactlyWhatTheAdministratorRouteRefuses` (81 bytes, a colour that is not
+six-digit hex, a body naming an `id`, an empty change that moves nothing, and an empty name
+that means "show my handle"), `TestARenameLeavesEveryOtherAccountAlone`,
+`TestADeactivatedAccountCannotRenameItself` (the route's answer to the old cookie, and the
+in-transaction branch called directly because a deactivated account has no session left with
+which to reach it), and `TestARenameAnnouncesItselfOnTheAccountSocket` (a real socket, which
+is what `evidenceNames` cannot prove from a policy).
+`web/tests/avatar-ink.test.mjs` gains "the colours a member chooses from all clear the
+minimum" — the offered palette, each entry a real unique hex at 4.5:1 or better. Frontend
+test count 366 → 367; nothing else changed.
+
+### 34d. The route inventory
+
+Regenerated with the two named tests: 132 → **133** routes, one new row
+(`outsider_denied_by: self`). `planning/security-review-bundle.md`'s route figure follows it.
+
+### 34e. Static gates
+
+The `-update-negative-matrix` run of the two route tests is the only test executed, as
+section 6 allows for a new route: exit 0 in 0.7 s. `$GO build ./...` and `$GO vet ./...`
+clean; `svelte-check` 0 errors, 0 warnings; prettier clean; `make check` exit **0** with both
+new audits in the chain.
+
+### 34f. What the verification pass must run
+
+`$GO test ./internal/api/ -count=1` — the API package, which is where the five new tests
+live — and `npm --prefix web test`, where the only expected change is 366 → 367. The browser suites do not touch this route; if a journey is added later that does,
+it belongs in the queue beside this tranche. The socket test is the one to watch: it is the
+only place the delivered event is checked.
