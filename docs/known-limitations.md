@@ -60,6 +60,17 @@ statement, and nothing here has been measured above it.
   conversations are implemented and enforced, and their defaults stay off until the
   independent reviews are entered and their P1 findings fixed. That switch is the owner's.
 
+## Leaving a community
+
+- **A member can take their data but cannot remove their own account.** **Your data export**
+  (the download control beside the member's own name) produces an archive of the
+  conversations they can read, their own account details and their own messages, gated on a
+  recent strong sign-in. Removing an account is an administrator's action only — **Manage
+  server → People** offers deactivation, remove-account-keep-messages and
+  erase-account-and-messages — so a member who wants to leave asks an operator. Whether v1
+  adds a self-service departure is an open question for the owner
+  (`planning/verification-queue.md` §5).
+
 ## Backups and recovery
 
 - **Backups are not encrypted.** The archive includes private push keys. Storing one

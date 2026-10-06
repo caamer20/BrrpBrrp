@@ -36,6 +36,8 @@ In **Manage server → People**, deactivation is the reversible way to stop acce
 
 Retained posts or files can still contain identifying information. Report evidence and existing backups follow their own retention rules. See the [account policy](adr/0011-account-removal-and-retained-evidence.md) and [administrator guide](admin.md) before making a permanent choice.
 
+**A member cannot remove their own account.** There is no self-service departure: every one of the controls above is an administrator's, so a member who wants to leave asks an operator. Before asking, **Your data export** — the download control beside your name — produces an archive of the conversations you can read, your own account details and your own messages, and it asks for a recent sign-in. Whether v1 adds a way for a member to leave on their own is an open question for the project owner, not a hidden setting.
+
 ## Retry microphone access
 
 If the browser cannot finish opening your microphone within 30 seconds, the app stops waiting and offers **Retry voice**. Check the site's microphone permission and chosen input device, then retry. The microphone test also reports a timeout. Leaving or cancelling while permission is pending stops any stream that arrives later, so it cannot unexpectedly keep recording. A successful synthetic transport test does not confirm the microphone or audible quality on your device.
