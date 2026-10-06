@@ -7,10 +7,10 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 29** (`437082e`). **Closed: W-01 through W-06, W-21 (part 1),
-  W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** in tranche 29.
-  **Open: W-07 through W-20, W-25 through W-32 and W-37** — W-25 is next, and W-37 waits on
-  W-28, which explains its consequence where a new owner meets it.
+- **Branch head after tranche 30** (`6f481ea`). **Closed: W-01 through W-06, W-21 (part 1),
+  W-22, W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (tranche 29) and
+  **W-25** (tranche 30). **Open: W-07 through W-20, W-26 through W-32 and W-37** — W-26 is
+  next, and W-37 waits on W-28, which explains its consequence where a new owner meets it.
 - **The two independent-review product P1s — the quota race (F-01) and the thread deep-link
   defect (F-02) — are fixed **and** carry regressions that fail without the fix (the quota
   one proven against a pre-fix overlay; the deep-link one a rendered journey). `make check`,
@@ -3068,3 +3068,78 @@ container, or prove that `docker compose` accepts the file. It also deliberately
 check the reverse direction — a Compose variable the server never reads — because
 `BRRP_BIND_IP`, `BRRP_WEB_PORT`, `BRRP_MEDIA_BIND_IP`, `BRRP_TURN_PORT` and
 `BRRP_BACKUP_HOST_DIR` are `docker compose`'s own, and flagging them would be noise.
+
+## Tranche 30 — W-25: the relay's TCP and TLS fallbacks are reachable in Docker
+
+Source commit before: `437082e` (tree clean). Source: `6f481ea`. **Low risk; packaging and
+words, one interface sentence.**
+
+### 30a. What was wrong
+
+`internal/rtc/turn.go` has offered plain-TCP and TLS listeners since ADR 0019 §7
+(`ConfigureWithFallback`, and the `turn:`/`turns:` URLs `Credentials()` hands ICE), and
+`internal/api/router.go:595` brings them up from the stored settings. Three documents still
+described the older relay:
+
+- `compose.turn.yaml` published only the UDP port and the UDP relay range, so on the Linux
+  Docker deployment — one of the two required — a switched-on fallback listened inside the
+  container on a port nothing could reach.
+- `docs/docker.md` said "The built-in TURN service supports UDP only."
+- `docs/admin.md:85` said "this release does not offer TURN over TCP/TLS", and `:83`
+  introduced the relay as UDP.
+- `docs/security.md:29` said the relay "supports IPv4/UDP, not TCP/TLS", and its firewall
+  table listed only the two UDP rows — which is also the native-install firewall guidance,
+  because `docs/deployment.md:79` points at that table rather than repeating it.
+- `docs/hosting.md`'s voice table and `docs/acceptance.md`'s still-open production sign-off
+  checklist ("This release's TURN is UDP-only") carried the same claim.
+
+### 30b. The change, and the finding that shaped it
+
+`compose.turn.yaml` now publishes the two fallbacks as `BRRP_TURN_TCP_PORT` (default 3479)
+and `BRRP_TURN_TLS_PORT` (default 3480), on the same pattern as the existing UDP mapping.
+
+**The finding:** the fallback *ports* are not settings an operator can edit. The fields exist
+in the schema (`turn_tls_port` — the misnamed plain-TCP port — and `turn_tls_listener_port`)
+and are validated by the settings route, but `web/src/lib/types.ts` does not carry either and
+`web/src/lib/components/admin/Settings.svelte` has no control for one. What the interface
+offers is the UDP port (`turn_port`, labelled "TURN UDP port") and the two booleans, labelled
+**Plain TCP fallback** and **TLS fallback**. So the server's automatic choice is the only
+practical one — `TURNTCPPort()` is the UDP port + 1, the TLS listener is the UDP port + 2 —
+and the documents now say that instead of telling an operator to set a port they cannot set.
+That also makes the Docker rule simple: the three published ports move together with the
+UDP port.
+
+Beyond the claims: `Settings.svelte`'s guidance line named only UDP 49152–49999, so it now
+names the extra TCP port each fallback needs. `docs/security.md`'s firewall table gained the
+two TCP rows, which is what corrects the native-install guidance. In the same paragraph, a
+second false statement was corrected while it was open: it claimed public STUN
+(`stun.l.google.com:19302`) is used for address discovery, where `DefaultSettings()` leaves
+`STUNServer` empty and the field's own comment says a hardcoded third-party server is
+deliberately avoided.
+
+### 30c. Tests
+
+None. No Go file and no route changed; the only non-document change is one sentence of
+administrator guidance. Nothing here is a behaviour a test could assert without a container
+and a second network.
+
+### 30d. What the verification pass must run, and what is not claimed
+
+- `make check` exit 0 (already run: `svelte-check` re-checked the changed component, the
+  documentation-link and source-package audits re-ran).
+- On a Docker host, `make docker-check` (owed anyway) proves Compose accepts the four port
+  mappings. Then a real check nothing on this machine can make: start with
+  `-f compose.yaml -f compose.turn.yaml`, switch on **Plain TCP fallback**, connect one client
+  from a network that blocks UDP, and confirm the call is carried and the log says
+  `relayed: true`.
+- Not claimed: no image was built, no container was started, and `docker compose` never
+  parsed these files here. The claim is narrow — the ports are published, and the documents
+  match the code.
+
+### 30e. Recorded for the owner, not changed
+
+Two smaller things this reading exposed and left alone: the JSON key `turn_tls_port` means
+the *plain-TCP* port (the code comments say so; renaming it would silently reset an existing
+installation's port), and the two fallback ports have no interface control even though the
+settings route validates them. Neither is a defect an operator meets today — the automatic
+choice is the sensible one — so both are recorded here rather than fixed in this tranche.

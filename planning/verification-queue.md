@@ -187,6 +187,24 @@ was not.*
   check there: set `BRRP_MAX_UPLOAD_BYTES` and `BRRP_STORAGE_QUOTA_BYTES` in `.env.docker`,
   start the container, and confirm both take effect in **Manage server → Settings**.
 
+### W-25 — the relay's TCP and TLS fallbacks are reachable in Docker (`6f481ea`)
+
+- **Changed:** `compose.turn.yaml` (two TCP mappings with named variables), `.env.docker.example`
+  (the two variables), `docs/docker.md`, `docs/admin.md`, `docs/security.md`, `docs/hosting.md`,
+  `docs/acceptance.md`, and one guidance sentence in
+  `web/src/lib/components/admin/Settings.svelte`. **No Go file, no route, no behaviour.**
+- **Tests written:** none, and none is the right shape: this needs a container and a second
+  network. `make check` is the whole static gate, and it is already exit 0.
+- **Must be confirmed by:** on a Docker host, `make docker-check`, then a manual run with
+  `docker compose --env-file .env.docker -f compose.yaml -f compose.turn.yaml up -d --build`,
+  **Plain TCP fallback** switched on in Manage server → Settings, one client whose network
+  blocks UDP, and the log line `voice path established … relayed: true`. Repeat with **TLS
+  fallback** and the certificate readable in the container.
+- **Read, not run — the one thing to check in the docs:** the two fallback *ports* are not
+  interface settings (the fields are in the schema but no control exists), so the app always
+  takes the UDP port + 1 and + 2. If a future change adds controls for them, `docs/docker.md`
+  and `docs/admin.md` say the ports "follow the UDP port" and would need updating with it.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.
