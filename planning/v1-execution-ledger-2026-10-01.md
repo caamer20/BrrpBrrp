@@ -2506,3 +2506,64 @@ blocking implementation.
   decision recorded here, not made silently.
 - Host-side external outage probing is not part of this tranche; it belongs with the
   host/external tooling in V1-14 and the operator guide.
+
+## Tranche 19 — W-04: metrics that say what they measure
+
+Source commit before: `64ff32b`. Source commit: `334fe38`. This closes W-04 (F-12).
+
+### 19a. Failing behaviour
+
+- `go_gc_pause_ns_max` held `PauseNs[(NumGC+255)%256]` — the *latest* pause under a
+  maximum's name.
+- Every scrape called `directorySize` over the upload and backup trees, so the request
+  cost grew with the installation.
+- `metrics.ProcessUsage` returned `ok=false` on Windows, leaving Go heap as the only
+  memory figure a Windows operator could see.
+
+### 19b. Fix
+
+- `internal/api/metrics_handler.go`: `go_gc_pause_ns_latest` and
+  `go_gc_pause_ns_max_last_256` replace the misnamed field; `gcPauseMax` computes a
+  defined-window maximum over the ring entries a collection actually wrote.
+  `storageMeasurement` plus `measureStorageFootprint` and `storageSizesWorker` (bounded
+  five-minute cadence, started in `New`) measure the two trees once; the scrape reports
+  `uploads_bytes`/`backups_bytes` with `measured_at`, `age_seconds` and
+  `measurement_error`, and `measured: false` before the first measurement rather than a
+  zero that looks like an empty installation.
+- `internal/api/maintenance.go`: `directorySizeErr` returns the walk's error; the live
+  `directorySize` sums the same way for callers that want a current figure (the backup
+  sizing path keeps a live walk, because the disk guard must not act on a cached number).
+- `internal/metrics/process_windows.go`: real Windows counters — working set through
+  `GetProcessMemoryInfo` (psapi) and CPU through `GetProcessTimes`.
+
+### 19c. Measurement
+
+`BRRP_METRICS_SCAN_LOAD=1 go test ./internal/api -run TestStorageScanCostMeasurement`:
+20,000 files in 8 subdirectories, 20,480,000 bytes; first walk **129.1 ms**, warmed walk
+**124.2 ms (6.2 µs/file)**. Projection, stated as a projection: ~**1.24 s** at 200,000
+files — which is why the scrape reads a cached measurement rather than walking.
+
+### 19d. Tests
+
+`TestTheMetricsScrapeDoesNotWalkTheStorageTrees` (a file added between scrapes is not
+counted until an explicit measurement; the age and time are present);
+`TestTheGCPauseFiguresNameTheirWindow` (the misnamed field is absent, both new fields are
+present, and the window maximum contains the latest pause); `TestGCPauseMaxIsTheMaximum
+OverThePausesThatHappened` (only written slots count).
+
+### 19e. Commands and results
+
+- `make check`: **exit 0**.
+- `go test ./internal/api ./internal/app ./internal/metrics -count=1`: **ok (217.7 s,
+  1.7 s, 0.4 s)**.
+- `GOOS=windows GOARCH=amd64|arm64 go vet ./internal/metrics`: clean.
+
+### 19f. What it does not prove
+
+- The Windows counters are compiled, not executed: no Windows host here. Reading them is
+  host qualification.
+- The scan measurement is on this host and filesystem; the target population is a
+  projection from 20,000 files, not a measurement at 200,000.
+- `diagnostics.go` and the admin overview still take a live `directorySize`; they are
+  explicit operator actions rather than a periodic scrape, and the metrics endpoint is
+  the surface F-12 named.
