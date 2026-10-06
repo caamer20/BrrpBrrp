@@ -3,7 +3,7 @@ GO ?= go
 # otherwise: a formatting gate that silently checks nothing because the binary was not
 # found is worse than no gate at all.
 GOFMT ?= $(or $(wildcard $(dir $(GO))gofmt),gofmt)
-.PHONY: build web test check browser-check browser-steps dev release format docker docker-check notices rehearsal rollback-rehearsal docker-inputs source-package
+.PHONY: build web test check browser-check browser-steps dev release format docker docker-check notices rehearsal rollback-rehearsal docker-inputs compose-env source-package
 web:
 	cd web && npm ci && npm run build
 build: web
@@ -37,6 +37,8 @@ check: web
 	node scripts/check-schema-docs.mjs
 	node scripts/check-docker-inputs.mjs --self-test
 	node scripts/check-docker-inputs.mjs
+	node scripts/check-compose-env.mjs --self-test
+	node scripts/check-compose-env.mjs
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
 	node scripts/check-browser-steps.mjs --self-test
 	node scripts/check-browser-steps.mjs
@@ -50,6 +52,9 @@ browser-steps:
 docker-inputs:
 	node scripts/check-docker-inputs.mjs --self-test
 	node scripts/check-docker-inputs.mjs
+compose-env:
+	node scripts/check-compose-env.mjs --self-test
+	node scripts/check-compose-env.mjs
 source-package:
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
 notices:

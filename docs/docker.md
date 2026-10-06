@@ -43,6 +43,30 @@ See [certificate trust](security.md#https-choices) for context. Keep private key
 
 The container runs `serve` directly. Docker manages its lifecycle; there is no service-installation wizard inside the container. Only one running container may use a given BrrpBrrp data volume.
 
+## Settings you can pass in `.env.docker`
+
+`compose.yaml` passes a fixed list of variables into the container. These are the operator's settings; each has a built-in default, so leaving a line blank is the same as not setting it.
+
+| Variable | What it changes |
+| --- | --- |
+| `BRRP_BASE_URL` | the address people open, and the address the server prints |
+| `BRRP_BIND_IP`, `BRRP_WEB_PORT` | where the web port is published on the host |
+| `BRRP_TLS_MODE`, `BRRP_DOMAIN`, `BRRP_ACME_EMAIL` | how HTTPS is obtained |
+| `BRRP_CERT_FILE`, `BRRP_KEY_FILE` | certificate paths inside the data volume |
+| `BRRP_BEHIND_PROXY`, `BRRP_TRUSTED_PROXIES` | behind a reverse proxy, and which sources may set the client address |
+| `BRRP_VOICE_EXTERNAL_IP`, `BRRP_MEDIA_BIND_IP` | the address clients reach for media, and the host interface the UDP ports bind to |
+| `BRRP_LOG_LEVEL` | log verbosity |
+| `BRRP_ENABLE_RESTRICTED_CHANNELS`, `BRRP_ENABLE_PRIVATE_CONVERSATIONS` | the two feature gates, off until the owner flips them |
+| `BRRP_LOGIN_ATTEMPTS` | the sign-in failure budget for one client address |
+| `BRRP_MAX_UPLOAD_BYTES` | the largest accepted upload |
+| `BRRP_STORAGE_QUOTA_BYTES`, `BRRP_STORAGE_RESERVE_BYTES` | the storage ceiling and the free-space floor |
+| `BRRP_SQLITE_SYNCHRONOUS` | SQLite durability |
+| `BRRP_ALERT_WEBHOOK`, `BRRP_ALERT_SECRET` | where operator alerts are delivered |
+| `BRRP_BACKUP_HOST_DIR` | the host directory for backup copies (`compose.backup.yaml`) |
+| `BRRP_TURN_PORT` | the published TURN port (`compose.turn.yaml`) |
+
+A setting written for a key this file does not pass would do nothing at all — no error, no log line, just a feature that stays off. `node scripts/check-compose-env.mjs`, part of `make check`, exists so that cannot happen: it reads the `BRRP_*` keys out of the Go source and fails when one is neither passed by a Compose file nor listed in the script as deliberately fixed. The four deliberate ones are the database, upload, setup-token and log paths, which stay under `/data` and the container's own logging driver.
+
 ## Storage and permissions
 
 The named volume `brrpbrrp_brrpbrrp-data` mounts at `/data` under the default Compose project name. It contains SQLite, uploads, certificates, push configuration, generated previews and backups. It survives ordinary `docker compose down` and container replacement. **`docker compose down --volumes` deletes that volume and its data.** Changing the Compose project name selects a different volume.

@@ -30,6 +30,19 @@ services:
       BRRP_VOICE_PORT_MIN: "50000"
       BRRP_VOICE_PORT_MAX: "50100"
       BRRP_ENABLE_PRIVATE_CONVERSATIONS: ${BRRP_ENABLE_PRIVATE_CONVERSATIONS:-false}
+      # An unset variable and an empty one mean the same thing to the server: an empty
+      # value falls back to the built-in default. Passing each as ${NAME:-} therefore
+      # preserves today's behaviour for an operator who sets nothing, while making a key
+      # written into .env.docker actually take effect. scripts/check-compose-env.mjs keeps
+      # this list complete against the keys the server reads.
+      BRRP_ENABLE_RESTRICTED_CHANNELS: ${BRRP_ENABLE_RESTRICTED_CHANNELS:-}
+      BRRP_LOGIN_ATTEMPTS: ${BRRP_LOGIN_ATTEMPTS:-}
+      BRRP_MAX_UPLOAD_BYTES: ${BRRP_MAX_UPLOAD_BYTES:-}
+      BRRP_STORAGE_QUOTA_BYTES: ${BRRP_STORAGE_QUOTA_BYTES:-}
+      BRRP_STORAGE_RESERVE_BYTES: ${BRRP_STORAGE_RESERVE_BYTES:-}
+      BRRP_SQLITE_SYNCHRONOUS: ${BRRP_SQLITE_SYNCHRONOUS:-}
+      BRRP_ALERT_WEBHOOK: ${BRRP_ALERT_WEBHOOK:-}
+      BRRP_ALERT_SECRET: ${BRRP_ALERT_SECRET:-}
       BRRP_LOG_LEVEL: ${BRRP_LOG_LEVEL:-info}
     ports:
       - "${BRRP_BIND_IP:-127.0.0.1}:${BRRP_WEB_PORT:-8082}:8082/tcp"
