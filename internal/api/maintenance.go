@@ -235,14 +235,29 @@ func fileSize(path string) int64 {
 	return 0
 }
 func directorySize(path string) int64 {
+	size, _ := directorySizeErr(path)
+	return size
+}
+
+// directorySizeErr walks a directory tree and reports its total file size, returning the
+// first error it met. The error matters for a cached measurement: a walk that could not
+// read a directory reports a number that is too small, and a caller that cannot tell must
+// not present it as the truth.
+func directorySizeErr(path string) (int64, error) {
 	var size int64
-	_ = filepath.WalkDir(path, func(path string, entry fs.DirEntry, err error) error {
-		if err == nil && !entry.IsDir() {
-			size += fileSize(path)
+	err := filepath.WalkDir(path, func(entry string, item fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !item.IsDir() {
+			size += fileSize(entry)
 		}
 		return nil
 	})
-	return size
+	if err != nil {
+		return size, err
+	}
+	return size, nil
 }
 
 // reclaimUploadFiles removes the files behind attachments that no longer have a row.

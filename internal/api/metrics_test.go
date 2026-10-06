@@ -3,6 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -206,4 +209,89 @@ func routeClasses(t *testing.T, body map[string]any, pattern string) map[string]
 		return out
 	}
 	return map[string]float64{}
+}
+
+// TestTheMetricsScrapeDoesNotWalkTheStorageTrees pins the F-12 fix: a scrape reads the
+// last measurement rather than paying for a recursive walk whose cost grows with the
+// installation, and the measurement's age travels with the figure.
+func TestTheMetricsScrapeDoesNotWalkTheStorageTrees(t *testing.T) {
+	s, handler := testServer(t)
+	admin := setupAdmin(t, s, handler)
+
+	body := metricsBody(t, handler, admin)
+	storage, _ := body["storage"].(map[string]any)
+	if storage == nil || storage["measured"] != true {
+		t.Fatalf("the startup measurement did not run: %+v", storage)
+	}
+	if _, ok := storage["measured_at"]; !ok {
+		t.Fatalf("the storage figure carries no measurement time: %+v", storage)
+	}
+	if age, ok := storage["age_seconds"].(float64); !ok || age < 0 {
+		t.Fatalf("the storage figure carries no usable age: %+v", storage["age_seconds"])
+	}
+
+	// A file appears in the uploads tree. A scrape that walked would report it at once;
+	// one that reads the measurement must not.
+	if err := os.WriteFile(filepath.Join(s.config.UploadDir, "later.bin"), make([]byte, 8192), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body = metricsBody(t, handler, admin)
+	storage, _ = body["storage"].(map[string]any)
+	if got, _ := storage["uploads_bytes"].(float64); got != 0 {
+		t.Fatalf("the scrape walked the upload tree: uploads_bytes=%v", got)
+	}
+
+	// An explicit measurement sees it, so the cached figure is the walk's answer and not
+	// a number that is simply never computed.
+	s.measureStorageFootprint()
+	body = metricsBody(t, handler, admin)
+	storage, _ = body["storage"].(map[string]any)
+	if got, _ := storage["uploads_bytes"].(float64); got < 8192 {
+		t.Fatalf("a fresh measurement did not see the file: uploads_bytes=%v", got)
+	}
+}
+
+// TestTheGCPauseFiguresNameTheirWindow pins the F-12 fix for the misnamed pause metric:
+// the field that reported the latest pause under a maximum's name is gone, and both
+// replacement fields say which window they cover.
+func TestTheGCPauseFiguresNameTheirWindow(t *testing.T) {
+	s, handler := testServer(t)
+	admin := setupAdmin(t, s, handler)
+	process := metricsBody(t, handler, admin)["process"].(map[string]any)
+	if _, present := process["go_gc_pause_ns_max"]; present {
+		t.Fatal("go_gc_pause_ns_max is still reported, and it holds the latest pause rather than a maximum")
+	}
+	latest, ok := process["go_gc_pause_ns_latest"].(float64)
+	if !ok {
+		t.Fatalf("the latest pause is not reported: %+v", process)
+	}
+	largest, ok := process["go_gc_pause_ns_max_last_256"].(float64)
+	if !ok {
+		t.Fatalf("the defined-window maximum is not reported: %+v", process)
+	}
+	if largest < latest {
+		t.Fatalf("the window maximum (%v) is below the latest pause (%v) it must contain", largest, latest)
+	}
+}
+
+func TestGCPauseMaxIsTheMaximumOverThePausesThatHappened(t *testing.T) {
+	var memory runtime.MemStats
+	memory.PauseNs[0], memory.PauseNs[1], memory.PauseNs[2] = 10, 300, 20
+	memory.NumGC = 3
+	if got := gcPauseMax(&memory); got != 300 {
+		t.Fatalf("a maximum over three pauses is %d, want 300", got)
+	}
+	// Only the slots a collection actually wrote count: a process with two collections
+	// must not report a stale value from a slot it never used.
+	memory.NumGC = 2
+	if got := gcPauseMax(&memory); got != 300 {
+		t.Fatalf("a maximum over two pauses is %d, want 300", got)
+	}
+	memory.NumGC = 1
+	if got := gcPauseMax(&memory); got != 10 {
+		t.Fatalf("a maximum over one pause is %d, want 10", got)
+	}
+	if got := gcPauseMax(&runtime.MemStats{}); got != 0 {
+		t.Fatalf("a process with no collections reports %d pauses", got)
+	}
 }

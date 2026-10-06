@@ -173,11 +173,18 @@ type Server struct {
 	// backoff.
 	alertDeliveryAttempts int
 	alertDeliveryBackoff  time.Duration
-	settingsMu            sync.RWMutex
-	settings              db.Settings
-	passwordSlots         chan struct{}
-	thumbnailSlots        chan struct{}
-	limiter               *rateLimiter
+	// storageMu guards storageFootprint, the last measured on-disk size of the trees an
+	// operator watches. A metrics scrape reads the measurement rather than walking the
+	// trees itself: the walk's cost grows with the installation, and a scrape every
+	// fifteen seconds must not pay it. The measurement carries its own time so a stale
+	// figure is visibly stale.
+	storageMu        sync.Mutex
+	storageFootprint storageMeasurement
+	settingsMu       sync.RWMutex
+	settings         db.Settings
+	passwordSlots    chan struct{}
+	thumbnailSlots   chan struct{}
+	limiter          *rateLimiter
 }
 
 func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) {
@@ -273,6 +280,10 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 	go s.alertDeliveryWorker()
 	s.workers.Add(1)
 	go s.alertWorker()
+	// The storage measurement walks two trees; it runs on its own worker so no request
+	// ever pays for it and no scrape is ever slower than the last one.
+	s.workers.Add(1)
+	go s.storageSizesWorker()
 	// One pass at startup, before the hourly one. A `building` export row is the only
 	// thing blocking that account from asking again, so a job interrupted by the
 	// restart that just happened would otherwise answer "an export is already being

@@ -219,6 +219,24 @@ sizes and the backup job's status. It deliberately does not count messages: a me
 endpoint that runs a table count every fifteen seconds costs more than it reports. Nothing
 in it is message content, a member name or a conversation identifier.
 
+Every figure names what it measures, because a metric whose name and value disagree is
+worse than no metric:
+
+- **GC pauses** are reported as `go_gc_pause_ns_latest` (the most recent pause) and
+  `go_gc_pause_ns_max_last_256` (the largest pause inside the runtime's 256-pause ring,
+  over the pauses that have actually happened). There is no `go_gc_pause_ns_max`; that
+  field used to hold the latest pause under a maximum's name.
+- **Storage sizes** (`uploads_bytes`, `backups_bytes`) come from a measurement taken by a
+  background worker every five minutes, not from a walk on the request. The value carries
+  `measured_at` and `age_seconds`, so a stale figure is visibly stale, and
+  `measurement_error` when the walk could not read a directory. A recursive walk is not
+  free at scale — 20,000 small files measured 124 ms on the development host — and a
+  scrape every fifteen seconds must not pay it.
+- **Process counters** (`resident_bytes`, `cpu_seconds`) are the operating system's own
+  figures on Linux, macOS and Windows. `reported: false` means the platform could not
+  supply them; the Go heap figures beside them are named `go_heap_bytes` and `go_sys_bytes`
+  and are not the process's resident set.
+
 `make probe BASE=https://chat.example.com` (add `COOKIE='brrp_session=…'` for the
 authenticated checks) asks the deployment from outside, over the network, the way a
 member's browser does: setup status, the shell, one of the assets the shell names, the
