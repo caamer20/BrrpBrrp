@@ -29,16 +29,28 @@ evidence about the binary, not about the deployment.
 
 ### 1.1 Install from the actual archive
 
+`<version>` below is the release under qualification — the beta bytes, not a build from a
+checkout; the point is the bytes people get. Its archive checksums are in the release's
+`SHA256SUMS`.
+
+Two hashes are involved and they are **not interchangeable**: the release publishes a
+SHA-256 for the **archive**, and an archive checksum is not the checksum of the executable
+inside it. Hash the archive first, and hash the executable only against a digest of the
+executable that was recorded separately.
+
 ```powershell
-# Download the released archive and verify its published hash before extracting.
-# Do not use an executable built in a checkout: the point is the bytes people get.
-Expand-Archive .\brrpbrrp-0.4.0-alpha.8-windows-amd64.zip -DestinationPath .\extract
+# 1. Hash the ARCHIVE and compare it with the archive's line in SHA256SUMS. Before
+#    extracting. A mismatch is a stop.
+Get-FileHash .\brrpbrrp-<version>-windows-amd64.zip -Algorithm SHA256
+# 2. Extract, then hash the executable. Compare it only with a separate executable digest
+#    recorded at build time, never with the archive's checksum.
+Expand-Archive .\brrpbrrp-<version>-windows-amd64.zip -DestinationPath .\extract
 Get-FileHash .\extract\brrpbrrp.exe -Algorithm SHA256
-# Compare against the release's published SHA256. Record both.
 ```
 
-Record: archive URL, published SHA-256, computed SHA-256, and whether they match. A
-mismatch is a stop, not a note.
+Record: the archive URL; the published **archive** SHA-256 and the computed archive
+SHA-256, and whether they match; and, if a separate executable digest exists, the computed
+executable SHA-256 and that digest. A mismatch of either is a stop, not a note.
 
 ### 1.2 Install the service
 
@@ -75,12 +87,32 @@ Start-Sleep -Seconds 20
 Get-Service BrrpBrrp | Format-List Name, Status
 ```
 
-### 1.4 LocalService and data ACLs
+### 1.4 The service account and the data-folder ACLs
 
-LocalService must be able to read the executable, write the data folder, and **nothing
-else**. Confirm by attempting, as LocalService, to write outside the data folder. A
-service that can write anywhere on the volume is not the configuration this project
-ships.
+The service runs as **`NT AUTHORITY\LocalService`** (`cmd/brrpbrrp/platform_windows.go`,
+`ServiceStartName`), a built-in low-privilege account. That is not a sandbox, and this
+procedure should not pretend it is: like any process running under that account, the server
+can read much of the volume and write to locations the operating system provides it — its
+own profile and `%TEMP%` among them. A claim that LocalService "writes nowhere outside the
+data folder" would be false and would test nothing.
+
+The narrower claim is checkable, and it is what the installer actually does.
+`scripts/windows/install.ps1` (and `internal/installer/platform_windows.go`) removes
+inherited permissions from `%ProgramData%\BrrpBrrp` and grants exactly three well-known
+SIDs — Administrators full, SYSTEM full, LocalService modify. It adds no ACE on any path
+outside the data folder, and it does not touch `%ProgramFiles%\BrrpBrrp`, so the executable
+stays readable through the standard install-directory permissions.
+
+Observe and record:
+
+- the data folder's ACL is exactly those three entries, with inheritance removed
+  (`icacls $env:ProgramData\BrrpBrrp`);
+- LocalService can read the executable and write its data folder — the rights the
+  application needs;
+- the installer added no ACE outside the data folder;
+- the application's security boundary is the one the operating system gives the
+  LocalService account. A future release that needs the service to write outside the data
+  folder would fail here, which is the point of the step.
 
 ### 1.5 HTTPS and Tailscale
 
@@ -126,7 +158,9 @@ test matrix.
 ### 2.1 Build and run the actual image
 
 ```sh
-docker build -t brrpbrrp:0.4.0-alpha.8 .
+# <version> is the release under qualification; build the bytes that ship, not a
+# checkout.
+docker build -t brrpbrrp:<version> .
 docker compose up -d
 docker compose ps
 docker compose logs --tail 100
@@ -229,7 +263,7 @@ One JSON file per run, under `planning/m5-checkpoint/`. Record, for each procedu
   "procedure": "windows-service-install",
   "host": { "os": "Windows Server 2022", "build": "20348", "arch": "x86_64" },
   "source_commit": "<40 hex>",
-  "artifact": { "name": "brrpbrrp-0.4.0-alpha.8-windows-amd64.zip", "sha256": "<hex>" },
+  "artifact": { "name": "brrpbrrp-<version>-windows-amd64.zip", "sha256": "<the archive's hex, not the executable's>" },
   "commands": ["<exact command>", "..."],
   "observed": "<what was actually seen, with values>",
   "result": "pass | fail | blocked",
