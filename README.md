@@ -1,6 +1,6 @@
 # BrrpBrrp
 
-A small, self-hosted place for 10–20 people to talk. One native Go binary serves the entire app, with SQLite storage and no separate database service or hosted account system. Run it directly on Linux, Windows or macOS, or use the included Docker setup.
+A small, self-hosted place for up to 100 people to talk. One native Go binary serves the entire app, with SQLite storage and no separate database service or hosted account system. Run it directly on Linux, Windows or macOS, or use the included Docker setup.
 
 Text channels, persistent messages, replies, pins, file sharing, reactions, mentions, full-text search and Opus voice are included. Administrators invite members, protect accounts with an authenticator, moderate conversations and schedule backups. Roles carry delegation: create a role below your own, grant only capabilities you already hold, and assign it per account. Channels live in ordered categories and can be restricted to named roles or accounts, with an inspector that answers "who can access this?" using the server's own rule; restricted channels and announcement posting stay switched off at the API until the privacy gate passes. The interface has light, dark and system themes, a phone layout, private media previews and an installable PWA shell.
 
@@ -137,8 +137,9 @@ over IPv4 and uses the embedded TURN relay only — no external relay is support
 network that blocks UDP and cannot reach that relay over TCP/TLS is a documented,
 unsupported case. Live and reversibly
 deactivated accounts are limited to 100 (permanently removed history identities do not
-consume a slot), channels to 100, pins to 100 per channel and voice to 10 simultaneous
-participants across the server. Uploads have a hard 12 MB cap. Messages are kept
+consume a slot), channels to 100, pins to 100 per channel, and voice to 20 simultaneous
+participants across the server and 10 in one room. Those are implementation boundaries
+rather than measured capacities. Uploads have a hard 12 MB cap. Messages are kept
 indefinitely unless an administrator enables retention or deletes them. The app does not
 provide end-to-end encryption; the server operator controls…
 

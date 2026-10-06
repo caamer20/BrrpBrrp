@@ -51,7 +51,7 @@ transport and external relays are candidates for a later release, not commitment
 | Restrictive NAT routes through TURN; document any UDP-blocked network that remains unsupported (**embedded relay only, IPv4 media** — record which networks it traverses) | Pending | Pending |
 | Push mention arrives and opens the right message after app close; iOS Home Screen, denial, disable and shared-device sign-out checked | Pending | Pending |
 | PWA installs, opens a reconnect screen offline, recovers online and handles an app update without losing a draft | Pending | Pending |
-| A 10–20-user session with up to 10 voice users stays stable; record server RSS, CPU, UDP bandwidth, database growth, free disk and user-visible latency | Pending | Pending |
+| A session at the 100-account ceiling with up to 20 voice users serverwide and 10 in one room stays stable; record server RSS, CPU, UDP bandwidth, database growth, free disk and user-visible latency | Pending | Pending |
 | A complete backup and separate host configuration/TLS copy restore on a fresh destination; accounts, search and attachment bytes match | Pending | Pending |
 | Fresh-install recovery on the named target: install, back up, verify, restore into an empty destination, then prove the account, channel, message and attachment bytes survived (`make rehearsal`) | Pending | Pending |
 | Production check and external availability monitor alert when deliberately made unhealthy | Pending | Pending |

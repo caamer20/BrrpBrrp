@@ -32,7 +32,7 @@ The SFU handles audio only. Each client has one microphone sender and nine recei
 
 A successful media connection emits `voice.user_joined` once to the connected participants in that room. Browsers synthesize a quiet, original two-tone chime locally: the joining person hears it on their first connection, and existing participants hear the room event. Deafen silences it, simultaneous arrivals share one chime, and suspended audio never queues stale sounds. Member-list refreshes and recovery of an existing peer connection do not replay it. Run `node scripts/preview-chime.mjs` with Node 24 to export the same sound as `dist/voice-join.wav`.
 
-The server cap is 10 voice participants. No video, screen sharing, recording or voice message history is provided. Browser echo cancellation/noise suppression are requested when available. Speaking indicators use a local analyser and bounded signaling. Device permissions and audio playback policy remain browser/OS responsibilities.
+The server carries 20 voice participants across all of its rooms and 10 in one room, with one screen publisher per room and two serverwide. Those are implementation boundaries rather than measured capacities. No camera video, recording or voice message history is provided; screen sharing is, with the share's own audio. Browser echo cancellation/noise suppression are requested when available. Speaking indicators use a local analyser and bounded signaling. Device permissions and audio playback policy remain browser/OS responsibilities.
 
 ## Resource bounds and jobs
 

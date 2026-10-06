@@ -365,7 +365,10 @@
             max={10}
             bind:value={editing.max_voice_users}
             required
-          /><small>Up to 10 voice users across the server.</small></label
+          /><small
+            >How many people may be in this channel at once, up to 10. The server carries 20
+            participants across all of its rooms.</small
+          ></label
         >{/if}
       <p class="muted">
         Visibility and the accounts that may read this channel are set in “Who can access this?”.
@@ -392,9 +395,9 @@
     {#if access}
       {#if !access.restricted_enabled}
         <p class="notice" role="status">
-          Restricted channels are disabled on this server. Public channels and member posting stay
-          available; private channels and announcements are refused at the API until the privacy
-          checks are complete.
+          Restricted channels are switched off on this server. Public channels and member posting
+          work as usual, and private channels and announcements are refused while the setting is
+          off. An operator enables them with <code>BRRP_ENABLE_RESTRICTED_CHANNELS=true</code> and a restart.
         </p>
       {/if}
       <dl class="access-facts">
@@ -419,15 +422,17 @@
           <dd>{access.effective_count} accounts</dd>
         </div>
       </dl>
-      {#if accessChannel.type === 'voice' && access.visibility === 'private'}<p
+      <!-- What a private voice channel does, shown only while the setting that permits one is on:
+           with the gate off the notice above says so instead, and the channel cannot carry a
+           restricted audience at all. Both halves are read from the server's own answer. -->
+      {#if access.restricted_enabled && accessChannel.type === 'voice' && access.visibility === 'private'}<p
           class="notice"
           role="status"
         >
           Who is in a private voice channel is visible only to accounts that can read it, joining is
           refused exactly like a missing channel, and an account that loses access is removed from
-          the call immediately. The voice redesign (private-call admission, browser and network
-          qualification) and the independent privacy review are still pending, so treat a restricted
-          voice channel as unreviewed.
+          the call immediately. Voice is carried over IPv4 and the embedded relay only, so a member
+          whose network blocks UDP and cannot reach that relay cannot join.
         </p>{/if}
       {#if access.managers_can_read}<p class="muted">
           Community managers can read every community channel, including this one, so a restricted

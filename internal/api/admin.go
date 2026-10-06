@@ -157,7 +157,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor db.Use
 		return
 	}
 	if count >= limits.Accounts {
-		problem(w, 409, fmt.Sprintf("This server supports up to %d accounts and is intended for 10–20 concurrent users.", limits.Accounts))
+		problem(w, 409, fmt.Sprintf("This server supports up to %d accounts.", limits.Accounts))
 		return
 	}
 	role := db.MemberRoleID

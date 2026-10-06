@@ -99,7 +99,7 @@ The release has a declared support boundary and capacity profile. It makes an ex
 
 ### 2.3 Current limits and unresolved evidence
 
-Current limits include 100 accounts, 100 channels, 100 total WebSocket connections, five connections per account, ten simultaneous voice participants serverwide, 12 MiB per upload, five attachments and 4,000 characters per message. Actual limits are enforced in several layers; changing one constant will not establish a larger support envelope.
+Current limits include 100 accounts, 100 channels, 100 total WebSocket connections, five connections per account, 20 simultaneous voice participants serverwide and 10 in one room, 12 MiB per upload, five attachments and 4,000 characters per message. Actual limits are enforced in several layers; changing one constant will not establish a larger support envelope.
 
 Native packages exist for six OS/architecture combinations. Both **Windows/Tailscale** and **Linux Docker** remain required real deployment gates. Cross-compilation, Compose parsing and local browser resizing do not prove installed service behavior, container networking, phone behavior, off-host recovery or external alert delivery. The [production runbook](production-readiness.md) correctly leaves those gates pending.
 

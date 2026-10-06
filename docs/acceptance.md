@@ -40,7 +40,7 @@ Native installation and physical-device checks remain necessary even when local 
 3. Join voice from two physical browsers on different networks. Check both directions, the join chime on both devices, echo/noise behavior, mute, deafen, moderation, reconnect and a call longer than 30 minutes. Repeat with a restrictive NAT through TURN. This release's TURN is UDP-only.
 4. Enable push on supported physical devices, close the app, send a mention from a separate account and verify delivery/click routing. On iOS test an installed Home Screen app. Verify denial/disable paths and a shared-device sign-out.
 5. Install the PWA, open it offline, reconnect and verify normal operation after an app update. Test current Chrome/Edge, Firefox and Safari where supported.
-6. Run a 10–20-user soak with up to 10 voice participants. Observe resident memory, CPU, UDP bandwidth, database growth and free disk. No resource budget is claimed from the small local smoke tests alone.
+6. Run a soak at the 100-account ceiling with up to 20 voice participants serverwide and 10 in one room. Observe resident memory, CPU, UDP bandwidth, database growth and free disk. No resource budget is claimed from the small local smoke tests alone.
 7. Create a backup on the target host and rehearse a restore into another folder. Check accounts, search and downloaded attachment bytes. Keep a copy on separate storage.
 8. Review the chosen hostname, firewall, certificate renewal, recovery ownership and backup schedule. Sign/notarize release artifacts if required for your distribution channel.
 
