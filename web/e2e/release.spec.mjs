@@ -222,6 +222,19 @@ test('first setup, persistent chat, search and sign-out', async ({ page, context
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(log.locator('.message-content').filter({ hasText: message })).toBeVisible();
 
+  // The offline shell is the service worker's work. A project that blocks service workers
+  // has no worker to wait for: the WebKit pass does, because that engine cannot intercept
+  // the requests of a page a worker controls and three steps of these journeys are
+  // interceptions (playwright.config.mjs says how that was found). The segment is recorded
+  // as not exercised there rather than passing by not running; T-PWA-01 is where the worker
+  // is owed its own evidence under that engine.
+  if (test.info().project.use.serviceWorkers === 'block') {
+    test.info().annotations.push({
+      type: 'not exercised',
+      description: 'the offline shell: this project blocks service workers'
+    });
+    return;
+  }
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
   await expect(log.locator('.message-content').filter({ hasText: message })).toBeVisible();
@@ -446,11 +459,7 @@ test('a message permalink opens the message, and an upload can be stopped', asyn
   // Copy link. The clipboard permission is granted where the engine defines it: WebKit's
   // Playwright implementation has none called `clipboard-write`, so asking for it throws
   // ("Unknown permission: clipboard-write") and failed a journey whose subject is the
-  // permalink rather than the clipboard. The grant is therefore attempted and remembered,
-  // and each branch asserts the outcome that engine can actually produce — the copied text
-  // read back where there is a clipboard to read, and the product's own answer to a refused
-  // clipboard (it prints the link rather than claiming a copy) where there is not. Both
-  // branches carry a real permalink into the navigation below.
+  // permalink rather than the clipboard. The grant is therefore attempted and remembered.
   const clipboardGranted = await context
     .grantPermissions(['clipboard-read', 'clipboard-write'])
     .then(() => true)
@@ -458,17 +467,30 @@ test('a message permalink opens the message, and an upload can be stopped', asyn
   await message.getByRole('button', { name: /^Actions for message/ }).click();
   await page.getByRole('button', { name: 'Copy link' }).click();
   const toast = page.locator('.toast[role="status"]');
-  await expect(toast).toBeVisible();
-  let link;
-  if (clipboardGranted) {
-    await expect(toast).toContainText('Link copied.');
-    link = await page.evaluate(() => navigator.clipboard.readText());
-  } else {
-    // It is deliberately one outcome per branch rather than either outcome: this is the
-    // line that says so if an engine that offered no permission to grant copied anyway.
-    await expect(toast).toContainText('Copy this link:');
-    link = /https?:\/\/\S*#message=\S*/.exec(await toast.innerText())?.[0] ?? '';
-  }
+  // Every engine this journey runs under copies: Chromium with the permission granted, and
+  // WebKit with no permission to grant. The earlier version expected a refusal from WebKit
+  // and said its assertion existed to find out; the first run that got this far found out
+  // (6 October: "Link copied."). The copied text is read back where there is a clipboard
+  // permission that lets the journey read it.
+  await expect(toast).toContainText('Link copied.');
+  const copied = clipboardGranted ? await page.evaluate(() => navigator.clipboard.readText()) : '';
+  if (clipboardGranted) expect(copied, 'the copied permalink').toContain('#message=');
+
+  // A clipboard the browser refuses is the product's other outcome — it prints the link
+  // rather than claiming a copy — and no engine here produces it by itself. It is produced
+  // deliberately, so that branch is exercised in every engine, and it is where the journey
+  // takes the permalink it follows: a printed link can be read in all of them.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, 'writeText', {
+      configurable: true,
+      value: () => Promise.reject(new DOMException('refused', 'NotAllowedError'))
+    });
+  });
+  await message.getByRole('button', { name: /^Actions for message/ }).click();
+  await page.getByRole('button', { name: 'Copy link' }).click();
+  await expect(toast).toContainText('Copy this link:');
+  const link = /https?:\/\/\S*#message=\S*/.exec(await toast.innerText())?.[0] ?? '';
+  if (clipboardGranted) expect(link, 'the printed link is the one that was copied').toBe(copied);
   expect(link, `the permalink the journey follows: ${JSON.stringify(link)}`).toContain('#message=');
 
   // Following the link in a fresh load lands on the message, not on whatever the

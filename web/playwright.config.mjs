@@ -81,7 +81,16 @@ export default defineConfig({
           {
             name: 'release-webkit',
             testMatch: 'release.spec.mjs',
-            use: { ...devices['Desktop Safari'] },
+            // Service workers are blocked for this pass. Playwright's WebKit cannot intercept
+            // the requests of a page a service worker controls, and three steps of these
+            // journeys are interceptions: the aborted thread reply, the lost export
+            // response and the held phone-width send. All three failed here with the worker
+            // allowed — the reply was simply sent, and "no send reached the intercepted
+            // route" was the phone journey's unexplained failure — and all three pass with
+            // it blocked (6 October). The cost is stated where it is paid: the offline-shell
+            // segment of the setup journey has no worker to wait for and records itself as
+            // not exercised under this project.
+            use: { ...devices['Desktop Safari'], serviceWorkers: 'block' },
             grep: /first setup|member requests their data export|detectable violations|message permalink|Arabic message|Back and Forward|phone width/
           }
         ]
