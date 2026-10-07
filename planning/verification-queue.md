@@ -462,7 +462,9 @@ of them as closed by the work above.
 - **W-07** restricted channels exercised in a browser, with `BRRP_ENABLE_RESTRICTED_CHANNELS`
   on and off, and a refusal journey with it off.
 - **W-10** an acceptance record that means "ran and passed" (F-07).
-- **W-11** real mixed-direction text in the Arabic journey.
+- ~~**W-11** real mixed-direction text in the Arabic journey.~~ **Done and run** (ledger
+  tranche 45): it found and fixed a mention drawn backwards in right-to-left text and two
+  contrast defects.
 - **W-12** T-CHAT-01: 1,000 logical sends with duplicate submissions, delayed and reordered
   events, lost acknowledgements, reconnects and deletion before retry.
 - **W-13** T-MEDIA-02: 100 screen-share start/stop cycles with late viewers, cancellation,

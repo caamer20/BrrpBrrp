@@ -34,8 +34,11 @@ below are evidence, some of them written when assignments were hazy, and two of 
   rehearsals, with nothing failed, skipped or left unrun. **W-06 is closed by a run**, and
   the two changes that were marked "confirm by a run" — **W-29** and **W-37** — are
   confirmed.
-- **Open: W-07 and W-10 through W-20**, which are acceptance work that has not been built
-  or run yet, plus the `-race` sweep. After those, what remains is the owner's.
+- **W-11 is closed by a run (tranche 45)**, and it found three defects in the product: a
+  mention drawn backwards inside right-to-left text, offline members below the contrast
+  requirement, and message links told apart by colour alone. All three are fixed.
+- **Open: W-07, W-10 and W-12 through W-20**, which are acceptance work that has not been
+  built or run yet, plus the `-race` sweep. After those, what remains is the owner's.
 - **W-21 owes one thing still: the 100-account reference fixture definition** (`F-T`), which
   needs the owner's approval of the one-million-message / 20-GiB targets before it can be
   written; it is recorded in the queue.
@@ -3831,3 +3834,33 @@ mixed-direction text), **W-12 to W-16** (the owed acceptance runs), **W-17** (ca
 **W-18** (failure coverage), the `-race` sweep (about 45 minutes; not run in this pass),
 **W-19** (a second fresh-context review) and **W-20** (the candidate). The Docker image has
 still never been built, and nothing has run on Windows or on a hosted runner.
+
+## Tranche 45 — W-11: mixed-direction text, and three defects it drew out
+
+Source commit before: `09ad67c`. Source: the commit before this entry's. **Run, not only
+written.** Product change: `web/src/app.css` only. No route, no schema change.
+
+- **What the item asked for.** T-CONTENT-01's journey posted Arabic and nothing else. Real
+  messages mix scripts, and the pieces that go wrong are the ones inside the paragraph.
+- **What was added.** A message with a mention, a link ending in `/` and a time inside an
+  Arabic sentence; and an English sentence carrying an Arabic name. Asserted: the
+  paragraph's resolved direction, the text character for character, the link's `href`, and
+  — by measuring character boxes with a `Range` — that inside a mention and inside a link
+  the first character is drawn left of the last, on one line.
+- **Failing first.** Against the tree as it was: `a mention inside right-to-left text` —
+  `direction: "rtl", leftToRight: false`. Every mention in an Arabic message was drawn
+  `name@`.
+- **The fix.** `.message-content a, .mention { direction: ltr; unicode-bidi: isolate; }`.
+  Usernames are ASCII by `usernamePattern`, and a URL's scheme and host read left to right.
+- **Two accessibility defects found by the same journey's last line.** It is the first
+  check to audit a member list with somebody offline in it and a message with a link in it.
+  `.member.offline { opacity: 0.65 }` put the name, initials and status line at 3.38:1 and
+  2.74:1 against a 4.5:1 requirement — on what is, in a real community, most of the list;
+  the rule is removed. A link inside a message differed from its sentence by colour alone
+  (2.33:1 against the 3:1 that would allow it); it is underlined.
+- **Run on the build that carries all three.** Chromium default **30 passed**, private
+  **45 passed**, WebKit **7 passed**; 0 failed, 0 skipped, 0 did not run in each. `make
+  check` exit 0. The Firefox voice project was not re-run for a stylesheet change.
+- **What it does not show.** A device, a screen reader, or a right-to-left *interface*: the
+  product's own chrome is English and left to right, which `docs/known-limitations.md`
+  should say and the accessibility review will judge.
