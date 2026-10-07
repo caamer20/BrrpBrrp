@@ -37,8 +37,16 @@ below are evidence, some of them written when assignments were hazy, and two of 
 - **W-11 is closed by a run (tranche 45)**, and it found three defects in the product: a
   mention drawn backwards inside right-to-left text, offline members below the contrast
   requirement, and message links told apart by colour alone. All three are fixed.
+- **The tree is `1.0.0-rc.1` (tranches 46–48, 6 October night).** Both conversation
+  features are on by default — the owner's decision, made without the independent review
+  it was to follow — the version is the first release candidate, and a shared screen's
+  sound follows its sharer's volume (W-31, now closed by a change). **None of the three has
+  been run**: the owner asked that tests wait until the application reaches its 1.0.0
+  status. They passed the static gates only.
 - **Open: W-07, W-10 and W-12 through W-20**, which are acceptance work that has not been
-  built or run yet, plus the `-race` sweep. After those, what remains is the owner's.
+  built or run yet, plus the `-race` sweep and a re-run of the suites on the candidate.
+  W-07 matters most now, because restricted channels are on and have never been exercised
+  in a browser. After those, what remains is the owner's.
 - **W-21 owes one thing still: the 100-account reference fixture definition** (`F-T`), which
   needs the owner's approval of the one-million-message / 20-GiB targets before it can be
   written; it is recorded in the queue.
@@ -3864,3 +3872,84 @@ written.** Product change: `web/src/app.css` only. No route, no schema change.
 - **What it does not show.** A device, a screen reader, or a right-to-left *interface*: the
   product's own chrome is English and left to right, which `docs/known-limitations.md`
   should say and the accessibility review will judge.
+
+## Tranches 46–48 — the candidate: 1.0.0-rc.1
+
+On the night of 6 October the owner said to continue with everything and to leave running
+tests until the application has reached its 1.0.0 status, and answered three questions:
+both conversation features on by default; the version `1.0.0-rc.1`; account removal stays
+an administrator's action. **None of the three tranches below has been run.** Each passed
+`make check` and `go vet ./...` (which compiles every test); the last full pass is tranche
+44, on `e2f3586`, before all three.
+
+## Tranche 46 — W-31: a shared screen's sound follows its sharer's volume
+
+Source commit before: `e2f3586`. Source: `86db9d3`. **Client only.** No schema change.
+
+Tranche 42 left this alone and recorded a design that needed the server to carry the
+sharer on the stream id. Reading the server showed it already does:
+`NewTrackLocalStaticRTP(codec, label, label+"-"+p.state.UserID)` with `label =
+"screen-audio"` (`internal/rtc/sfu.go`). The whole defect was on the client, which parsed
+every audio stream id as `voice-N`. `screenAudioOwner` (`web/src/lib/screen-receive.ts`)
+reads the name; `voice.svelte.ts` keys a screen-audio element to its sharer and a voice
+element to its slot, and `applyAudioState` looks up the listener's volume through either.
+
+- **Tests written, not run** (`web/tests/screen-receive.test.mjs`, three): the name is
+  parsed and a voice slot is not; the server's source still builds the name the client
+  reads; the store keys by sharer and clears the map with the rest. Frontend count 389 →
+  **392**.
+- **Not changed:** `screenRequested` is still reset only on leave and stop.
+- **What the pass must run:** `npm --prefix web test`, and `voice.spec.mjs`'s screen-audio
+  journey with a volume set for the sharer — which no journey does yet.
+
+## Tranche 47 — both conversation features are on by default
+
+Source: `feddfbe`. **The owner's switch, thrown on 6 October without the independent review
+it was to follow.** No schema change.
+
+- **Where the default lives.** `planning/gate-flip-checklist.md` said neither key had a
+  constant to change and that a native installation "inherits the shipped default". Both
+  cannot be true: `boolean` read an unset variable as false, and the setup wizard writes
+  neither key. `internal/app/config.go` now reads both through `booleanOr(key, true)`: unset
+  or empty takes the default, a set value is parsed as before. `compose.yaml` and the two
+  example files state `true`.
+- **What an upgrade does.** An installation that set a switch keeps it, including a
+  `.env.docker` copied from an earlier example, which carries both as `false`. An
+  installation that set neither — every native installation — has both features on after
+  upgrading. `docs/upgrading.md` and the release record say so, and say to set `false`
+  before upgrading to stay off.
+- **What was behind the switches.** ADR 0003's remaining list: no independent review; a
+  restricted voice channel with no ring or admission step of its own; a response already
+  being written finishes; a downloaded file stays downloaded; managers read every community
+  channel, which the inspector discloses. No unenforced path. Dated notes on ADR 0003 and
+  ADR 0012 record the change and whose decision it was; `docs/known-limitations.md` and
+  `docs/admin.md` say no review has run.
+- **Words.** The two API refusals (`internal/api/roles.go`, `internal/api/direct.go`) and
+  the two interface notices say "switched off on this server".
+- **The harnesses keep their footing.** `testServer` sets each switch to `false` unless the
+  test chose a value, and `web/e2e/run.mjs` sets restricted channels off explicitly (it
+  already set private conversations explicitly). Every existing test therefore means what
+  it meant in tranche 44. That is deliberate, and it has a cost: no test or journey runs a
+  server on the shipped default except the one below.
+- **Tests written, not run.** `TestBothConversationFeaturesAreOnUnlessAnOperatorSwitchesOneOff`
+  (`internal/app/config_test.go`): unset, empty, both spellings of off and on, a typo
+  refused, and the other booleans still defaulting to off.
+- **What the pass must run.** That test; the Go and browser suites as they are; and then
+  the thing that does not exist yet — **W-07**, restricted channels exercised in a browser,
+  which is now the most important unbuilt acceptance item because the feature is on.
+
+## Tranche 48 — the version is 1.0.0-rc.1
+
+Source: `58ca1a9`.
+
+`internal/app/version.go`, `web/package.json` (and its lock file) and `scripts/release.go`
+agree on `1.0.0-rc.1`. Schema 25, backup format 2, protocol 1: no migration.
+`docs/releases/1.0.0-rc.1.md` is the record; the README's alpha framing is replaced by the
+candidate's status; `CHANGELOG.md`, `docs/upgrading.md`, `docs/known-limitations.md`,
+`docs/compatibility.md` and the 1.0.0 notes draft follow. `scripts/check-doc-links.mjs` now
+audits the candidate's own documents (15, up from 10).
+
+**What "candidate" means here, exactly.** The feature set intended for 1.0.0, on one
+branch, with the last full local pass one tranche behind it. Not: reviewed, run on either
+required deployment, built as a container image, measured for capacity, or tried by anyone
+outside this machine. G0–G8 are not passed and this entry does not claim one.

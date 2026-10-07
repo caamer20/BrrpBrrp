@@ -27,6 +27,21 @@ reads of the Maintenance screen by a person have not happened.
 **Still not run:** the `-race` sweep, everything in section 4, and anything on Windows, in
 Docker or on a hosted runner.
 
+### Written after that pass, and not run
+
+The owner asked on the night of 6 October that tests wait until the application reaches its
+1.0.0 status. Three changes were made after the pass above (ledger tranches 46–48), each
+through the static gates only:
+
+| Change | Commit | Run this to confirm it |
+| --- | --- | --- |
+| A shared screen's sound follows its sharer's volume (W-31) | `86db9d3` | `npm --prefix web test` (389 → **392**); `voice.spec.mjs` in Chromium and Firefox |
+| Both conversation features on by default | `feddfbe` | `go test ./internal/app -run TestBothConversationFeatures`; then every suite in section 1 — the harnesses pin the old values, so they should pass unchanged |
+| The version is `1.0.0-rc.1` | `58ca1a9` | `go test ./internal/app -run TestVersionIdentityAgrees`; `make release` and `node scripts/check-package.mjs` on the archives |
+
+**The first thing to run on the candidate is section 1, top to bottom.** The second is
+W-07, which has to be written first.
+
 ## 1. The order the pass should take
 
 Cheapest and most informative first, so a failure is found before an hour is spent on
@@ -504,7 +519,8 @@ here from wherever they first arose, so one reading covers all of them.
    to `0.4.0-alpha.5` and says direct messages “are still planned”, which is no longer true.
    If it is living it needs an edit beyond the gate flip; if it is a record it should be left
    alone. Where it arose: `planning/gate-flip-checklist.md` §5 item 2.
-5. **Should v1 let a member remove their own account?** Today a member can export their own
+5. **Answered on 6 October: no — removal stays an administrator's action for 1.0.0.**
+   The question as it was asked: should v1 let a member remove their own account? Today a member can export their own
    data — **Your data export**, gated on a recent strong sign-in — but cannot leave on their
    own: only an administrator with the member-management capability can deactivate, remove or
    erase an account (`DELETE /api/admin/users/{id}`, `POST /api/admin/users/{id}/anonymize` in
@@ -524,3 +540,10 @@ here from wherever they first arose, so one reading covers all of them.
    `BRRP_LOGIN_ATTEMPTS=400`. Since W-29 a successful sign-in spends nothing, so the default
    of 20 would do; dropping the override makes the suite test what ships. Where it arose:
    W-29.
+
+**Decisions the owner made on the night of 6 October**, recorded here because three of the
+questions above asked for them or depended on them: both conversation features are on by
+default (which answers question 3 only in part — the harness still sets its own values, and
+whether it should follow the shipped default is still open); the version is `1.0.0-rc.1`;
+account removal stays with administrators (question 5); and tests wait until the
+application has reached its 1.0.0 status.
