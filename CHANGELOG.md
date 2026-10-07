@@ -1,13 +1,34 @@
 # Changelog
 
 Dated changes to BrrpBrrp, newest first. Each entry is a summary of a record under
-[docs/releases](docs/releases/0.4.0-alpha.9.md): read that record for what was measured,
+[docs/releases](docs/releases/1.0.0-rc.1.md): read that record for what was measured,
 what was not, and what the checkpoint does not prove. Dates are the ones the records state;
 where a record states none, none is given here either.
 
 Every version below is a **local development checkpoint**, not a published release, and
 none of them marks a G0–G8 release gate passed. Read the record's "Known issues" section
 before deciding anything on the strength of one.
+
+## 1.0.0-rc.1 — 6 October 2026
+
+The first release candidate for 1.0.0: the intended feature set, not yet a release.
+
+- Restricted channels and private conversations are **on by default**. An installation that
+  set either switch explicitly keeps its value.
+- A new installation starts with scheduled backups on, every 12 hours.
+- A member can change their own display name and colour.
+- The sign-in throttle counts failures only, so people arriving together from one address
+  are not refused; a flood of failed sign-ins can no longer close the server to its members.
+- A first-run checklist for the owner and a "Server details" section in Manage server →
+  Maintenance.
+- `Strict-Transport-Security` on real HTTPS deployments.
+- Docker: eight settings that never reached the container now do, and the relay's TCP and
+  TLS fallback ports are published.
+- Fixed: a mention inside a right-to-left message was drawn `name@`; offline members were
+  drawn below the contrast requirement; a link inside a message was told apart by colour
+  alone.
+- The documents a public release needs: code of conduct, support policy, compatibility,
+  known limitations and an upgrade guide.
 
 ## 0.4.0-alpha.9 — 4 October 2026
 
@@ -84,6 +105,7 @@ Community controls and dependable recovery.
 
 | Version | Database | Backup format | Websocket protocol |
 | --- | --- | --- | --- |
+| 1.0.0-rc.1 | 25 | 2 | 1 |
 | 0.4.0-alpha.9 | 25 | 2 | 1 |
 | 0.4.0-alpha.8 | 25 | 2 | — |
 | 0.4.0-alpha.7 | 21 | 2 | — |

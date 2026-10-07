@@ -40,7 +40,12 @@ const DOCUMENTS = [
   "docs/host-qualification.md",
   "docs/v1-progress.md",
   "docs/production-readiness.md",
-  ...["0.4.0-alpha.7", "0.4.0-alpha.6"].map(
+  // The documents the release candidate sends a reader to first.
+  "CHANGELOG.md",
+  "docs/known-limitations.md",
+  "docs/upgrading.md",
+  "docs/compatibility.md",
+  ...["1.0.0-rc.1", "0.4.0-alpha.7", "0.4.0-alpha.6"].map(
     (release) => `docs/releases/${release}.md`,
   ),
 ];

@@ -5,9 +5,9 @@ the release note: a list of what to expect rather than what to hope for. Read it
 [acceptance.md](acceptance.md), which records what has been measured on this tree, and
 [compatibility.md](compatibility.md), which states what may change.
 
-This describes the development tree that carries it (`0.4.0-alpha.9`). It is not a 1.0.0
-limitation list; the draft notes for that release are in
-[releases/1.0.0-notes-draft.md](releases/1.0.0-notes-draft.md).
+This describes the release candidate that carries it (`1.0.0-rc.1`); its record is
+[releases/1.0.0-rc.1.md](releases/1.0.0-rc.1.md), and the draft notes for the final release
+are in [releases/1.0.0-notes-draft.md](releases/1.0.0-notes-draft.md).
 
 ## Bounds built into the product
 
@@ -56,9 +56,21 @@ statement, and nothing here has been measured above it.
 - **Automated accessibility checks are not an accessibility audit.** Journeys run axe over
   the main surfaces, which finds what a tool can find. A keyboard pass, a screen-reader
   pass and a zoom pass are owed, and no blanket conformance is claimed.
-- **The two feature gates ship off.** Restricted channels and consented private
-  conversations are implemented and enforced, and their defaults stay off until the
-  independent reviews are entered and their P1 findings fixed. That switch is the owner's.
+- **Both conversation features are on by default, and neither has been independently
+  reviewed.** Restricted channels and consented private conversations are implemented and
+  enforced. They shipped switched off until an independent security and privacy review; on
+  6 October 2026 the owner turned them on without one. An operator who wants to wait sets
+  `BRRP_ENABLE_RESTRICTED_CHANNELS=false` or `BRRP_ENABLE_PRIVATE_CONVERSATIONS=false`.
+- **A restricted voice channel has no ring or admission step of its own.** It is as closed
+  as a restricted text channel for presence, joining and revocation, and community managers
+  can read and join every community channel, restricted ones included; the access inspector
+  says so on each channel.
+- **The interface is English and left to right.** Messages in any script are rendered in
+  their own direction, including mixed-direction text; the product's own controls and
+  labels are not translated or mirrored.
+- **A shared screen's sound follows its sharer's volume.** The volume a listener sets for a
+  person applies to that person's voice and to the sound of their shared screen together;
+  the two cannot be set apart.
 
 ## Leaving a community
 

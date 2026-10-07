@@ -14,7 +14,7 @@ will work and finds out afterwards that it will not.
 
 | Number | Value in this tree | Where it is defined | What it means |
 | --- | --- | --- | --- |
-| Application version | `0.4.0-alpha.9` | `internal/app/version.go` | Which build this is. Not a compatibility statement by itself. |
+| Application version | `1.0.0-rc.1` | `internal/app/version.go` | Which build this is. Not a compatibility statement by itself. |
 | Database schema | 25 | `internal/db/migrations.go`, derived from the migration registry | What the database contains. Forward-only, and a binary refuses a database from a newer schema. |
 | Backup format | 2 | `internal/backup/manifest.go` | What a backup archive looks like. Read by the restore, verify and production-check paths. |
 | Websocket protocol | 1, minimum 1 | `internal/ws/protocol.go` | Whether an open client and this server can understand each other's frames. |
@@ -50,10 +50,10 @@ Everything else the binary reads from the environment is not part of that surfac
 `BRRP_E2E_*` harness variables, the load-measurement switches and the internal overrides
 used by tests exist to run this project's own checks and may change or disappear without
 notice. `BRRP_ENABLE_RESTRICTED_CHANNELS` and `BRRP_ENABLE_PRIVATE_CONVERSATIONS` are
-supported keys whose *defaults* are deliberately off until the independent reviews and
-their P1 findings are closed; an installation that sets either one explicitly keeps that
-setting across an upgrade, and the flip of a default is a release note rather than a silent
-change.
+supported keys whose *defaults* changed from off to on in 1.0.0-rc.1; an installation that
+sets either one explicitly keeps that setting across an upgrade, an unset or empty value
+takes the default, and the change is stated in the release record and in
+[upgrading.md](upgrading.md) rather than made silently.
 
 Limits that are product policy rather than configuration — 100 accounts, 100 channels, 100
 outstanding invitations, 100 pins per channel, 20 voice participants serverwide, 10 per

@@ -31,7 +31,7 @@ serving people again.
 ## The upgrade, step by step
 
 1. **Read the record** for the version you are moving to, under
-   [docs/releases](releases/0.4.0-alpha.9.md). Its "Known issues" and upgrade sections state
+   [docs/releases](releases/1.0.0-rc.1.md). Its "Known issues" and upgrade sections state
    what changed and what the checkpoint does not prove.
 2. **Stop writing.** Scheduled jobs, uploads and browser sessions should not be running.
 3. **Take the snapshot** with the executable currently in use, including attachments, and
@@ -63,6 +63,7 @@ its own database schema:
 | 0.4.0-alpha.7 | 21 |
 | 0.4.0-alpha.8 | 25 |
 | 0.4.0-alpha.9 | 25 |
+| 1.0.0-rc.1 | 25 |
 | 1.0.0 | not built |
 
 The path from an alpha installation to 1.0.0 is a supported forward upgrade, one step at a
@@ -83,8 +84,21 @@ describes the path this project supports; it is not a record of one that was wal
 ## What an upgrade does not need
 
 Nothing in a normal upgrade changes `server.env`, the data directory layout, the
-certificates or the backup destination. An installation that set a feature gate explicitly
-keeps that setting; a gate whose *default* changes is a release note, not a silent switch.
+certificates or the backup destination. An installation that set a feature switch explicitly
+keeps that setting; a switch whose *default* changes is a release note, not a silent switch.
+
+**1.0.0-rc.1 changes two such defaults.** Restricted channels and private conversations
+shipped switched off through 0.4.0-alpha.9 and are on from this release for every
+installation that did not choose a value:
+
+> If your `server.env` or Docker environment sets `BRRP_ENABLE_RESTRICTED_CHANNELS` or
+> `BRRP_ENABLE_PRIVATE_CONVERSATIONS` to `false`, your installation keeps that setting.
+> Remove the line and restart the service to follow the shipped default. If it sets
+> neither — the native setup wizard writes neither — both features are **on** after this
+> upgrade. Set the line to `false` before you upgrade if you do not want them yet.
+
+A `.env.docker` copied from an earlier `.env.docker.example` carries both lines as `false`,
+so a Docker installation set up that way stays off until its operator changes them.
 If a release introduces a key, it is documented in [deployment.md](deployment.md) and the
 example files before it is read.
 

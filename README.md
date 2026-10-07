@@ -2,35 +2,30 @@
 
 A small, self-hosted place for up to 100 people to talk. One native Go binary serves the entire app, with SQLite storage and no separate database service or hosted account system. Run it directly on Linux, Windows or macOS, or use the included Docker setup.
 
-Text channels, persistent messages, replies, pins, file sharing, reactions, mentions, full-text search and Opus voice are included. Administrators invite members, protect accounts with an authenticator, moderate conversations and schedule backups. Roles carry delegation: create a role below your own, grant only capabilities you already hold, and assign it per account. Channels live in ordered categories and can be restricted to named roles or accounts, with an inspector that answers "who can access this?" using the server's own rule; restricted channels and announcement posting stay switched off at the API until the privacy gate passes. The interface has light, dark and system themes, a phone layout, private media previews and an installable PWA shell.
+Text channels, persistent messages, replies, pins, file sharing, reactions, mentions, full-text search and Opus voice are included. Administrators invite members, protect accounts with an authenticator, moderate conversations and schedule backups. Roles carry delegation: create a role below your own, grant only capabilities you already hold, and assign it per account. Channels live in ordered categories and can be restricted to named roles or accounts, with an inspector that answers "who can access this?" using the server's own rule. The interface has light, dark and system themes, a phone layout, private media previews and an installable PWA shell.
 
-This is an alpha candidate. Automated integration and race checks and local browser checks are recorded in [acceptance.md](docs/acceptance.md). Production sign-off also requires voice, push and service tests on the actual deployment machine and network.
+**This is 1.0.0-rc.1, a release candidate.** It is the feature set intended for 1.0.0, at
+**schema 25**, and it is not a published release. Read
+[the 1.0.0-rc.1 record](docs/releases/1.0.0-rc.1.md) and
+[known limitations](docs/known-limitations.md) first: together they are the shortest honest
+account of what this candidate is. In summary —
+
+- The whole local test pass was last run on 6 October 2026, on the commit before this
+  candidate's last changes: both conversation features switched on by default, a screen-share
+  volume fix, and the version. Those changes have compiled and passed the static checks and have **not**
+  been run.
+- Nothing has been run on Windows, in Docker or on a hosted runner; the container image has
+  never been built; no capacity or soak measurement exists; no physical microphone or
+  blocked-UDP call has been exercised.
+- No independent security, privacy or accessibility review and no beta has happened.
 
 For an ordered rollout and sign-off record covering both Windows and Docker, use the
 [production release runbook](docs/production-readiness.md). The
 [host qualification procedures](docs/host-qualification.md) are the per-host checklists;
 they are written and have not been run, because this development environment has no
-Windows host, no Docker, no PowerShell and no Tailscale peer.
-
-The packaged **0.4.0-alpha.5** checkpoint adds message reporting, channel slow mode, per-channel notification muting, explicit recovery for failed sends, and account removal that keeps conversation history under “Deleted member.” It includes focused reply discussions, a keyboard channel picker, roles and channel access controls. See the [community guide](docs/community-guide.md), [alpha.5 release record](docs/releases/0.4.0-alpha.5.md) and [verification](docs/acceptance.md).
-
-The current source candidate **0.4.0-alpha.8** is at **schema 25**. It adds, on top of
-opt-in consented direct messaging, groups and group chat, an activity inbox with
-notification preferences, named community threads, private calls and screen sharing,
-member moderation (report assignment and expiring timeouts), a member's own data
-export, and operator alerts that report whether they were *delivered* rather than
-merely configured. On top of alpha.7 it carries per-operation retry identity for
-uncertain replies, export delivery that is re-authorized per request, a thread's own
-reading position and bounded window, and a screen path whose audio is a publication of
-its own.
-
-**Read [the alpha.8 record](docs/releases/0.4.0-alpha.8.md) first, and its "Known
-issues" section above all.** It is the shortest honest account of what this candidate
-is: what has been verified, and what has not. In summary — the private features remain
-**default-off and have never been qualified on either required deployment**, no
-capacity or soak measurement exists, no physical microphone or blocked-UDP call has
-been exercised, no browser viewer decodes a shared screen yet, and no independent
-review or beta has happened. Nothing here has been published.
+Windows host, no Docker, no PowerShell and no Tailscale peer. Automated checks that have
+been run are recorded in [acceptance.md](docs/acceptance.md), and everyday use is described
+in the [community guide](docs/community-guide.md).
 
 Policies worth reading before changing any of it: the [private conversation
 policy](docs/adr/0012-private-conversations-consent-and-shared-storage.md), the
@@ -128,10 +123,11 @@ One workspace, text and voice channels, capability-based roles and delegation, r
 threads with their own reading positions and archive state, consented direct
 conversations and groups with blocking and private evidence reporting, named threads,
 member data export, community voice with private calls, and screen sharing with its own
-screen audio. Direct conversations and groups are behind the default-off
-`BRRP_ENABLE_PRIVATE_CONVERSATIONS` gate, and restricted channels behind
-`BRRP_ENABLE_RESTRICTED_CHANNELS`, until their independent reviews are done; every
-feature they gate is implemented and locally tested. Friends, multi-server guilds,
+screen audio. Direct conversations and groups, and restricted channels, are
+**on by default**; an operator withholds either with
+`BRRP_ENABLE_PRIVATE_CONVERSATIONS=false` or `BRRP_ENABLE_RESTRICTED_CHANNELS=false`, and
+an installation that set one of them before this release keeps what it set. Both are
+implemented and locally tested, and neither has had an independent review. Friends, multi-server guilds,
 public read receipts, camera video and federation are not available. Media is carried
 over IPv4 and uses the embedded TURN relay only — no external relay is supported — so a
 network that blocks UDP and cannot reach that relay over TCP/TLS is a documented,
