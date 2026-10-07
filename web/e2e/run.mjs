@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { describeEngines, harnessEnvironment } from './harness-env.mjs';
 
 const dataDir = await mkdtemp(join(tmpdir(), 'brrpbrrp-browser-'));
 const binary = resolve(process.env.BRRP_E2E_BINARY || '../dist/brrpbrrp-e2e');
@@ -66,6 +67,7 @@ async function run() {
   // as six unrelated failures rather than one cause. Refuse the invocation and name the one
   // that works, instead of leaving that again to be rediscovered from a screenshot.
   const args = process.argv.slice(2);
+  const forwarded = harnessEnvironment(process.env);
   if (process.env.BRRP_E2E_WEBKIT === '1' && !args.some((arg) => arg.startsWith('--project')))
     throw new Error(
       'BRRP_E2E_WEBKIT=1 needs its own server and cannot run beside the Chromium projects: ' +
@@ -108,6 +110,7 @@ async function run() {
       process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'ENABLED' : 'disabled (default)'
     }`
   );
+  console.log(`browser suite engines: ${describeEngines(forwarded)}`);
   const test = spawn(
     process.execPath,
     // Extra arguments are forwarded to Playwright, so a single journey can be run with
@@ -124,19 +127,8 @@ async function run() {
         ...cleanEnv,
         BRRP_E2E_BASE_URL: baseURL,
         BRRP_E2E_DATA_DIR: dataDir,
-        BRRP_E2E_PRIVATE_CONVERSATIONS: process.env.BRRP_E2E_PRIVATE_CONVERSATIONS || '0',
-        // Forwarded by name, like the feature mode above: every BRRP_ variable is
-        // stripped from the child so the server's own configuration cannot leak into
-        // the run, and a project the config defines only for this flag would otherwise
-        // never exist.
-        BRRP_E2E_FIREFOX: process.env.BRRP_E2E_FIREFOX || '0',
-        // The long-thread scale project is gated the same way, because it seeds a thousand
-        // messages and takes about ten minutes.
-        BRRP_E2E_SCALE: process.env.BRRP_E2E_SCALE || '0',
-        // The third engine: the release journeys' core subset under WebKit (Safari's
-        // engine), gated like the Firefox voice pass. It deliberately cannot run under the
-        // same server's deployment, because one installation serves one pass.
-        BRRP_E2E_WEBKIT: process.env.BRRP_E2E_WEBKIT || '0'
+        // The caller's switches, by name; see FORWARDED above for the list and why it is one.
+        ...forwarded
       },
       stdio: 'inherit'
     }
