@@ -7,8 +7,10 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 43** (`ae98418`, on `finish/v1-product-work`, cut from
-  `e56c24a`). **Closed: W-01 through W-06, W-08, W-09, W-21 through W-30, W-32 through W-38**
+- **Branch head after tranche 43** (`ae98418`; written on `finish/v1-product-work`, cut from
+  `e56c24a`, and fast-forwarded onto `codex/p9-private-reporting` on 6 October at the
+  owner's instruction — the three W-30 files that were uncommitted in the main checkout
+  were byte-identical to `98ffec2` and are that commit now). `main` is untouched. **Closed: W-01 through W-06, W-08, W-09, W-21 through W-30, W-32 through W-38**
   — tranches 16–35 as before, then **W-30** (36), **W-08** (37), **W-09** (38), **W-32**
   (39), **W-37** (40), **W-29** (41) and **W-38** (43, the reading review).
 - **W-31 is closed as "deliberately not changed"** (42): both media debts are confirmed by
