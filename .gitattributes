@@ -1,0 +1,8 @@
+# Text is stored and checked out with LF on every platform. Git for Windows defaults to
+# converting text to CRLF on checkout, and both format gates read bytes: `gofmt -l` lists
+# every Go file with CRLF endings and `prettier --check` rejects every web file, so the
+# Windows leg of the CI matrix could not pass on a default checkout. The release archives
+# are built from an LF tree; this keeps a Windows checkout identical to what is shipped.
+* text=auto eol=lf
+*.png binary
+*.docx binary

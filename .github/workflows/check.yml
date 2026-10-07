@@ -12,6 +12,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Every step body in this job is written in Bash, and one leg of the matrix is
+    # Windows, whose default shell is PowerShell: it cannot parse `$(…)` or `if [ … ]`,
+    # and it does not stop a two-line body at the first failing command, so a failing
+    # self-test followed by a passing check left the step green (review finding F-04).
+    # Git for Windows ships Bash on every hosted runner. scripts/check-workflow-shells.mjs
+    # audits that no multi-line step on this job falls back to the runner's default.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -66,6 +75,15 @@ jobs:
       # written for.
       - run: node scripts/check-docker-inputs.mjs
       - run: node scripts/check-docker-inputs.mjs --self-test
+      # The same kind of audit for what an operator configures: every key the server reads
+      # is passed by compose.yaml or deliberately fixed, and is named in the example file
+      # and the deployment guide. `make check` runs these; a hosted job must as well.
+      - run: node scripts/check-compose-env.mjs --self-test
+      - run: node scripts/check-compose-env.mjs
+      - run: node scripts/check-env-coverage.mjs --self-test
+      - run: node scripts/check-env-coverage.mjs
+      - run: node scripts/check-workflow-shells.mjs --self-test
+      - run: node scripts/check-workflow-shells.mjs
       # The source package must contain every document it links to, every script its
       # Makefile runs and every Docker build input, and must exclude the operator's own
       # host notes.

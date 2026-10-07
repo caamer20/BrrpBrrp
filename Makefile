@@ -41,6 +41,8 @@ check: web
 	node scripts/check-compose-env.mjs
 	node scripts/check-env-coverage.mjs --self-test
 	node scripts/check-env-coverage.mjs
+	node scripts/check-workflow-shells.mjs --self-test
+	node scripts/check-workflow-shells.mjs
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
 	node scripts/check-browser-steps.mjs --self-test
 	node scripts/check-browser-steps.mjs
