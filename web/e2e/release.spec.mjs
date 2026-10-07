@@ -928,4 +928,78 @@ test('an Arabic message is composed, rendered and searched in its own direction'
   await expect(search.getByText('مرحباً بالجميع').first()).toBeVisible();
   await expectAccessible(page);
   await search.getByRole('button', { name: 'Close dialog' }).click();
+
+  // Mixed-direction text (W-11). A real conversation mixes scripts inside one message: a
+  // mention, a link and a time in the middle of an Arabic sentence, and an Arabic name
+  // inside an English one. What goes wrong is not the paragraph's direction but the pieces
+  // inside it: `@` and a URL's last `/` are direction-neutral characters, so in a
+  // right-to-left paragraph they take the paragraph's side of the Latin text they belong to
+  // — a mention reads `release_admin@` and a link's trailing slash jumps to its front.
+  // `innerText` cannot see that (it is logical order), so the assertion is geometry: inside
+  // a mention and inside a link, the first character is drawn to the left of the last one.
+  const visualOrder = (node) => {
+    const text = node.firstChild;
+    const box = (index) => {
+      const range = document.createRange();
+      range.setStart(text, index);
+      range.setEnd(text, index + 1);
+      return range.getBoundingClientRect();
+    };
+    const first = box(0);
+    const last = box(text.length - 1);
+    return {
+      leftToRight: first.left < last.left,
+      oneLine: Math.abs(first.top - last.top) < 2,
+      direction: getComputedStyle(node).direction
+    };
+  };
+  const mixedRtl = `اسأل @${OWNER.username} عن https://example.com/docs/ قبل 14:30`;
+  await composer.fill(mixedRtl);
+  await composer.press('Enter');
+  const mixed = page.locator('article.message').filter({ hasText: 'https://example.com/docs/' });
+  await expect(mixed).toBeVisible({ timeout: 20000 });
+  await expect(mixed.locator('.message-delivery')).toHaveCount(0, { timeout: 20000 });
+  const mixedContent = mixed.locator('.message-content');
+  await expect
+    .poll(async () => mixedContent.evaluate((node) => getComputedStyle(node).direction), {
+      timeout: 20000,
+      intervals: [100, 250, 500]
+    })
+    .toBe('rtl');
+  // The text is what was typed, character for character, in logical order.
+  expect(await mixedContent.evaluate((node) => node.innerText)).toBe(mixedRtl);
+  const mention = mixedContent.locator('.mention');
+  await expect(mention).toHaveText(`@${OWNER.username}`);
+  expect(await mention.evaluate(visualOrder), 'a mention inside right-to-left text').toEqual({
+    leftToRight: true,
+    oneLine: true,
+    direction: 'ltr'
+  });
+  const link = mixedContent.locator('a');
+  await expect(link).toHaveAttribute('href', 'https://example.com/docs/');
+  expect(await link.evaluate(visualOrder), 'a link inside right-to-left text').toEqual({
+    leftToRight: true,
+    oneLine: true,
+    direction: 'ltr'
+  });
+
+  // The other way round: an English sentence carrying an Arabic name stays left-to-right,
+  // and keeps its text.
+  const mixedLtr = `Lunch with ${arabicName} at 12:30, table B2`;
+  await composer.fill(mixedLtr);
+  await composer.press('Enter');
+  const english = page.locator('article.message').filter({ hasText: 'table B2' });
+  await expect(english).toBeVisible({ timeout: 20000 });
+  await expect(english.locator('.message-delivery')).toHaveCount(0, { timeout: 20000 });
+  await expect
+    .poll(
+      async () =>
+        english.locator('.message-content').evaluate((node) => getComputedStyle(node).direction),
+      { timeout: 20000, intervals: [100, 250, 500] }
+    )
+    .toBe('ltr');
+  expect(await english.locator('.message-content').evaluate((node) => node.innerText)).toBe(
+    mixedLtr
+  );
+  await expectAccessible(page);
 });

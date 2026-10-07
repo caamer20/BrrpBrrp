@@ -977,6 +977,26 @@ kbd {
   unicode-bidi: isolate;
 }
 
+/* A mention and a link are Latin runs that begin or end with direction-neutral characters
+   — `@`, `/`, `?`. Inside a right-to-left message those characters take the paragraph's
+   side of the run they belong to: a mention is drawn `name@`, and a link's trailing slash
+   jumps to its front. Each is therefore its own left-to-right island. Usernames are ASCII,
+   and a URL's scheme and host read left to right even when its path is not Latin, which is
+   how an address bar shows one. The Arabic journey measures the drawn order (W-11); it was
+   wrong for every mention in a right-to-left message until this rule existed. */
+.message-content a,
+.mention {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+/* A link inside a sentence must not be told apart by colour alone: its colour is 2.33:1
+   against the text around it, under the 3:1 that would let colour carry the difference,
+   so it is underlined. Links elsewhere keep the underline for hover; this is the one place
+   a link sits inside running text somebody else wrote. */
+.message-content a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .mention {
   color: var(--link);
   border-radius: 3px;
@@ -1393,9 +1413,12 @@ kbd {
 .avatar-wrap > i.idle {
   background: #eac675;
 }
-.member.offline {
-  opacity: 0.65;
-}
+/* An offline member's row used to be drawn at 65% opacity. That took the name, the
+   initials and the line under the name below the 4.5:1 contrast the rest of the list
+   meets — measured at 3.38:1 and 2.74:1 — for the rows that are, in any real community,
+   most of the list. Offline is said by the group's own heading and by the grey presence
+   dot; the row itself stays readable. (Found by the accessibility check at the end of the
+   Arabic journey, the first one to audit a member list with somebody offline in it.) */
 .members-footnote {
   margin: 48px 0 0;
   border-top: 1px solid var(--line);
