@@ -228,6 +228,29 @@ func (c Config) Prepare() error {
 }
 func (c Config) SecureCookie() bool { return strings.HasPrefix(c.BaseURL, "https://") }
 
+// HSTS reports whether this deployment may tell a browser to refuse plain HTTP for its
+// host. It is deliberately narrower than SecureCookie, which only decides whether a
+// cookie needs the Secure attribute.
+//
+//   - `https` is a real certificate on a real name — an operator-supplied chain or ACME.
+//   - `http-behind-proxy` with an https base URL is a trusted proxy terminating TLS; the
+//     browser sees HTTPS and the app never does.
+//   - `auto` is a per-installation local CA, which a device has to be taught to trust.
+//     Pinning such a name to HTTPS cannot be taken back by switching modes: the browser
+//     would refuse plain HTTP for a host the device already trusts before the certificate
+//     is fixed. It is the mode used while a name and a certificate are still being sorted
+//     out, which is exactly when a pin would hurt.
+//
+// A six-month max-age is what the header carries. Neither includeSubDomains nor preload
+// is set: subdomains of a community's name are not this server's to speak for, and
+// preload is a submission to a browser vendor's list that cannot be withdrawn quickly.
+func (c Config) HSTS() bool {
+	if !c.SecureCookie() {
+		return false
+	}
+	return c.TLSMode == "https" || c.TLSMode == "http-behind-proxy"
+}
+
 func resolveRoot(path string) (string, error) {
 	parent := path
 	for {

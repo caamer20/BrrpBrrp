@@ -157,6 +157,12 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' blob: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		// Only a deployment whose browser-facing origin is real HTTPS gets the transport
+		// pin; Config.HSTS explains why a locally issued certificate must not receive one.
+		// The value is a plain six-month max-age, without includeSubDomains or preload.
+		if s.config.HSTS() {
+			w.Header().Set("Strict-Transport-Security", "max-age=15552000")
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
