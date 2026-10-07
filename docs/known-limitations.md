@@ -91,8 +91,8 @@ Both are decided and are recorded in `planning/v1-execution-ledger-2026-10-01.md
 - the default backup interval is **12 hours**, matching the recovery objective the plan
   states (lose at most 24 hours). An installation that already stores an interval keeps
   it — the default changed, the stored row did not; and
-- a **new installation starts with scheduled backups on** (W-37; this document describes
-  the state once that item lands, and its ledger entry says what has actually changed).
+- a **new installation starts with scheduled backups on** (W-37): the setup route and
+  offline setup write the flag into a first settings row, and nothing else changes it.
   Existing installations keep the setting they already have, so an installation that
   deliberately switched backups off stays off. Because a fresh installation has no
   off-host destination yet, its recovery check reports the critical condition above from

@@ -73,7 +73,7 @@ The defaults serve `https://localhost:8082` with a generated local certificate a
 
 ## Back up and restore
 
-While running, use **Manage server → Maintenance → Create backup**. Copy the downloaded ZIP to separate, private storage. A backup contains account password hashes and push keys; it is not encrypted. TLS certificate files and host configuration are not in the ZIP—back these up separately and privately.
+A new installation backs itself up on a schedule from the moment it is set up — every 12 hours, seven copies kept, on the server's own machine — and reports a problem until those backups also have a second destination (`BRRP_BACKUP_COPY_DIR`). For a copy by hand while running, use **Manage server → Maintenance → Create backup**. Copy the downloaded ZIP to separate, private storage. A backup contains account password hashes and push keys; it is not encrypted. TLS certificate files and host configuration are not in the ZIP—back these up separately and privately.
 
 For an offline backup, stop the server and run:
 

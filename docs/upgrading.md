@@ -94,6 +94,13 @@ installation that already stores an interval keeps it across the upgrade; if you
 longer than 12 hours and you want the stated objective, set it to 12 in **Manage server →
 Maintenance**.
 
+A new installation also starts with scheduled backups **on**. That, too, is a default for
+installations created from this release: one created before it keeps scheduled backups as
+they were. If yours had them off, they are still off after the upgrade — switch them on in
+**Manage server → Maintenance**, and give them a second destination
+(`BRRP_BACKUP_COPY_DIR`; in Docker, `compose.backup.yaml`), because the recovery check
+treats a backup kept only on the server's own machine as no recovery at all.
+
 ## If something goes wrong
 
 - **The service will not start.** Read the log first: a refusal to serve an unfinished

@@ -804,8 +804,11 @@
           </p>
         </details>
         <p class="muted">
-          Next: enable two-factor authentication, invite a friend and set up automatic backups in
-          Manage server.
+          Automatic backups are on: the first is written within a minute and one follows every 12
+          hours. They are kept on this machine, which recovers a mistake but not a lost machine, so
+          the server reports that as a problem until they have somewhere else to go. Next: enable
+          two-factor authentication, invite a friend, and give backups a second destination — Manage
+          server → Maintenance lists what is still missing.
         </p>
       {/if}
       {#if info?.can_update && status.registered && !installing && !managing && !closed && !updateFinished}

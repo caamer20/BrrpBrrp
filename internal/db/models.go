@@ -200,6 +200,25 @@ func DefaultSettings() Settings {
 	return Settings{ServerName: "BrrpBrrp", LinkPreviews: true, GIFEmbeds: true, Typing: true, Presence: true, Voice: true, TURNPort: 3478, VoiceBitrate: 24, MaxUploadBytes: 12 << 20, Audit: true, Push: true, Theme: "dark", BackupHours: 12, BackupKeep: 7, BackupUploads: true, RequirePrivilegedMFA: true}
 }
 
+// NewInstallationSettings is what a brand-new installation's settings row is written
+// from: DefaultSettings with scheduled backups switched on (owner decision of 6 October
+// 2026). A community that has just been set up is otherwise running with no backups and
+// a recovery check that reports nothing wrong, until an administrator happens to find
+// the checkbox.
+//
+// The flag is deliberately not set in DefaultSettings, which has two other jobs. It is
+// the in-memory configuration of a server that has not been set up yet, and the
+// maintenance worker offers a scheduled backup every minute: with nothing recorded a
+// snapshot is due at once, so an un-set-up server would archive an empty database. And
+// it is the base a stored row is decoded over, so an installation whose row predates the
+// key would be switched on without anybody choosing it. Only the two places that write
+// a first row — the setup route and offline setup — call this.
+func NewInstallationSettings() Settings {
+	settings := DefaultSettings()
+	settings.BackupEnabled = true
+	return settings
+}
+
 // TURNTCPPort is the plain-TCP fallback port the server will actually listen on:
 // the named one, or the UDP port plus one when the operator asked for a fallback
 // without naming a port. The validation and the listener have to agree on this, or a

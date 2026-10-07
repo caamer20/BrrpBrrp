@@ -28,7 +28,7 @@ docker compose --env-file .env.docker -f compose.yaml -f compose.backup.yaml up 
 docker compose --env-file .env.docker -f compose.yaml -f compose.backup.yaml exec -T brrpbrrp /usr/local/bin/brrpbrrp production-check
 ```
 
-Enable scheduled backups with uploads in the admin UI (default interval 12 hours), protect and replicate the copied archives off host, and back up `.env.docker` and `/data/certs` privately. Run `scripts/check-docker.mjs` against the candidate image on a Docker-enabled machine. Recreate the container, then prove messages, uploads, certificates and backups survive. Rehearse restoration into a fresh volume and keep the old image and volume until validation passes. The current local development machine has no Docker Engine; do not mark this row passed from Compose parsing alone.
+Confirm scheduled backups with uploads are on in the admin UI (they are from setup on a new installation; default interval 12 hours), protect and replicate the copied archives off host, and back up `.env.docker` and `/data/certs` privately. Run `scripts/check-docker.mjs` against the candidate image on a Docker-enabled machine. Recreate the container, then prove messages, uploads, certificates and backups survive. Rehearse restoration into a fresh volume and keep the old image and volume until validation passes. The current local development machine has no Docker Engine; do not mark this row passed from Compose parsing alone.
 
 ## 3. Record physical acceptance
 

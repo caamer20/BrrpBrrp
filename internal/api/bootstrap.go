@@ -126,7 +126,13 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The running server's settings are still the defaults here — nothing can change them
+	// before an account exists — and a new installation differs from them in exactly the
+	// ways db.NewInstallationSettings says. The row and the in-memory copy are written
+	// from the same value below, after the transaction commits, so scheduled backups begin
+	// without a restart and cannot begin before setup has finished.
 	settings := s.Settings()
+	settings.BackupEnabled = db.NewInstallationSettings().BackupEnabled
 	settings.ServerName = strings.TrimSpace(input.ServerName)
 	settings.MaxUploadBytes = s.config.MaxUploadBytes
 	encoded, _ := json.Marshal(settings)

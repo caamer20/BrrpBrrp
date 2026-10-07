@@ -57,7 +57,9 @@ func (s *Store) CreateAdministrator(ctx context.Context, username, password stri
 			}
 		}
 	}
-	settings := DefaultSettings()
+	// INSERT OR IGNORE: an installation that already has a settings row keeps it, so this
+	// value reaches only a database that is being set up offline for the first time.
+	settings := NewInstallationSettings()
 	settings.MaxUploadBytes = maxUpload
 	encoded, _ := json.Marshal(settings)
 	if _, err = tx.Exec(`INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES('setup_complete','true',?),('public',?,?)`, now, string(encoded), now); err != nil {
