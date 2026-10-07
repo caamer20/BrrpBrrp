@@ -87,3 +87,61 @@ func TestLocalHTTPStaysOnLoopback(t *testing.T) {
 		})
 	}
 }
+
+// Restricted channels and private conversations are on unless an operator switches one
+// off (owner decision of 6 October 2026). The distinction this pins is between a variable
+// nobody set — which takes the shipped default — and one an operator set, which is theirs:
+// an installation that wrote `false` while the features shipped off must still be off
+// after an upgrade, and a typo must be an error rather than a silent default.
+func TestBothConversationFeaturesAreOnUnlessAnOperatorSwitchesOneOff(t *testing.T) {
+	gates := []string{"BRRP_ENABLE_RESTRICTED_CHANNELS", "BRRP_ENABLE_PRIVATE_CONVERSATIONS"}
+	load := func(t *testing.T, value string) (Config, error) {
+		t.Helper()
+		t.Setenv("BRRP_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+		t.Setenv("BRRP_BASE_URL", "https://localhost:8080")
+		for _, gate := range gates {
+			t.Setenv(gate, value)
+		}
+		return LoadConfig()
+	}
+	for _, testCase := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		// An empty variable is what Compose passes for a key .env.docker leaves blank, and
+		// is indistinguishable from an unset one.
+		{"a variable nobody set", "", true},
+		{"an operator's explicit off", "false", false},
+		{"an operator's explicit off, as a digit", "0", false},
+		{"an explicit on", "true", true},
+		{"an explicit on, as a digit", "1", true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, err := load(t, testCase.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.RestrictedChannels != testCase.want || c.PrivateConversations != testCase.want {
+				t.Fatalf("restricted channels %v, private conversations %v; want both %v", c.RestrictedChannels, c.PrivateConversations, testCase.want)
+			}
+		})
+	}
+	if _, err := load(t, "yes please"); err == nil {
+		t.Fatal("a value that is neither true nor false was accepted")
+	}
+	// The other boolean settings are unchanged: unset still means off for them.
+	for _, gate := range gates {
+		t.Setenv(gate, "")
+	}
+	t.Setenv("BRRP_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("BRRP_BEHIND_PROXY", "")
+	t.Setenv("BRRP_ALLOW_INSECURE_HTTP", "")
+	c, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BehindProxy || c.AllowInsecure {
+		t.Fatal("a boolean setting other than the two features took a default of on")
+	}
+}

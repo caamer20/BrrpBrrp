@@ -86,10 +86,15 @@ func LoadConfig() (Config, error) {
 	if c.AllowInsecure, err = boolean("BRRP_ALLOW_INSECURE_HTTP"); err != nil {
 		return c, err
 	}
-	if c.RestrictedChannels, err = boolean("BRRP_ENABLE_RESTRICTED_CHANNELS"); err != nil {
+	// Restricted channels and private conversations are on unless an operator switches
+	// one off (owner decision of 6 October 2026; the two were gates that shipped off).
+	// "Unless" is literal: a deployment that set either variable to false before that
+	// decision still has it set, and keeps what it chose. Only an unset or empty variable
+	// takes the default.
+	if c.RestrictedChannels, err = booleanOr("BRRP_ENABLE_RESTRICTED_CHANNELS", true); err != nil {
 		return c, err
 	}
-	if c.PrivateConversations, err = boolean("BRRP_ENABLE_PRIVATE_CONVERSATIONS"); err != nil {
+	if c.PrivateConversations, err = booleanOr("BRRP_ENABLE_PRIVATE_CONVERSATIONS", true); err != nil {
 		return c, err
 	}
 	c.SQLiteSynchronous = strings.ToUpper(env("BRRP_SQLITE_SYNCHRONOUS", db.DurabilityFull))
@@ -284,6 +289,16 @@ func boolean(k string) (bool, error) {
 		return false, fmt.Errorf("%s must be true or false", k)
 	}
 	return b, nil
+}
+
+// booleanOr is boolean with a default for a variable that is unset or empty. A value that
+// is present is parsed exactly as boolean parses it, so a typo is still an error rather
+// than a silent default.
+func booleanOr(k string, fallback bool) (bool, error) {
+	if os.Getenv(k) == "" {
+		return fallback, nil
+	}
+	return boolean(k)
 }
 func number(k string, fallback, min, max int) (int, error) {
 	v := env(k, strconv.Itoa(fallback))

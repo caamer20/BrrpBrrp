@@ -252,10 +252,10 @@ for (let index = 0; index < Math.floor(messageCount / 10); index++) {
 }
 
 if (privateTraffic && accounts.length >= 2) {
-  // Private conversations are default-off, so this is skipped rather than failed when
-  // the installation has them disabled: a capacity run on a default installation is
-  // still a valid run, and pretending otherwise would make the generator useless
-  // everywhere except a configured server.
+  // An operator can switch private conversations off, so this is skipped rather than
+  // failed when the installation has them disabled: a capacity run on such an
+  // installation is still a valid run, and pretending otherwise would make the generator
+  // useless everywhere except a server configured one way.
   for (let index = 0; index + 1 < Math.min(accounts.length, 10); index++) {
     const created1 = await call("/api/directs", {
       method: "POST",
@@ -272,7 +272,7 @@ if (privateTraffic && accounts.length >= 2) {
   }
   if (created.directConversations === 0) {
     notes.push(
-      "private conversations are disabled on this server, so no private traffic was created; this run is community-only",
+      "private conversations are switched off on this server, so no private traffic was created; this run is community-only",
     );
   }
 }

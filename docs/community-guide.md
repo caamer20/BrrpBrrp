@@ -1,6 +1,6 @@
 # Everyday community controls
 
-These controls are included in **0.4.0-alpha.5**. They apply to community text channels; direct and group messaging are still planned.
+These controls have been included since **0.4.0-alpha.5**. They apply to community text channels. Direct and group conversations arrived later, are on by default, and are started by a request the other person accepts; either person can block the other.
 
 ## Recover a failed message
 

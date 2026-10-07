@@ -40,7 +40,7 @@ func (s *Server) requirePrivateConversations(w http.ResponseWriter) bool {
 	if s.config.PrivateConversations {
 		return true
 	}
-	problem(w, http.StatusConflict, "Private conversations are not enabled on this server.")
+	problem(w, http.StatusConflict, "Private conversations are switched off on this server.")
 	return false
 }
 

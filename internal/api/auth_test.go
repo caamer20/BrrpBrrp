@@ -17,6 +17,16 @@ import (
 func testServer(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
 	t.Setenv("BRRP_DATA_DIR", t.TempDir())
+	// Every test in this package was written when both conversation features shipped off:
+	// a test that wants one sets the variable (or the Config field) itself, and a test of a
+	// refusal sets nothing. The shipped default is now on, so the helper states the old
+	// footing explicitly for a test that did not choose — which keeps each test meaning
+	// what it meant, and leaves the default itself to internal/app's own tests.
+	for _, gate := range []string{"BRRP_ENABLE_RESTRICTED_CHANNELS", "BRRP_ENABLE_PRIVATE_CONVERSATIONS"} {
+		if _, chosen := os.LookupEnv(gate); !chosen {
+			t.Setenv(gate, "false")
+		}
+	}
 	c, err := app.LoadConfig()
 	if err != nil {
 		t.Fatal(err)

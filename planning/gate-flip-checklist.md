@@ -1,5 +1,21 @@
 # The two feature gates: everything that assumes they are off
 
+> **Applied on 6 October 2026 (ledger tranche 46), by the owner's decision.** This document
+> is now the record of what the flip had to touch. Four things differ from what it proposed:
+>
+> 1. **The default is in the code.** The list below says neither key "has a constant to
+>    change" and that a native installation "inherits the shipped default". Those two
+>    statements cannot both be true: `boolean` returned false for an unset variable, and the
+>    setup wizard writes neither key, so a native installation would have stayed off.
+>    `internal/app/config.go` now reads both with `booleanOr(…, true)`.
+> 2. **The harness keeps its own explicit values** (§5, question 1). `web/e2e/run.mjs` sets
+>    both features off unless asked, and the Go test helper does the same, so every existing
+>    test still means what it meant.
+> 3. **Nothing claims a review** (§5, question 3). None has run. The guides say the features
+>    are on by the owner's decision and have not been independently reviewed.
+> 4. **The two refusals were reworded** (§5, question 4) to say the feature is switched off
+>    on this server.
+
 **What this is.** `BRRP_ENABLE_RESTRICTED_CHANNELS` and `BRRP_ENABLE_PRIVATE_CONVERSATIONS`
 ship **off** and the owner flips them **on** before the beta, after the independent reviews
 and their P1 findings. Both features are implemented and locally tested; what the gates

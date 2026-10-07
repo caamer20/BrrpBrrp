@@ -56,7 +56,7 @@ The container runs `serve` directly. Docker manages its lifecycle; there is no s
 | `BRRP_BEHIND_PROXY`, `BRRP_TRUSTED_PROXIES` | behind a reverse proxy, and which sources may set the client address |
 | `BRRP_VOICE_EXTERNAL_IP`, `BRRP_MEDIA_BIND_IP` | the address clients reach for media, and the host interface the UDP ports bind to |
 | `BRRP_LOG_LEVEL` | log verbosity |
-| `BRRP_ENABLE_RESTRICTED_CHANNELS`, `BRRP_ENABLE_PRIVATE_CONVERSATIONS` | the two feature gates, off until the owner flips them |
+| `BRRP_ENABLE_RESTRICTED_CHANNELS`, `BRRP_ENABLE_PRIVATE_CONVERSATIONS` | restricted channels and private conversations; on unless set to `false`. A `.env.docker` copied from an earlier example file has both set to `false` and keeps them off |
 | `BRRP_LOGIN_ATTEMPTS` | the sign-in failure budget for one client address. Under Docker Desktop, and behind a proxy that is not in `BRRP_TRUSTED_PROXIES`, every client reaches the container from one address and shares it; only failed attempts count |
 | `BRRP_MAX_UPLOAD_BYTES` | the largest accepted upload |
 | `BRRP_STORAGE_QUOTA_BYTES`, `BRRP_STORAGE_RESERVE_BYTES` | the storage ceiling and the free-space floor |

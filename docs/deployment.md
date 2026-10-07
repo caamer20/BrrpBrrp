@@ -122,8 +122,8 @@ The `production-check --config PATH` command is safe while the service is runnin
 | `BRRP_VOICE_EXTERNAL_IP` | Optional reachable media IP for NAT mapping |
 | `BRRP_VOICE_PORT_MIN` / `BRRP_VOICE_PORT_MAX` | UDP 50000–50100 |
 | `BRRP_BACKUP_COPY_DIR` | Optional absolute destination for extra copies; grant the service account write access |
-| `BRRP_ENABLE_RESTRICTED_CHANNELS` | `false`; the restricted-channel feature gate (ADR 0003). Shipped off, and the owner flips it after the independent reviews |
-| `BRRP_ENABLE_PRIVATE_CONVERSATIONS` | `false`; the consented-private-conversation feature gate (ADR 0012). Consent is required by the product rather than by this switch. Shipped off, and the owner flips it after the independent reviews |
+| `BRRP_ENABLE_RESTRICTED_CHANNELS` | `true`; restricted channels (ADR 0003): private channels, announcement channels and restricted voice rooms. Set it to `false` to withhold the feature. It shipped off through 0.4.0-alpha.9; an installation that set it then keeps its value |
+| `BRRP_ENABLE_PRIVATE_CONVERSATIONS` | `true`; consented private conversations (ADR 0012): direct messages and groups. Consent is required by the product rather than by this switch. Set it to `false` to withhold the feature. It shipped off through 0.4.0-alpha.9; an installation that set it then keeps its value |
 
 ### What the disk reserve guarantees
 

@@ -91,8 +91,14 @@ async function run() {
       // journeys fail on purpose and they share this one address: the default stays 20,
       // and the limiter's behaviour stays a server-side concern with its own tests.
       BRRP_LOGIN_ATTEMPTS: '400',
-      // Private conversations stay disabled in the default suite. The focused DM journey
-      // opts this temporary server in explicitly; it never changes shipped defaults.
+      // Restricted channels now ship on. Every journey here was written, and last run,
+      // with them off, and none creates a restricted channel or reads its screens, so this
+      // server states the old value explicitly; a mode that exercises them in a browser is
+      // W-07 and does not exist yet. The harness names its own values so that a changed
+      // product default cannot silently change what an existing journey measures.
+      BRRP_ENABLE_RESTRICTED_CHANNELS: 'false',
+      // Private conversations are likewise off in the default suite, and on only when the
+      // caller asks. The focused DM journey opts this temporary server in explicitly.
       BRRP_ENABLE_PRIVATE_CONVERSATIONS:
         process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'true' : 'false'
     },

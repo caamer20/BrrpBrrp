@@ -397,7 +397,9 @@
         <p class="notice" role="status">
           Restricted channels are switched off on this server. Public channels and member posting
           work as usual, and private channels and announcements are refused while the setting is
-          off. An operator enables them with <code>BRRP_ENABLE_RESTRICTED_CHANNELS=true</code> and a restart.
+          off. An operator turns them back on by removing
+          <code>BRRP_ENABLE_RESTRICTED_CHANNELS=false</code> from the server’s configuration and restarting
+          it.
         </p>
       {/if}
       <dl class="access-facts">

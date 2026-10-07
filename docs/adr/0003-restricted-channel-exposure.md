@@ -96,3 +96,13 @@ Foreign keys, the FTS index and the migration path are covered elsewhere.
   server does not keep.
 - The gate is not a substitute for the remaining work; it exists so the delivered
   half cannot be mistaken for the whole.
+
+## Note of 6 October 2026 — the switch now defaults to on
+
+This record is left as it was written. What it says about the default is superseded: from
+1.0.0-rc.1, restricted channels are on unless an operator sets the variable to `false`, and an
+installation that had set it keeps what it set. The owner made that decision on 6 October
+2026. It was **not** made on the evidence this record asked for — no independent review has
+run — and the documents say so wherever they describe the feature
+(`docs/known-limitations.md`, `docs/admin.md`, `docs/upgrading.md`). The enforcement this
+record describes is unchanged.

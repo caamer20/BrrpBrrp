@@ -33,3 +33,13 @@ Account removal cancels pending requests and clears introductions authored by th
 `BRRP_ENABLE_PRIVATE_CONVERSATIONS` defaults to false. The API and workspace capability flag enforce it, including on retained message/file URLs. Opt in on a test installation to exercise the alpha interface; local regression success does not grant production or independent review acceptance.
 
 Migration fixtures cover exact rowids, relationship/FTS/receipt preservation, rollback, cancellation and reopen recovery. API tests cover consent, durable limits, participant-only reads/files/search/events, operator denial, cross-destination claims, blocked in-flight writes, retained history and peer erasure. Browser tests use two real signed-in members plus outsider/owner controls, scoped uploads, held sends and explicit recovery. Consult the release record for final executed results.
+
+## Note of 6 October 2026 — the switch now defaults to on
+
+This record is left as it was written. What it says about the default is superseded: from
+1.0.0-rc.1, private conversations are on unless an operator sets the variable to `false`, and an
+installation that had set it keeps what it set. The owner made that decision on 6 October
+2026. It was **not** made on the evidence this record asked for — no independent review has
+run — and the documents say so wherever they describe the feature
+(`docs/known-limitations.md`, `docs/admin.md`, `docs/upgrading.md`). The enforcement this
+record describes is unchanged.

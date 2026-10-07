@@ -14,15 +14,15 @@ import (
 
 // restrictedChannelsEnabled reports whether restricted community channels may be
 // created or changed through the API. The enforcement code is always live; this
-// switch keeps an incomplete privacy surface from being exposed to users before
-// the privacy gate passes. It defaults to off.
+// switch is the operator's way to withhold the feature. It is on unless an operator
+// set BRRP_ENABLE_RESTRICTED_CHANNELS=false (it shipped off until 6 October 2026).
 func (s *Server) restrictedChannelsEnabled() bool { return s.config.RestrictedChannels }
 
 func (s *Server) requireRestrictedChannels(w http.ResponseWriter) bool {
 	if s.restrictedChannelsEnabled() {
 		return true
 	}
-	problem(w, http.StatusConflict, "Restricted channels are disabled on this server until the privacy checks are complete. Set BRRP_ENABLE_RESTRICTED_CHANNELS=true to enable them.")
+	problem(w, http.StatusConflict, "Restricted channels are switched off on this server. An operator turns them back on by removing BRRP_ENABLE_RESTRICTED_CHANNELS=false from the server's configuration and restarting it.")
 	return false
 }
 

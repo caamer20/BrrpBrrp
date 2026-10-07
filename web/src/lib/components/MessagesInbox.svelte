@@ -409,7 +409,7 @@
   </nav>
   {#if workspace.authorizationUnverified}<p role="status">Checking your access…</p>
   {:else if !workspace.privateConversationsEnabled}<p role="status">
-      Direct conversations are not enabled on this server.
+      Direct conversations are switched off on this server.
     </p>
   {:else}
     {#if loading}<p role="status">Loading your conversations…</p>{/if}
