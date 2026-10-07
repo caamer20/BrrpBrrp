@@ -52,7 +52,8 @@ func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
-	if !s.limitLogin(w, r) {
+	address, open := s.guestOpen(w, r)
+	if !open {
 		return
 	}
 	var input struct {
@@ -81,6 +82,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := os.ReadFile(s.config.SetupTokenFile)
 	if err != nil || subtle.ConstantTimeCompare([]byte(input.Token), token) != 1 {
+		s.guestFailed(address)
 		problem(w, 403, "The setup token is incorrect.")
 		return
 	}

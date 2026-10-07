@@ -85,11 +85,11 @@ async function run() {
       BRRP_ADDR: `127.0.0.1:${port}`,
       BRRP_BASE_URL: baseURL,
       BRRP_TLS_MODE: 'http-local',
-      // Every journey signs in from 127.0.0.1, so the shipped address-wide sign-in budget
-      // is spent by the suite's own framing long before any journey that needs it runs.
-      // It is raised here rather than in the product, because a journey must measure what
-      // it is about: the default budget stays 20, and the limiter's behaviour stays a
-      // server-side concern with its own tests.
+      // Every journey signs in from 127.0.0.1. The address-wide budget used to be spent by
+      // each of those sign-ins, so it was raised here; since W-29 only *failed* attempts
+      // count and the suite's own framing spends nothing. The value is kept because some
+      // journeys fail on purpose and they share this one address: the default stays 20,
+      // and the limiter's behaviour stays a server-side concern with its own tests.
       BRRP_LOGIN_ATTEMPTS: '400',
       // Private conversations stay disabled in the default suite. The focused DM journey
       // opts this temporary server in explicitly; it never changes shipped defaults.

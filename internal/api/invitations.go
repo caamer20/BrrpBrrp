@@ -220,7 +220,11 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request, user d
 }
 
 func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
-	if !s.limitLogin(w, r) {
+	// A valid invitation spends nothing: fifty people may accept one, and they often do
+	// it from the same room. What is counted is a token that admits nobody — the one
+	// thing here that can be guessed.
+	address, open := s.guestOpen(w, r)
+	if !open {
 		return
 	}
 	var input struct {
@@ -262,6 +266,7 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if err := tx.QueryRow(`SELECT id,created_by FROM invitations WHERE token_hash=? AND revoked_at='' AND expires_at>? AND (used_at IS NULL OR (max_uses>0 AND uses<max_uses))`, hashToken(input.Token), db.Now()).
 		Scan(&invitationID, &inviter); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			s.guestFailed(address)
 			problem(w, 400, "This invitation has expired or has already been used.")
 			return
 		}
@@ -278,6 +283,7 @@ func (s *Server) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
+		s.guestFailed(address)
 		problem(w, 400, "This invitation has expired or has already been used.")
 		return
 	}

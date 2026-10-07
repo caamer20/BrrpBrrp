@@ -40,7 +40,8 @@ func (s *Server) authenticate(r *http.Request) (db.User, error) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.limitLogin(w, r) {
+	address, open := s.guestOpen(w, r)
+	if !open {
 		return
 	}
 	var input struct {
@@ -52,7 +53,16 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validPassword(input.Password) || !usernamePattern.MatchString(input.Username) {
+		// Not a name any account can have, so there is no account to count it against.
+		s.guestFailed(address)
 		problem(w, 401, "Incorrect username or password.")
+		return
+	}
+	// Decided from the counter alone, before the account is looked up, so the answer is
+	// the same for a name that exists and one that does not.
+	attempts := signInKey(address, input.Username)
+	if s.guests.blocked(attempts, credentialFailuresPerKey) {
+		refuseAttempts(w, tooManySignIns)
 		return
 	}
 	if !s.acquirePasswordSlot(w) {
@@ -67,12 +77,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if hash == "" {
-		// Match the cost of checking a real account without leaking usernames.
+		// Match the cost of checking a real account without leaking usernames, and count
+		// it exactly as a wrong password for a real one is counted.
 		_, _ = bcrypt.GenerateFromPassword([]byte(input.Password), 12)
+		s.guestFailed(address, attempts)
 		problem(w, 401, "Incorrect username or password.")
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(input.Password)) != nil || banned {
+		s.guestFailed(address, attempts)
 		problem(w, 401, "Incorrect username or password.")
 		return
 	}
@@ -86,6 +99,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// intended behaviour and the code did the opposite for as long as the two states
 	// shared a flag.
 	//
+	// The password was right, so none of the failure counters move. What is spent is the
+	// account's own rate, which only somebody holding the password can reach.
+	if !s.limiter.allow("signin-rate:"+id, s.credentialRate(), credentialWindow) {
+		refuseAttempts(w, tooManySignIns)
+		return
+	}
 	// An expired timeout is still lifted here, before the check, so signing in is
 	// itself the thing that clears it.
 	s.timeoutState(r.Context(), id)
@@ -284,7 +303,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, user db.
 		problem(w, 400, "Passwords must contain 12–72 bytes.")
 		return
 	}
-	if !s.limitLogin(w, r) || !s.acquirePasswordSlot(w) {
+	if !s.credentialOpen(w, user.ID) || !s.acquirePasswordSlot(w) {
 		return
 	}
 	defer s.releasePasswordSlot()
@@ -294,6 +313,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, user db.
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(input.Current)) != nil {
+		s.credentialFailed(user.ID)
 		problem(w, 400, "Current password is incorrect.")
 		return
 	}
@@ -351,20 +371,118 @@ func (s *Server) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.config.SecureCookie(), SameSite: http.SameSiteStrictMode})
 }
 
-// limitLogin throttles sign-in attempts per address. The ceiling is the configured
-// budget (app.LoginAttemptsDefault unless the operator raised it): a zero value can only
-// come from a Config built in a test, and it means the default, never "no limit".
-func (s *Server) limitLogin(w http.ResponseWriter, r *http.Request) bool {
-	limit := s.config.LoginAttempts
-	if limit < 1 {
-		limit = app.LoginAttemptsDefault
+// The credential throttle (decision D-17 in docs/security.md).
+//
+// It counts failures, never attempts. The earlier throttle spent one budget per address
+// on every sign-in, password change, setup, second-factor change and invitation
+// acceptance whether or not it succeeded, so a community that arrived from one address —
+// a household, an office, Docker Desktop's bridge, a proxy that was not declared trusted
+// — was refused at its twenty-first request although nobody had failed, and one
+// invitation may admit fifty people. A correct password, a valid invitation and a valid
+// setup token now spend nothing.
+//
+// There are three counters:
+//
+//   - an address's failures, in the guests table, with the operator's
+//     BRRP_LOGIN_ATTEMPTS as the ceiling. It is checked first, so an address that has
+//     reached it creates no further keys;
+//   - an address's failures against one username, also in guests, which bounds guessing
+//     at a single account when an operator has raised the address ceiling for a shared
+//     address. A failure from another address lands on another key, so nobody can lock a
+//     member out of their own account from somewhere else;
+//   - a signed-in account's failed password or code re-checks, in the members' table,
+//     keyed by the account rather than by where the request came from.
+//
+// What none of them bounds is guessing one account from many addresses. That is bounded
+// by the cost of a hash and the two password slots, which every password check on the
+// server passes through.
+//
+// A correct password is not free either — it costs a hash and, at sign-in, leaves a
+// session behind — so success has a *rate*, per account and far above anything a person
+// does (credentialRate). It exists so that one account holding valid credentials cannot
+// occupy the password slots or grow the session table without bound, which the old
+// per-address budget prevented only by accident.
+const (
+	credentialWindow = 5 * time.Minute
+	// credentialFailuresPerKey is how many failures one username from one address, or one
+	// signed-in account, absorbs in a window.
+	credentialFailuresPerKey = 10
+)
+
+const (
+	tooManySignIns  = "Too many sign-in attempts. Try again in five minutes."
+	tooManyRechecks = "Too many incorrect attempts. Try again in five minutes."
+)
+
+// addressCeiling is the configured budget of failures per address (app.LoginAttemptsDefault
+// unless the operator raised it): a zero value can only come from a Config built in a
+// test, and it means the default, never "no limit".
+func (s *Server) addressCeiling() int {
+	if s.config.LoginAttempts < 1 {
+		return app.LoginAttemptsDefault
 	}
-	if !s.limiter.allow("login:"+s.clientIP(r), limit, 5*time.Minute) {
-		w.Header().Set("Retry-After", "300")
-		problem(w, 429, "Too many sign-in attempts. Try again in five minutes.")
+	return s.config.LoginAttempts
+}
+
+// credentialRate is how many times one account may present a correct password in a
+// window: three times the address ceiling, so sixty by default. A person signing in on
+// every device they own does not come near it.
+func (s *Server) credentialRate() int { return 3 * s.addressCeiling() }
+
+func refuseAttempts(w http.ResponseWriter, message string) {
+	w.Header().Set("Retry-After", "300")
+	problem(w, http.StatusTooManyRequests, message)
+}
+
+// guestOpen answers whether an unauthenticated caller's address may still try, and returns
+// the key its failures are counted under. Asking spends nothing.
+func (s *Server) guestOpen(w http.ResponseWriter, r *http.Request) (string, bool) {
+	address := "address:" + addressKey(s.clientIP(r))
+	if s.guests.blocked(address, s.addressCeiling()) {
+		refuseAttempts(w, tooManySignIns)
+		return address, false
+	}
+	return address, true
+}
+
+// signInKey pairs an address with the username it tried. The name is folded to lower case
+// because that is how accounts are stored, so two spellings of one name share a counter.
+func signInKey(address, username string) string {
+	return "signin:" + address + "|" + strings.ToLower(username)
+}
+
+// guestFailed records one failure against the address and against any further key the
+// caller names. A failure that cannot be recorded — the table is full of other callers'
+// counters — is not turned into a refusal for anybody; it is logged, at most once a
+// window, because an operator should know the throttle is under that kind of pressure.
+func (s *Server) guestFailed(address string, more ...string) {
+	recorded := s.guests.note(address, credentialWindow)
+	for _, key := range more {
+		recorded = s.guests.note(key, credentialWindow) && recorded
+	}
+	if recorded || s.guests == nil {
+		return
+	}
+	now := time.Now().Unix()
+	last := s.guestsFullWarned.Load()
+	if now-last >= int64(credentialWindow/time.Second) && s.guestsFullWarned.CompareAndSwap(last, now) && s.log != nil {
+		s.log.Warn("the sign-in throttle is full; a failed attempt was not counted", "capacity", guestLimiterCapacity)
+	}
+}
+
+// credentialOpen answers whether a signed-in account may still re-enter its password or a
+// code, and credentialFailed records a wrong one. The key is the account, so where the
+// request came from — and who else is behind that address — does not enter into it.
+func (s *Server) credentialOpen(w http.ResponseWriter, userID string) bool {
+	if s.limiter.blocked("credential:"+userID, credentialFailuresPerKey) || !s.limiter.allow("credential-rate:"+userID, s.credentialRate(), credentialWindow) {
+		refuseAttempts(w, tooManyRechecks)
 		return false
 	}
 	return true
+}
+
+func (s *Server) credentialFailed(userID string) {
+	s.limiter.note("credential:"+userID, credentialWindow)
 }
 
 func (s *Server) acquirePasswordSlot(w http.ResponseWriter) bool {

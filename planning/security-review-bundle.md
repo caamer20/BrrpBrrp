@@ -244,7 +244,21 @@ F-01…F-12. For a security reviewer the relevant ones and their disposition are
 | F-10 member-export attachment accounting could exceed its bound | Fixed (W-02). |
 | F-11 backup alerts aged the local job, not the recoverable snapshot | Fixed (W-03). |
 | F-12 metrics named things they did not measure | Fixed (W-04). |
-| F-03, F-04, F-05, F-07, F-08, F-09 | Open or in progress; see the verification queue. |
+| F-04, F-08 | Fixed by reading (W-09, W-08); neither has been run on a hosted runner. |
+| F-03, F-05, F-07, F-09 | Open or in progress; see the verification queue. |
+
+Two defects were found after that review, by reading, and are worth a reviewer's own look
+because both are in the path every unauthenticated request can reach (W-29, decision
+D-17 in [docs/security.md](../docs/security.md); **written, not run**):
+
+| Finding | State |
+| --- | --- |
+| One sign-in budget per address was spent by every sign-in, password change, setup, second-factor change and invitation acceptance, successful or not, so the twenty-first person behind one address was refused | Rewritten to count failures only, per address, per address-and-username, and per signed-in account; a correct password is rated per account instead. `internal/api/auth.go`, `throttle_test.go`. |
+| The rate limiter refused every key once its one table was full, including keys it already held, and unauthenticated sign-in attempts could fill it — closing the server to its signed-in members | A key the table holds is always answered from its own counter, and the counters an unauthenticated request can create live in a table of their own. `internal/api/middleware.go`. |
+
+What the rewrite deliberately does not bound — guessing one account from many addresses,
+limited only by the hash cost and the two password slots — is stated in D-17 and is the
+residual a reviewer should weigh.
 
 The ledger's status index is the authoritative list of what is closed, and it says
 whether each closure was run or only written.

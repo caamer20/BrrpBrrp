@@ -111,44 +111,7 @@ func TestBootstrapLoginAndLogout(t *testing.T) {
 	}
 }
 
-// TestTheSignInBudgetIsTheConfiguredOne pins the address-wide sign-in budget to the
-// configured value. It exists because the budget is shared by every account behind one
-// address, so an operator who raises it for an office, a VPN or a reverse proxy has to
-// actually get the larger budget; and because a Server whose Config carries no value must
-// fall back to the shipped default rather than to an unlimited budget.
-func TestTheSignInBudgetIsTheConfiguredOne(t *testing.T) {
-	t.Setenv("BRRP_LOGIN_ATTEMPTS", "3")
-	s, handler := testServer(t)
-	if s.config.LoginAttempts != 3 {
-		t.Fatalf("configured budget: %d", s.config.LoginAttempts)
-	}
-	// Setup is an attempt too, which is why the budget here is three.
-	setupAdmin(t, s, handler)
-	account := map[string]string{"username": "admin", "password": "correct horse battery"}
-	for attempt := 2; attempt <= 3; attempt++ {
-		if w := request(t, handler, "POST", "/api/login", account, nil); w.Code != 200 {
-			t.Fatalf("sign-in %d of a budget of three: %d %s", attempt, w.Code, w.Body.String())
-		}
-	}
-	w := request(t, handler, "POST", "/api/login", account, nil)
-	if w.Code != 429 || w.Header().Get("Retry-After") == "" {
-		t.Fatalf("sign-in over the budget: %d %q", w.Code, w.Header().Get("Retry-After"))
-	}
-	// A zero value is what a Config built in a test looks like; it must mean the default.
-	s.config.LoginAttempts = 0
-	fresh := &Server{config: s.config, limiter: newRateLimiter()}
-	if !fresh.limitLogin(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/login", nil)) {
-		t.Fatal("a zero budget must mean the default, not no attempts")
-	}
-	for attempt := 1; attempt < app.LoginAttemptsDefault; attempt++ {
-		if !fresh.limitLogin(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/login", nil)) {
-			t.Fatalf("attempt %d of the default budget was refused", attempt)
-		}
-	}
-	if fresh.limitLogin(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/login", nil)) {
-		t.Fatalf("attempt %d past the default budget was allowed", app.LoginAttemptsDefault+1)
-	}
-}
+// The sign-in budget's tests live in throttle_test.go, with the rest of decision D-17.
 
 func TestCrossOriginAndPasswordChange(t *testing.T) {
 	s, handler := testServer(t)

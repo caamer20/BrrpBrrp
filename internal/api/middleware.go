@@ -264,32 +264,127 @@ type rateBucket struct {
 	count int
 	until time.Time
 }
+
+// rateLimiter is a table of counters, one per key, each with its own window.
+//
+// The table is bounded, and what happens at the bound matters more than the bound. It
+// used to answer "no" to every caller once it held more keys than it could prune —
+// including a caller whose own key was already in it — so anything that could mint keys
+// could refuse every member everything, and sign-in attempts mint keys without a session.
+// Two things keep that from happening now. A key the table already holds is always
+// answered from its own counter, full or not; only a key it has never seen is refused
+// when there is no room. And the keys an unauthenticated request can create live in a
+// table of their own (Server.guests), so they cannot crowd out the one every signed-in
+// request is checked against.
 type rateLimiter struct {
 	sync.Mutex
 	buckets map[string]rateBucket
+	// capacity is the most keys the table holds; zero means rateLimiterCapacity.
+	capacity int
 }
 
-func newRateLimiter() *rateLimiter { return &rateLimiter{buckets: make(map[string]rateBucket)} }
+const (
+	// rateLimiterCapacity bounds the table that serves signed-in members. Its keys are an
+	// account and a kind of action, so a hundred accounts cannot approach it.
+	rateLimiterCapacity = 4096
+	// guestLimiterCapacity bounds the table whose keys an unauthenticated request can
+	// create: an address, and an address paired with a username that failed from it.
+	guestLimiterCapacity = 16384
+)
 
+func newRateLimiter() *rateLimiter { return newRateLimiterOf(rateLimiterCapacity) }
+
+func newRateLimiterOf(capacity int) *rateLimiter {
+	return &rateLimiter{buckets: make(map[string]rateBucket), capacity: capacity}
+}
+
+// roomFor reports whether a key the table has never seen fits, pruning expired counters
+// first when the table is at its bound. The caller holds the lock.
+func (l *rateLimiter) roomFor(now time.Time) bool {
+	capacity := l.capacity
+	if capacity < 1 {
+		capacity = rateLimiterCapacity
+	}
+	if len(l.buckets) < capacity {
+		return true
+	}
+	for k, b := range l.buckets {
+		if now.After(b.until) {
+			delete(l.buckets, k)
+		}
+	}
+	return len(l.buckets) < capacity
+}
+
+// allow spends one unit of key's budget and reports whether the caller is inside it.
+// Every call counts, which is right for a rate: so many messages, so many searches.
 func (l *rateLimiter) allow(key string, limit int, window time.Duration) bool {
 	l.Lock()
 	defer l.Unlock()
 	now := time.Now()
-	if len(l.buckets) > 4096 {
-		for k, b := range l.buckets {
-			if now.After(b.until) {
-				delete(l.buckets, k)
-			}
-		}
-		if len(l.buckets) > 4096 {
-			return false
-		}
+	b, known := l.buckets[key]
+	if !known && !l.roomFor(now) {
+		return false
 	}
-	b := l.buckets[key]
 	if now.After(b.until) {
 		b = rateBucket{until: now.Add(window)}
 	}
 	b.count++
 	l.buckets[key] = b
 	return b.count <= limit
+}
+
+// blocked reports whether key has already reached limit inside its window. It spends
+// nothing, which is what a throttle on *failures* needs: asking whether somebody may try
+// must not itself count as a try.
+func (l *rateLimiter) blocked(key string, limit int) bool {
+	if l == nil {
+		return false
+	}
+	l.Lock()
+	defer l.Unlock()
+	b, known := l.buckets[key]
+	return known && !time.Now().After(b.until) && b.count >= limit
+}
+
+// note records one failure against key and reports whether it could be recorded. It
+// cannot when the key is new and the table has no room; the caller decides what that
+// means, and the table itself never turns a full state into a refusal.
+func (l *rateLimiter) note(key string, window time.Duration) bool {
+	if l == nil {
+		return false
+	}
+	l.Lock()
+	defer l.Unlock()
+	now := time.Now()
+	b, known := l.buckets[key]
+	if !known && !l.roomFor(now) {
+		return false
+	}
+	if now.After(b.until) {
+		b = rateBucket{until: now.Add(window)}
+	}
+	b.count++
+	l.buckets[key] = b
+	return true
+}
+
+// addressKey is what an address is throttled under: an IPv4 address as it is, and an IPv6
+// address by its /64. One IPv6 subscriber is routinely given a whole /64, so counting
+// each of its addresses separately would hand one caller as many budgets as it cares to
+// take. Anything that does not parse is used as it is.
+func addressKey(address string) string {
+	parsed, err := netip.ParseAddr(address)
+	if err != nil {
+		return address
+	}
+	parsed = parsed.Unmap()
+	if parsed.Is4() {
+		return parsed.String()
+	}
+	prefix, err := parsed.Prefix(64)
+	if err != nil {
+		return address
+	}
+	return prefix.String()
 }

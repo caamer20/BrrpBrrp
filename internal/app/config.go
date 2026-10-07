@@ -16,13 +16,13 @@ import (
 
 const MaxUpload = 12 * 1024 * 1024
 
-// LoginAttemptsDefault is how many sign-in attempts one address may make in five
-// minutes before the server answers 429. It is deliberately small: the limit is what
-// makes online guessing expensive. It is also address-wide, which is why it is
-// configurable: every account behind one office NAT, VPN or reverse proxy shares it, and
-// a community that signs in from one of those can exhaust it with ordinary use rather
-// than with an attack. Raising it trades that protection for reachability; lowering it
-// is not supported below one attempt.
+// LoginAttemptsDefault is how many *failed* sign-in, setup-token and invitation-token
+// attempts one address may make in five minutes before the server answers 429. It is
+// deliberately small: the limit is what makes online guessing expensive. A correct
+// password spends nothing (decision D-17), so ordinary use behind one office NAT, VPN or
+// reverse proxy no longer exhausts it; it is still address-wide, and still configurable,
+// because twenty people who mistype behind one address are one address. Raising it
+// trades that protection for reachability; lowering it is not supported below one.
 const LoginAttemptsDefault = 20
 
 // StorageReserveDefault is the free space a server keeps in hand when nothing else is

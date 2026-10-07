@@ -185,6 +185,13 @@ type Server struct {
 	passwordSlots    chan struct{}
 	thumbnailSlots   chan struct{}
 	limiter          *rateLimiter
+	// guests holds the counters an unauthenticated request can create — failed sign-ins,
+	// setup tokens and invitation tokens — apart from limiter, so that filling it cannot
+	// refuse a signed-in member anything (decision D-17).
+	guests *rateLimiter
+	// guestsFullWarned is when a failure last could not be recorded because guests was
+	// full, as Unix seconds, so the log says so once a window rather than once a request.
+	guestsFullWarned atomic.Int64
 }
 
 func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) {
@@ -213,6 +220,7 @@ func New(config app.Config, store *db.Store, log *slog.Logger) (*Server, error) 
 		passwordSlots:         make(chan struct{}, 2),
 		thumbnailSlots:        make(chan struct{}, 1),
 		limiter:               newRateLimiter(),
+		guests:                newRateLimiterOf(guestLimiterCapacity),
 		exportByteCeiling:     exportByteCeiling,
 		alertPrompt:           make(chan struct{}, 1),
 		alertDeliveryAttempts: alertDeliveryAttempts,

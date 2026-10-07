@@ -41,7 +41,7 @@ func (s *Server) mfaStatus(w http.ResponseWriter, r *http.Request, user db.User)
 }
 
 func (s *Server) checkPassword(w http.ResponseWriter, r *http.Request, userID, password string) bool {
-	if !s.limitLogin(w, r) || !s.acquirePasswordSlot(w) {
+	if !s.credentialOpen(w, userID) || !s.acquirePasswordSlot(w) {
 		return false
 	}
 	defer s.releasePasswordSlot()
@@ -51,6 +51,7 @@ func (s *Server) checkPassword(w http.ResponseWriter, r *http.Request, userID, p
 		return false
 	}
 	if !validPassword(password) || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		s.credentialFailed(userID)
 		problem(w, 400, "Current password is incorrect.")
 		return false
 	}
@@ -101,7 +102,7 @@ func (s *Server) enableMFA(w http.ResponseWriter, r *http.Request, user db.User)
 	var input struct {
 		Code string `json:"code"`
 	}
-	if !decode(w, r, &input) || !s.limitLogin(w, r) {
+	if !decode(w, r, &input) || !s.credentialOpen(w, user.ID) {
 		return
 	}
 	tx, err := s.store.BeginTx(r.Context(), nil)
@@ -123,6 +124,7 @@ func (s *Server) enableMFA(w http.ResponseWriter, r *http.Request, user db.User)
 	}
 	counter, valid := matchTOTP(secret, strings.TrimSpace(input.Code), time.Now(), -1)
 	if !valid {
+		s.credentialFailed(user.ID)
 		problem(w, 400, "The code is incorrect or setup has expired.")
 		return
 	}
