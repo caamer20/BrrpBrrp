@@ -13,6 +13,20 @@ Toolchain on this machine: Go 1.27.1 at `BrrpBrrp/.tools/go/bin/go` (not on `PAT
 Chromium 1243 / Firefox 1543 / WebKit 2359 in `/private/tmp/brrpbrrp-playwright-browsers`.
 `rg` is not installed; use `grep` and check its exit status.
 
+## 0. The pass was run on 6 October
+
+Everything in section 2 has now been executed, in the order section 1 gives, and passed.
+Ledger tranche 44 holds the table: 389 unit tests; eleven Go packages; Chromium default 30
+and private 45; Firefox 14; WebKit 7 (after two harness corrections, which that tranche
+explains); `thread-scale` 10; and six rehearsals. Nothing failed, was skipped or did not
+run. The entries in section 2 are kept as the record of what each change needed; read each
+"must be confirmed by" as done, except where it names a hosted runner, a real deployment or
+a device — W-09's Windows job, W-30's `curl -I` against a real `https` host, and the browser
+reads of the Maintenance screen by a person have not happened.
+
+**Still not run:** the `-race` sweep, everything in section 4, and anything on Windows, in
+Docker or on a hosted runner.
+
 ## 1. The order the pass should take
 
 Cheapest and most informative first, so a failure is found before an hour is spent on

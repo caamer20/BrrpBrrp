@@ -16,15 +16,26 @@ below are evidence, some of them written when assignments were hazy, and two of 
 - **W-31 is closed as "deliberately not changed"** (42): both media debts are confirmed by
   reading and left alone, as §11w said they should be, with the design and the test to write
   first recorded in the queue.
+- **There is one branch now, and it is `main`.** On the evening of 6 October the owner asked
+  for that: `main` was fast-forwarded from `876260a` to `bd57911`, the main checkout was
+  switched to it, and `codex/p9-private-reporting`, `finish/v1-product-work` and
+  `claude/v1-roadmap-analysis-ca7727` were deleted. Wherever this ledger, the verification
+  queue or an older prompt says `codex/p9-private-reporting`, read `main`. The one commit that
+  was on no surviving line — `27ea71a`, whose only unique content is a work-in-progress patch
+  from 2 October — is kept under the tag `archive/wip-screen-view-decode-2026-10-02`.
 - **Tranche 32 is not a W-item — it is Part A's bookkeeping:** it commits tranche 31's
   ledger (`44e4022`), gathers the five owner questions into the queue's §5, and says in two
   guides how a member leaves today.
 - **Tranches 36–43 were written by a different session from 21–35**, in its own worktree, at
   the owner's request; the note above tranche 36 says how.
-- **Open, and all of it is verification: W-07 and W-10 through W-20.** Nothing on the product
-  list remains that can responsibly be done without running. Two changes are marked
-  "confirm by a run before this branch is merged": **W-29** (the sign-in path) and **W-37**
-  (when backups run, and what a new installation's alerts say).
+- **Everything written since `1faeb92` has now been run (tranche 44, 6 October).** 389
+  frontend unit tests, all eleven Go packages, Chromium in both feature modes (30 and 45),
+  Firefox (14), WebKit (7, green for the first time), `thread-scale` (10) and six
+  rehearsals, with nothing failed, skipped or left unrun. **W-06 is closed by a run**, and
+  the two changes that were marked "confirm by a run" — **W-29** and **W-37** — are
+  confirmed.
+- **Open: W-07 and W-10 through W-20**, which are acceptance work that has not been built
+  or run yet, plus the `-race` sweep. After those, what remains is the owner's.
 - **W-21 owes one thing still: the 100-account reference fixture definition** (`F-T`), which
   needs the owner's approval of the one-million-message / 20-GiB targets before it can be
   written; it is recorded in the queue.
@@ -3748,3 +3759,75 @@ first thirteen of them. Findings, most serious first:
 
 One read-through, with findings. A second by a context that has seen none of this is still
 owed before a release candidate, as §11w already says.
+
+## Tranche 44 — the verification pass: everything written since `1faeb92` has now been run
+
+Source commit before: `bd57911` (tree clean, branch `main`). Source: the commit that carries
+this entry's harness fix. Run on the evening of 6 October, after the owner consolidated the
+repository to one branch and asked for the work to continue. The suites were run in the
+order `planning/verification-queue.md` §1 gives, cheapest first, each to completion, with
+audio muted (W-23).
+
+### 44a. What was run, and the four numbers for each
+
+| Step | Result |
+| --- | --- |
+| Static gates (`make check`, `go vet ./...`) | exit 0 |
+| Frontend unit tests (`npm --prefix web test`) | **389 passed**, 0 failed, 0 skipped — the count tranche 43 predicted |
+| Go (`go test ./... -count=1`) | **11 of 11** test-bearing packages `ok`; API 239.6 s, rtc 57.4 s |
+| The 22 Go tests written unrun (tranches 28, 34, 36, 39–41), by name with `-v` | **22 PASS**, 0 FAIL, 0 SKIP |
+| Chromium, default feature set | **30 passed**, 0 failed, 0 skipped, 0 did not run (3.3 min) |
+| Chromium, private conversations enabled | **45 passed**, 0 / 0 / 0 (4.6 min) |
+| Firefox, `voice-firefox` | **14 passed**, 0 / 0 / 0 (1.3 min) |
+| WebKit, `release-webkit` — first run | **3 passed, 4 failed** (see 44b) |
+| WebKit, `release-webkit` — after 44b | **7 passed**, 0 / 0 / 0 (33 s) |
+| Chromium default again, after 44b changed two journeys | **30 passed**, 0 / 0 / 0 (3.1 min) |
+| `thread-scale` | **10 passed**, 0 / 0 / 0 (1.7 min) |
+| Fresh recovery, community fixture | PASS, 23 checks |
+| Fresh recovery, private-state fixture | PASS, 172 checks |
+| Encrypted off-host copy | PASS, 18 checks — `openssl` only; the `age` and `gpg` paths were not exercised |
+| Full-disk rehearsal | PASS, 12 checks |
+| Upgrade and rollback, 0.4.0-alpha.7 (schema 21) → this tree (schema 25) | PASS, 57 checks |
+| Schema-13 upgrade against the preserved baseline | PASS |
+
+Both changes that were marked "confirm by a run before this branch is merged" are confirmed
+by these runs: **W-29** (the credential throttle — its eleven tests, the whole API package,
+and every browser journey, each of which signs in) and **W-37** (scheduled backups on for a
+new installation — its three tests, and every server above ran with the new default).
+W-23's muting held: the run made no sound.
+
+### 44b. The WebKit pass, and what its four failures were
+
+The WebKit project had never been green. Its first run after W-06 (tranche 22) passed three
+journeys and failed four, and the four had two causes, neither of them in the product.
+
+1. **Playwright's WebKit cannot intercept the requests of a page a service worker
+   controls.** Three steps are interceptions — the aborted thread reply (the reply was
+   simply sent: the page showed "1 reply"), the lost export response (no alert ever
+   appeared) and the held phone-width send ("no send reached the intercepted route", the
+   failure tranche 22 recorded as unexplained). All three pass with
+   `serviceWorkers: 'block'` on that project. The cost is that the setup journey's
+   offline-shell segment has no worker to wait for; under a project that blocks workers it
+   records a `not exercised` annotation and stops there, and T-PWA-01 remains where the
+   worker is owed its own evidence under that engine.
+2. **WebKit copies to the clipboard without a permission to grant.** Tranche 22 made the
+   permalink journey expect a refusal there, and said its assertion existed to find out.
+   It found out: "Link copied." The journey now expects a copy in every engine, reads the
+   copied text back where a permission lets it, and then *produces* the refusal — by
+   replacing `navigator.clipboard.writeText` with one that rejects — so the product's
+   printed-link fallback is exercised in every engine and is where the journey takes the
+   permalink it follows. Under Chromium it also asserts the printed link equals the copied
+   one.
+
+Engine simulation is supplemental evidence: Playwright's WebKit is not Safari on a device.
+
+### 44c. What this does and does not close
+
+Closed by being run: every "written, not run" entry in the queue's section 2, and W-06.
+
+Not closed, because none of it was run or built here: **W-07** (restricted channels in a
+browser), **W-10** (an acceptance record that means "ran and passed"), **W-11** (real
+mixed-direction text), **W-12 to W-16** (the owed acceptance runs), **W-17** (capacity),
+**W-18** (failure coverage), the `-race` sweep (about 45 minutes; not run in this pass),
+**W-19** (a second fresh-context review) and **W-20** (the candidate). The Docker image has
+still never been built, and nothing has run on Windows or on a hosted runner.
