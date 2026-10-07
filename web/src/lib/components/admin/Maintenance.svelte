@@ -5,6 +5,16 @@
   import BackupSettings from './BackupSettings.svelte';
   import type { Settings } from '../../types';
   import { firstRunLines, type FirstRunLine } from '../../first-run';
+  import {
+    aboutFacts,
+    mediaFacts,
+    processFacts,
+    refusedOrFailed,
+    routeLine,
+    slowestRoutes,
+    storageFacts,
+    type MetricsReport
+  } from '../../server-details';
   interface Diagnostics {
     https_configured: boolean;
     local_only: boolean;
@@ -153,6 +163,29 @@
   onMount(() => {
     void refresh();
   });
+  // "Server details" reads the metrics route, which until now was reachable only with
+  // curl and a session cookie. It is asked for only while the section is open, and no
+  // more often than every fifteen seconds: the figures are for a person looking, not for
+  // a dashboard, and a hidden tab asks for nothing.
+  let metrics = $state<MetricsReport | null>(null);
+  let metricsError = $state('');
+  let detailsOpen = $state(false);
+  async function loadMetrics() {
+    try {
+      metrics = await api<MetricsReport>('/admin/metrics');
+      metricsError = '';
+    } catch (e) {
+      metricsError = errorMessage(e);
+    }
+  }
+  $effect(() => {
+    if (!detailsOpen) return;
+    void loadMetrics();
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void loadMetrics();
+    }, 15000);
+    return () => clearInterval(timer);
+  });
   async function createBackup() {
     busy = true;
     error = '';
@@ -216,6 +249,41 @@
       (health.uptime_seconds % 3600) / 60
     )}m
   </p>{/if}
+{#if canViewServer}<details
+    class="server-details"
+    ontoggle={(event) => (detailsOpen = event.currentTarget.open)}
+  >
+    <summary>Server details</summary>
+    {#if metricsError}<p class="error" role="alert">{metricsError}</p>{/if}
+    {#if metrics}
+      {#each [{ title: 'About this server', facts: aboutFacts(metrics) }, { title: 'Process', facts: processFacts(metrics) }, { title: 'Voice and screen sharing', facts: mediaFacts(metrics) }, { title: 'Storage', facts: storageFacts(metrics) }] as group (group.title)}
+        <h4>{group.title}</h4>
+        <dl class="access-facts">
+          {#each group.facts as fact (fact.label)}
+            <div>
+              <dt>{fact.label}</dt>
+              <dd>{fact.value}</dd>
+              {#if fact.note}<small class="muted">{fact.note}</small>{/if}
+            </div>
+          {/each}
+        </dl>
+      {/each}
+      <h4>Slowest answers</h4>
+      {#if slowestRoutes(metrics.routes).length}
+        <ul class="route-list">
+          {#each slowestRoutes(metrics.routes) as route (route.route)}
+            <li><code>{route.route}</code><span>{routeLine(route)}</span></li>
+          {/each}
+        </ul>
+      {:else}<p class="muted">Not measured yet.</p>{/if}
+      <p class="muted">
+        {refusedOrFailed(metrics.routes).toLocaleString('en')} requests have been refused or have failed
+        since the server started; a refusal is usually the server doing its job. These figures refresh
+        every 15 seconds while this section is open and start again when the server restarts. Nothing
+        here identifies a member or a conversation.
+      </p>
+    {:else if !metricsError}<p class="muted">Reading the server’s own figures…</p>{/if}
+  </details>{/if}
 {#if canViewServer}<section class="admin-form">
     <h3>Is this server ready?</h3>
     <p class="muted">

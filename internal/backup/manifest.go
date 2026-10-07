@@ -31,6 +31,11 @@ const (
 	uploadsPrefix = "uploads/"
 )
 
+// CurrentFormat is the backup format this build writes. It is exported for the
+// operator's own view of the server: a restore is only possible onto a build that reads
+// the archive's format, so the number belongs beside the version and the schema.
+func CurrentFormat() int { return currentFormat }
+
 // The declared support profile of one archive.
 //
 // Creation, verification and restoration all read these, because a limit that

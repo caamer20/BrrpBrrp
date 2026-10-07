@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"brrpbrrp/internal/app"
+	"brrpbrrp/internal/backup"
 	"brrpbrrp/internal/db"
 	"brrpbrrp/internal/metrics"
+	"brrpbrrp/internal/ws"
 )
 
 // metricsReport is the machine-readable view of the server: request counts and latencies
@@ -59,7 +61,19 @@ func (s *Server) metricsReport(w http.ResponseWriter, r *http.Request, user db.U
 	}
 
 	report := map[string]any{
-		"version":        app.Version,
+		"version": app.Version,
+		// What an operator is asked for when they report a problem, and what decides
+		// whether a backup can be restored or an older client can connect. None of it is
+		// about a member: it is the build and the way it was deployed.
+		"about": map[string]any{
+			"schema":        db.SchemaVersion,
+			"backup_format": backup.CurrentFormat(),
+			"protocol":      ws.Protocol,
+			"protocol_min":  ws.ProtocolMin,
+			"platform":      runtime.GOOS + "/" + runtime.GOARCH,
+			"go":            runtime.Version(),
+			"tls_mode":      s.config.TLSMode,
+		},
 		"uptime_seconds": s.metrics.UptimeSeconds(),
 		"pid":            metrics.PID(),
 		"routes":         s.metrics.Routes(),

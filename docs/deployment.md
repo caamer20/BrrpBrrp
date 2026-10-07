@@ -223,7 +223,8 @@ Two things answer "is this installation healthy", and they answer different ques
 request counts, status classes and latency buckets — labelled by route *pattern*, never by
 path — the process's resident memory, CPU time and goroutine count beside Go's own heap
 figures, what the media path has forwarded and dropped, the connection count, storage
-sizes and the backup job's status. It deliberately does not count messages: a metrics
+sizes, the backup job's status, and an `about` block with the build's schema number,
+backup format, websocket protocol range, platform and TLS mode. It deliberately does not count messages: a metrics
 endpoint that runs a table count every fifteen seconds costs more than it reports. Nothing
 in it is message content, a member name or a conversation identifier.
 

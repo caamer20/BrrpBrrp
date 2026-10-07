@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"brrpbrrp/internal/backup"
+	"brrpbrrp/internal/db"
+	"brrpbrrp/internal/ws"
 )
 
 // metricsBody is the shape the endpoint promises. It is decoded into maps rather than a
@@ -293,5 +297,48 @@ func TestGCPauseMaxIsTheMaximumOverThePausesThatHappened(t *testing.T) {
 	}
 	if got := gcPauseMax(&runtime.MemStats{}); got != 0 {
 		t.Fatalf("a process with no collections reports %d pauses", got)
+	}
+}
+
+// An operator reporting a problem is asked which build they run, and an operator about to
+// restore a backup or connect an older client needs the three numbers that decide whether
+// that works. They are the build's own constants, read from where the build defines them
+// rather than repeated here, and nothing in the block describes a member.
+func TestMetricsSayWhichBuildIsRunning(t *testing.T) {
+	s, handler := testServer(t)
+	admin := setupAdmin(t, s, handler)
+	body := metricsBody(t, handler, admin)
+	about, ok := body["about"].(map[string]any)
+	if !ok {
+		t.Fatalf("metrics body has no about block: %+v", body)
+	}
+	for key, want := range map[string]float64{
+		"schema":        float64(db.SchemaVersion),
+		"backup_format": float64(backup.CurrentFormat()),
+		"protocol":      float64(ws.Protocol),
+		"protocol_min":  float64(ws.ProtocolMin),
+	} {
+		if got, _ := about[key].(float64); got != want {
+			t.Fatalf("about.%s = %v, want %v", key, about[key], want)
+		}
+	}
+	if got, _ := about["platform"].(string); got != runtime.GOOS+"/"+runtime.GOARCH {
+		t.Fatalf("about.platform = %q, want %s/%s", got, runtime.GOOS, runtime.GOARCH)
+	}
+	if got, _ := about["tls_mode"].(string); got != s.config.TLSMode {
+		t.Fatalf("about.tls_mode = %q, want the configured %q", got, s.config.TLSMode)
+	}
+	if got, _ := about["go"].(string); got == "" {
+		t.Fatal("about.go is empty")
+	}
+	// The block is a fixed set of build facts. A key added later is looked at here before
+	// it ships, so the endpoint's promise of carrying nothing about a member is kept by
+	// more than a comment.
+	for key := range about {
+		switch key {
+		case "schema", "backup_format", "protocol", "protocol_min", "platform", "go", "tls_mode":
+		default:
+			t.Fatalf("about carries an unreviewed key %q", key)
+		}
 	}
 }

@@ -2433,6 +2433,39 @@ meter {
 .sessions button {
   flex-shrink: 0;
 }
+.server-details {
+  margin: 4px 0 18px;
+}
+.server-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.server-details h4 {
+  margin: 18px 0 8px;
+  font-size: 0.85rem;
+}
+.server-details .access-facts small {
+  font-size: 0.75rem;
+}
+.route-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.route-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+.route-list span {
+  color: var(--muted);
+}
 .diagnostic-list {
   display: grid;
   gap: 10px;
