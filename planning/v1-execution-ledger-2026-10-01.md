@@ -3953,3 +3953,25 @@ audits the candidate's own documents (15, up from 10).
 branch, with the last full local pass one tranche behind it. Not: reviewed, run on either
 required deployment, built as a container image, measured for capacity, or tried by anyone
 outside this machine. G0–G8 are not passed and this entry does not claim one.
+
+### 48a. The candidate's archives
+
+Built with `make release` from `7fb7131` on a clean tree, on this Mac, on the night of
+6 October. The build compiles and packages; it runs no test. The extracted darwin binary
+answers `version` with `BrrpBrrp 1.0.0-rc.1`, and `shasum -a 256 -c` accepts all six.
+
+```text
+aea439f6ea0c1c6303adf74d1766216ae560a41e3395aa7023748a8f20a360d2  brrpbrrp-1.0.0-rc.1-linux-amd64.zip
+6d67b31ffb4496dd8226b14fe49554245e455d7d3d56110649cd329968890c1f  brrpbrrp-1.0.0-rc.1-linux-arm64.zip
+3a2f88e80c2fd0ceec90c76250b5cb54909212763c6842f87897bd61db0f4fdf  brrpbrrp-1.0.0-rc.1-windows-amd64.zip
+ef63383c23c3ee2a0193c8c3df73d32442bdee7ad49cd0462feacc47b8562051  brrpbrrp-1.0.0-rc.1-windows-arm64.zip
+fb511c76d28c06877c7b2211b8ef689439ea63fc0f80de1110463213e0aa38ab  brrpbrrp-1.0.0-rc.1-darwin-amd64.zip
+9104fc4ab5768e5868188152767d710cb7a7ec38573dbb2a892081583fe51611  brrpbrrp-1.0.0-rc.1-darwin-arm64.zip
+```
+
+They are in `dist/releases/` beside the earlier ones, with their sums in
+`SHA256SUMS-1.0.0-rc.1` (the existing `SHA256SUMS` was left as it was), and the Docker
+source archive is `dist/brrpbrrp-docker-source-1.0.0-rc.1.zip`. **Not done:** the packaged
+consumer check (`scripts/check-package.mjs`, which installs and runs from the extracted
+archive), any run of the Windows or Linux archives on their own platform, signing — there
+is no signing identity — and the container image, which has still never been built.
