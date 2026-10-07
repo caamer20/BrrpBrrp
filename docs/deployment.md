@@ -231,6 +231,15 @@ in it is message content, a member name or a conversation identifier.
 Every figure names what it measures, because a metric whose name and value disagree is
 worse than no metric:
 
+- **`media.dropped_packets`** is not packet loss. It counts packets the server declined to
+  forward because their sender was muted, deafened or listen-only — the rule being
+  enforced at the forwarding boundary. The interface shows it as "withheld" for that
+  reason; the field keeps its name because renaming it would break a dashboard that
+  already reads it.
+- **A route's `errors`** is every `4xx` and `5xx` answer together, so it includes ordinary
+  refusals — signed out, not permitted, throttled — as well as the server's own failures.
+  `status_class` beside it separates them.
+
 - **GC pauses** are reported as `go_gc_pause_ns_latest` (the most recent pause) and
   `go_gc_pause_ns_max_last_256` (the largest pause inside the runtime's 256-pause ring,
   over the pauses that have actually happened). There is no `go_gc_pause_ns_max`; that
