@@ -28,6 +28,24 @@ export function isViewOnlyTrack(stream: MediaStream | undefined | null): boolean
   return !!track && track.id.startsWith(VIEW_STREAM_ID);
 }
 
+/** The prefix of the stream id the server puts on a shared screen's own sound. */
+export const SCREEN_AUDIO_STREAM_PREFIX = 'screen-audio-';
+
+/**
+ * Whose screen a received audio stream belongs to, or null when it is somebody's voice.
+ *
+ * A screen's sound is a publication of its own and arrives as an audio track like a voice
+ * does, but not in a numbered voice slot: the server names its stream after the account
+ * that is sharing (`screen-audio-<account>`, internal/rtc/sfu.go). Reading that name is
+ * what lets the listener's volume for a person reach the sound of that person's screen.
+ * Until it was read, the id was parsed as a slot number, came out as NaN, and the sound
+ * played at full volume whatever the listener had chosen.
+ */
+export function screenAudioOwner(streamId: string | undefined | null): string | null {
+  if (!streamId || !streamId.startsWith(SCREEN_AUDIO_STREAM_PREFIX)) return null;
+  return streamId.slice(SCREEN_AUDIO_STREAM_PREFIX.length) || null;
+}
+
 /**
  * The video half of a received screen.
  *

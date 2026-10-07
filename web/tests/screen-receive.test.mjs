@@ -5,7 +5,9 @@ import {
   applyScreenAudioOnly,
   screenVideoTracks,
   VIEW_STREAM_ID,
-  isViewOnlyTrack
+  isViewOnlyTrack,
+  screenAudioOwner,
+  SCREEN_AUDIO_STREAM_PREFIX
 } from '../src/lib/screen-receive.ts';
 
 // A client asking to *watch* a screen and a client asking to *share* one produce
@@ -84,4 +86,39 @@ test('the stage keeps the control that turns the picture back on', () => {
   assert.match(stage, /muted/);
   assert.match(stage, /playsinline/);
   assert.match(stage, /Show picture/);
+});
+
+// A screen's own sound arrives as an audio track on a stream the server names for the
+// account that is sharing. The listener's volume for that person has to reach it, and it
+// did not: the id was parsed as a voice-slot number, came out NaN, and matched nobody
+// (ledger §11w, W-31). Both ends have to agree on the name, so the server's is read here.
+test('a screen-audio stream names the account sharing it, and a voice slot does not', () => {
+  assert.equal(
+    screenAudioOwner('screen-audio-0b9c7e52-4a1d-4c56-9a3e-2f6d1c0e7a11'),
+    '0b9c7e52-4a1d-4c56-9a3e-2f6d1c0e7a11'
+  );
+  assert.equal(screenAudioOwner('screen-audio-member_7'), 'member_7');
+  // Somebody's voice, the screen's picture, and nothing at all are not a screen's sound.
+  assert.equal(screenAudioOwner('voice-3'), null);
+  assert.equal(screenAudioOwner('screen-0b9c7e52'), null);
+  assert.equal(screenAudioOwner(''), null);
+  assert.equal(screenAudioOwner(undefined), null);
+  assert.equal(screenAudioOwner(null), null);
+  // A name with no account in it identifies nobody.
+  assert.equal(screenAudioOwner(SCREEN_AUDIO_STREAM_PREFIX), null);
+});
+
+test('the server names a screen-audio stream the way the client reads it', () => {
+  const sfu = readFileSync(new URL('../../internal/rtc/sfu.go', import.meta.url), 'utf8');
+  // The label, and the stream id built from it and the publishing account.
+  assert.match(sfu, /label = "screen-audio"/);
+  assert.match(sfu, /NewTrackLocalStaticRTP\(codec, label, label\+"-"\+p\.state\.UserID\)/);
+  assert.equal(SCREEN_AUDIO_STREAM_PREFIX, 'screen-audio-');
+});
+
+test('the voice store keys a screen-audio element to its sharer, not to a slot', () => {
+  const store = readFileSync(new URL('../src/lib/voice.svelte.ts', import.meta.url), 'utf8');
+  assert.match(store, /const sharer = screenAudioOwner\(streamId\);/);
+  assert.match(store, /this\.audioOwners\.get\(audio\) \?\? this\.routes\[/);
+  assert.match(store, /this\.audioOwners\.clear\(\);/);
 });

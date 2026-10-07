@@ -5,7 +5,12 @@ import { errorMessage } from './api';
 import type { RealtimeEvent } from './types';
 import { VoiceChime } from './voice-chime';
 import { describePath } from './connection-path';
-import { applyScreenAudioOnly, VIEW_STREAM_ID, isViewOnlyTrack } from './screen-receive';
+import {
+  applyScreenAudioOnly,
+  VIEW_STREAM_ID,
+  isViewOnlyTrack,
+  screenAudioOwner
+} from './screen-receive';
 import {
   applyScreenPreset,
   canShareScreen,
@@ -113,6 +118,8 @@ class Voice {
   private microphoneChange = 0;
   private monitorSource: MediaStreamAudioSourceNode | null = null;
   private audioSlots = new Map<HTMLAudioElement, number>();
+  // A shared screen's sound is not in a voice slot; it is keyed to the account sharing it.
+  private audioOwners = new Map<HTMLAudioElement, string>();
   private resumeToken = '';
   private resuming = false;
   private resumeTimer?: ReturnType<typeof setTimeout>;
@@ -706,8 +713,13 @@ class Voice {
       audio.srcObject = new MediaStream([event.track]);
       this.audios.push(audio);
       this.applyOutputDevice(audio);
-      const slot = Number((event.streams[0]?.id || '').replace('voice-', ''));
-      this.audioSlots.set(audio, slot);
+      // A voice arrives in a numbered slot whose speaker the server routes and re-routes;
+      // a screen's sound arrives on a stream named for the account sharing it. Each is
+      // remembered as what it is, so the listener's volume for a person reaches both.
+      const streamId = event.streams[0]?.id || '';
+      const sharer = screenAudioOwner(streamId);
+      if (sharer) this.audioOwners.set(audio, sharer);
+      else this.audioSlots.set(audio, Number(streamId.replace('voice-', '')));
       this.applyAudioState();
       audio.play().catch(() => (this.audioBlocked = true));
     };
@@ -824,7 +836,7 @@ class Voice {
     this.stream?.getAudioTracks().forEach((track) => (track.enabled = !muted));
     this.audios.forEach((audio) => {
       audio.muted = deafened;
-      const user = this.routes[this.audioSlots.get(audio) ?? -1];
+      const user = this.audioOwners.get(audio) ?? this.routes[this.audioSlots.get(audio) ?? -1];
       audio.volume = this.participantVolumes[user] ?? 1;
     });
   }
@@ -909,6 +921,7 @@ class Voice {
     });
     this.audios = [];
     this.audioSlots.clear();
+    this.audioOwners.clear();
     clearInterval(this.statsTimer);
     this.candidates = [];
   }
