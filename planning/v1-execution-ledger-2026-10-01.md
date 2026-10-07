@@ -7,14 +7,22 @@ Compact record of implementation tranches toward v1.0.0, per the review-17 hando
 below are evidence, some of them written when assignments were hazy, and two of them
 (11e and 11d) are at the tail and historical. This index is refreshed at every tranche.
 
-- **Branch head after tranche 35** (`388920e`). **Closed: W-01 through W-06, W-21, W-22,
-  W-23 and W-33 through W-36**, one tranche each (16–28), plus **W-24** (29), **W-25** (30),
-  **W-26** (31), **W-21 (part 2)** (33), **W-27** (34) and **W-28** (35).
+- **Branch head after tranche 43** (`ae98418`, on `finish/v1-product-work`, cut from
+  `e56c24a`). **Closed: W-01 through W-06, W-08, W-09, W-21 through W-30, W-32 through W-38**
+  — tranches 16–35 as before, then **W-30** (36), **W-08** (37), **W-09** (38), **W-32**
+  (39), **W-37** (40), **W-29** (41) and **W-38** (43, the reading review).
+- **W-31 is closed as "deliberately not changed"** (42): both media debts are confirmed by
+  reading and left alone, as §11w said they should be, with the design and the test to write
+  first recorded in the queue.
 - **Tranche 32 is not a W-item — it is Part A's bookkeeping:** it commits tranche 31's
   ledger (`44e4022`), gathers the five owner questions into the queue's §5, and says in two
   guides how a member leaves today.
-- **Open: W-07 through W-20, W-29 through W-32 and W-37** — **W-37 is next**, and it is
-  unblocked: W-28 (35) explains its consequence where a new owner meets it.
+- **Tranches 36–43 were written by a different session from 21–35**, in its own worktree, at
+  the owner's request; the note above tranche 36 says how.
+- **Open, and all of it is verification: W-07 and W-10 through W-20.** Nothing on the product
+  list remains that can responsibly be done without running. Two changes are marked
+  "confirm by a run before this branch is merged": **W-29** (the sign-in path) and **W-37**
+  (when backups run, and what a new installation's alerts say).
 - **W-21 owes one thing still: the 100-account reference fixture definition** (`F-T`), which
   needs the owner's approval of the one-million-message / 20-GiB targets before it can be
   written; it is recorded in the queue.
@@ -3503,3 +3511,238 @@ exit **0**. Nothing here runs in a browser, so no browser suite is owed for this
 `npm --prefix web test` — 367 → 373 — and a browser read of Manage server → Maintenance on
 a fresh installation, because the lines are drawn from four fetched reports and only a
 browser shows them together. W-37's queue entry names the journeys that read this panel.
+
+## Tranches 36–43 — the rest of the product list, by a different session
+
+These eight entries were written on the evening of 6 October by the session that had been
+reviewing this ledger from outside it, after the owner asked that session to finish the list.
+It worked in its own worktree on a branch cut from `e56c24a` (`finish/v1-product-work`); the
+main checkout was not touched, and the three files the previous session left uncommitted
+there for W-30 are the ones tranche 36 commits. **Nothing below was run.** The static gates —
+`make check`, `go build ./...`, `go vet` on the packages touched, `svelte-check`, prettier —
+were run after each item and were clean; `go vet` compiles every test file without running
+it. Each code item is one source commit.
+
+## Tranche 36 — W-30: a real HTTPS deployment pins its own host
+
+Source commit before: `e56c24a`. Source: `98ffec2`. **Low risk.** No schema change.
+
+- **What was wrong.** `internal/api/middleware.go` set a content security policy, `nosniff`,
+  frame denial and a referrer policy on every response and never `Strict-Transport-Security`.
+- **The change.** `Config.HSTS()` (`internal/app/config.go`) is true for TLS mode `https`, and
+  for `http-behind-proxy` with an `https://` base URL; the middleware then sends
+  `max-age=15552000` with neither `includeSubDomains` nor `preload`. `auto` and `http-local`
+  never send it: a host pinned while its certificate is still a locally issued one cannot be
+  un-pinned by changing modes. The handler change, `Config.HSTS` and the test are the previous
+  session's, taken unchanged from its working tree; this tranche adds the paragraph in
+  `docs/security.md`, including the consequence that a downgrade takes up to six months to be
+  forgotten.
+- **Tests written, not run.** `TestTransportSecurityHeaderFollowsTheDeploymentMode`
+  (`internal/api/middleware_test.go`, new): five deployment shapes, the exact header value,
+  and that the other four headers still travel in every mode.
+- **What the pass must run.** `go test ./internal/api -run TestTransportSecurityHeader`, and
+  one real `https` deployment read with `curl -I`.
+
+## Tranche 37 — W-08: the browser harness forwards the switches the config reads (F-08)
+
+Source: `996bbfc`. **Low risk; harness only.**
+
+- **What was wrong.** `web/e2e/run.mjs` strips every `BRRP_` variable from the Playwright
+  child and handed back four by name. `playwright.config.mjs` reads two more —
+  `BRRP_E2E_BROWSER` (line 27, the browser channel) and `BRRP_E2E_GLOBAL_TIMEOUT` (line 21) —
+  so both were silently dropped: a run "under Chrome stable" ran the bundled Chromium.
+- **The change.** `web/e2e/harness-env.mjs` (new) holds the list as one table with its
+  defaults. An unknown `BRRP_E2E_` variable stops the run and names the known ones. The
+  harness prints `browser suite engines: …` with the channel it resolved. The comment on
+  `BRRP_LOGIN_ATTEMPTS: '400'` now says why the value is still there after W-29.
+- **Tests written, not run.** `web/tests/harness-env.test.mjs` (new, six cases), the last of
+  which reads the config and five journey files and fails if any `BRRP_E2E_` name they read
+  is unknown to the harness.
+- **What the pass must run.** `npm --prefix web test`; then one default browser invocation,
+  reading the new `engines` line, and one with `BRRP_E2E_BROWSER=chrome` on a machine that
+  has Chrome.
+
+## Tranche 38 — W-09: the cross-platform job runs its Bash under Bash, on LF files (F-04)
+
+Source: `0fd9b56`. **Low risk; CI definition and repository attributes.**
+
+- **What was wrong.** The `test` job runs on `[ubuntu-latest, windows-latest, macos-latest]`
+  and five of its steps are multi-line Bash with no `shell:`. On Windows the default is
+  PowerShell, which cannot parse three of them and does not stop the other two at the first
+  failing command. Found while fixing that: the repository had no `.gitattributes`, and Git
+  for Windows checks text out with CRLF by default, so `gofmt -l` would list every Go file
+  and `prettier --check` reject every web file — the Windows leg could not pass on a default
+  checkout whatever its shell. And the job did not run the two configuration audits that
+  tranches 29 and 31 added to `make check`.
+- **The change.** `defaults: run: shell: bash` on the job. `scripts/check-workflow-shells.mjs`
+  (new; wired into `make check`, the job and `scripts/release.go`) fails when a multi-line
+  step on a Windows-capable job does not resolve to bash; before the fix it reported all five
+  steps by name. `.gitattributes`: `* text=auto eol=lf`, with `*.png` and `*.docx` binary. No
+  tracked file changes — `git ls-files --eol` shows none stored with CRLF. The job gains the
+  two configuration audits and this one.
+- **Not changed, deliberately.** The four `.bat`/`.cmd` files stay LF: that is how every
+  release archive has shipped them, and switching them to CRLF would change package bytes.
+- **What the pass must run.** A hosted run of the `test` job on all three runners. Nothing
+  local can stand in for it; there is no remote yet.
+
+## Tranche 39 — W-32: an operator can read what the server reports about itself
+
+Source: `9a0b9fd`. **Low risk; one read-only block added to an existing route, one panel.**
+
+- **A correction to the item as it was specified.** The handoff said the running version was
+  shown only by the setup wizard. That was wrong: Maintenance already showed the version,
+  uptime and six totals from `GET /api/admin/health`. What was true is that nothing in
+  `web/src` read `GET /api/admin/metrics`, so per-route latencies, process memory and CPU,
+  the media counters and the storage measurement's age were reachable only with `curl`.
+- **The change.** `metricsReport` gains an `about` block — schema, backup format, protocol
+  range, platform, Go version, TLS mode — from the build's own constants
+  (`backup.CurrentFormat()` is new and exports the one that was private).
+  `web/src/lib/server-details.ts` (new) turns the report into rows of words;
+  `Maintenance.svelte` shows them in a **Server details** section that asks only while it is
+  open, at most every fifteen seconds, and never from a hidden tab.
+- **Wording that follows the code, found while writing it.** `media.dropped_packets` is
+  incremented in exactly one place (`internal/rtc/sfu.go`, `forward`), when the sender is
+  muted, deafened or listen-only: it is the rule being enforced, not loss, and is shown as
+  "withheld". A route's `errors` is `byClass[4] + byClass[5]` (`internal/metrics/metrics.go`),
+  so it is shown as "refused or failed". Tranche 43 puts both in the deployment guide.
+- **Tests written, not run.** `TestMetricsSayWhichBuildIsRunning` (`metrics_test.go`), which
+  also refuses any key added to `about` without review; `web/tests/server-details.test.mjs`
+  (new, ten cases).
+- **What the pass must run.** `go test ./internal/api -run TestMetrics`, `npm --prefix web
+  test`, and a browser read of the section on a server that has carried a voice call.
+
+## Tranche 40 — W-37: a new installation starts with scheduled backups on
+
+Source: `9654b5e`. **Medium risk. Owner decision of 6 October. Confirm by a run before this
+branch is merged.** No schema change.
+
+- **What was wrong.** `BackupEnabled` was false for every installation until an administrator
+  found the checkbox, and `AssessRecovery` answers `ok`, "Scheduled backups are disabled."
+  while it is false (`internal/app/recovery.go:136`).
+- **The change.** `db.NewInstallationSettings()` is `DefaultSettings()` with the flag on. It
+  is used at the two places a first settings row is written — the setup route
+  (`internal/api/bootstrap.go`) and offline setup (`internal/db/accounts.go`, `INSERT OR
+  IGNORE`) — and nowhere else. `DefaultSettings()` is deliberately unchanged, because it is
+  also the in-memory configuration of a server that has not been set up (the maintenance
+  worker offers a scheduled backup every minute, and with nothing recorded one is due at
+  once) and the base a stored row is decoded over.
+- **Read, not assumed.** The setup route assigns the in-memory settings from the same value
+  after its transaction commits, so backups begin without a restart and not before setup. A
+  persisting alert condition is not re-raised (`alertState.lastRaised`), so a fresh
+  installation's critical "no independent copy" condition is delivered once. A failed
+  scheduled backup is recorded on the status and logged; it does not stop the worker.
+- **What a new owner now sees.** A backup within a minute of setup, and a critical recovery
+  condition until `BRRP_BACKUP_COPY_DIR` is set and a copy lands. `AssessRecovery` and its
+  thresholds are untouched. The wizard's last page, `README.md`, `docs/admin.md` (with the
+  7 × 12 h = 3.5 days arithmetic), `docs/docker.md`, `docs/production-readiness.md`,
+  `docs/upgrading.md`, `docs/known-limitations.md` and the 1.0 notes draft say so.
+- **Tests written, not run** (`internal/api/settings_test.go`): a server that is not set up
+  carries no flag and attempts no backup, and setup switches it on in the row, in memory and
+  on the settings route; offline setup makes the same installation; an explicit off and a
+  row with no key both stay off across a restart and an offline `create-admin`.
+- **What the pass must watch.** Every Go test server that goes through `setupAdmin`, and
+  every browser run, now has scheduled backups on, and one that lives past a minute takes a
+  backup into its temporary data directory. No existing test was found, by reading, to assert
+  that a fresh installation has backups off; `authority.spec.mjs` and `ownership.spec.mjs`
+  read the Maintenance tab but only for which controls exist. A timing-dependent failure in
+  a long test is the thing to look for.
+- **Recorded for the owner, not changed.** An installation that deliberately switches
+  scheduled backups off still reports recovery as `ok`.
+
+## Tranche 41 — W-29: the credential throttle counts failures, and a full table refuses no member
+
+Source: `5ffb6c1`. **High risk: this is the sign-in path. Confirm by a run before this branch
+is merged.** No schema change. Decision **D-17** is now recorded in `docs/security.md`.
+
+- **What was wrong, first fault.** `limitLogin` spent one key, `login:<address>`, twenty per
+  five minutes, on every call whether or not it succeeded, and seven handlers called it:
+  sign-in, password change, setup, invitation acceptance, and — through `checkPassword` —
+  second-factor setup, disable and re-authentication, plus second-factor enable directly. An
+  invitation may admit fifty people. The browser harness has carried
+  `BRRP_LOGIN_ATTEMPTS: '400'` since September for exactly this reason.
+- **What was wrong, second fault.** `rateLimiter.allow` returned false for every key once its
+  one map held more than 4,096 entries that pruning could not remove, before looking up the
+  caller's own key; the per-request check for every signed-in member uses that map; and
+  unauthenticated sign-in attempts create keys in it. Keying sign-in by address and username
+  — the obvious repair of the first fault — would have let one address fill it in seconds.
+- **The change.** In `internal/api/middleware.go`: a key the table already holds is always
+  answered from its own counter, and only a new key is refused when there is no room;
+  `blocked` asks without spending and `note` records one failure; `addressKey` counts an IPv6
+  client by its /64. `Server.guests` is a second table for the counters an unauthenticated
+  request can create. In `internal/api/auth.go`: `guestOpen`/`guestFailed` (address ceiling
+  from `BRRP_LOGIN_ATTEMPTS`, checked first), a per-address-and-username counter of ten,
+  `credentialOpen`/`credentialFailed` for a signed-in account's re-checks keyed by account,
+  and a rate on *correct* passwords of three times the ceiling per account.
+- **Why success has a rate at all.** Sessions are pruned only at expiry, thirty days on, and
+  every password check occupies one of two slots. The old budget bounded how fast one caller
+  with valid credentials could do either only by accident; removing it without a replacement
+  would have let a member grow the session table at the hash rate.
+- **What it does not bound.** Guessing one account from many addresses. That is limited by
+  the hash cost and the two slots, and by the 12-byte minimum and the second factor. A full
+  guests table drops the *record* of a failure, logs it once a window and refuses nobody.
+- **Tests written, not run** (`internal/api/throttle_test.go`, new; ten tests, replacing
+  `TestTheSignInBudgetIsTheConfiguredOne`, which pinned the old meaning): twenty-five correct
+  sign-ins from one address; the configured ceiling on failures and the default for a zero
+  Config; a name failed from one address still opens from another, in either spelling; an
+  unknown name answers exactly as a known one; a flood of names stops at the ceiling, leaves
+  at most twenty-one counters and does not touch a signed-in member; a full table refuses
+  nobody it knows; twenty-five people accept one invitation from one address, and twenty bad
+  tokens close the address; an account's wrong re-checks close that account and nobody
+  else's; a correct password is rated per account; the /64.
+- **What the pass must run.** `go test ./internal/api -run
+  'SignIn|Throttle|Invitation|Password|Table|Flood|IPv6|Rated|Name' -count=1` first, then the
+  whole package, then both Chromium modes — every journey signs in. `mfa_test.go` and
+  `sessions_test.go` exercise the re-check paths and were read, not run.
+
+## Tranche 42 — W-31: the two media debts are left exactly as they were
+
+No source commit. **Deliberately not changed.**
+
+§11w recorded two debts and said of them that "neither has a failing test yet, and neither
+should be 'fixed' speculatively in this tree". Reading the code confirms both and confirms
+the caution:
+
+- `voice.svelte.ts` (`peer.ontrack`) computes a slot from the stream id with
+  `Number(id.replace('voice-', ''))`. A screen's audio arrives on a stream whose id is not
+  `voice-N`, so the slot is `NaN`, `routes[NaN]` is undefined, and the element plays at
+  volume 1 and is muted only by deafen. Giving it its sharer's volume needs the publication's
+  owner at the moment the track arrives, and the client learns that from a different event.
+- `screenRequested` is cleared on leave and on stop, and the journeys show the server reusing
+  its negotiated line.
+
+Both are changes to the media engine whose only evidence would be a voice journey, and the
+owner has suspended exactly those. The design for the first is: carry the owner's id on the
+screen-audio stream id from the server (`screen-audio-<user>`), parse it beside `voice-N`,
+and apply `participantVolumes[owner]`. It is queued with the test to write first
+(`web/tests/voice-state.test.mjs`: a screen-audio track follows its sharer's volume) and the
+journey that must pass afterwards (`voice.spec.mjs`, the screen-audio case).
+
+## Tranche 43 — W-38: a reading review of everything unverified
+
+Source: `ae98418` (one guide correction). **No code risk.**
+
+Every source commit from `e0c6280` to `5ffb6c1` was read by a session that did not write the
+first thirteen of them. Findings, most serious first:
+
+1. **P1, fixed (tranche 41).** One address-wide budget across seven handlers with successes
+   counted; a limiter that refused every key when full.
+2. **P2, fixed (tranche 38).** No `.gitattributes`: the Windows CI leg could not pass its two
+   format gates on a default checkout.
+3. **P2, fixed (tranche 37).** Two harness variables read by the config and dropped by the
+   harness.
+4. **P3, fixed (tranche 38).** The hosted job did not run the two configuration audits.
+5. **P3, fixed (`ae98418`).** `media.dropped_packets` and a route's `errors` say more than
+   they measure; the guide now says what each counts.
+6. **P3, recorded.** `GET /api/admin/health` walks the uploads tree on every Maintenance
+   refresh (`directorySize`), which is the cost tranche 19 removed from the metrics route.
+7. **P3, recorded.** `docs/known-limitations.md` says the container image has never been
+   built. It is true and belongs there now; it must not survive to publication.
+8. **Checked and found sound.** `compose.yaml`'s `${NAME:-}` passthroughs: an empty value
+   reaches `env`, which falls back, for all eight keys. The three configuration and workflow
+   audits each reject a broken fixture in their self-tests. `PATCH /api/me` re-reads the
+   account inside its transaction and writes back only the field a request names.
+   Usernames are `COLLATE NOCASE`, so sign-in is case-insensitive and the new
+   per-name counter folds case to match.
+
+One read-through, with findings. A second by a context that has seen none of this is still
+owed before a release candidate, as §11w already says.

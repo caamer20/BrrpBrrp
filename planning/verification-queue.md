@@ -20,7 +20,8 @@ something downstream of it.
 
 1. **Static gates.** `make check GO=$GO` — exit 0 and no `failed`/`did not run` line.
 2. **Frontend unit tests.** `npm --prefix web test` — 366 passed before this work; any
-   count change must be explained by a test added in an item below.
+   count change must be explained by a test added in an item below. Written since and not
+   run: 373 after W-28, then six for W-08 and ten for W-32 — **389** expected.
 3. **Go, compile-only first.** `$GO vet ./...` and `$GO vet ./internal/api/` (the second
    compiles the API package's tests without running them, which catches a test that does
    not build).
@@ -332,6 +333,103 @@ was not.*
   longer than twelve hours passing without a sentence, which would let the recovery objective
   and the schedule disagree in silence.
 
+### W-30 — a real HTTPS deployment pins its own host (`98ffec2`)
+
+- **Changed:** `internal/api/middleware.go`, `internal/app/config.go` (`Config.HSTS`),
+  `internal/api/middleware_test.go` (new), `docs/security.md`.
+- **Tests written, not run:** `TestTransportSecurityHeaderFollowsTheDeploymentMode`.
+- **Must be confirmed by:** that test, and `curl -I` against one real `https` deployment and
+  one `auto` deployment (which must not carry the header).
+- **What a wrong answer would look like:** the header on an `auto` or `http-local` server.
+  That is the one outcome that can make an installation unreachable by browser.
+
+### W-08 — the browser harness forwards the switches the config reads (`996bbfc`)
+
+- **Changed:** `web/e2e/run.mjs`, `web/e2e/harness-env.mjs` (new),
+  `web/tests/harness-env.test.mjs` (new, six cases).
+- **Must be confirmed by:** `npm --prefix web test`, then the default browser invocation —
+  its output now carries a `browser suite engines:` line — and one with
+  `BRRP_E2E_BROWSER=chrome` where Chrome is installed.
+- **What a wrong answer would look like:** a known variable reported as unknown, which would
+  stop every run before it starts. The last unit test reads the config and the journeys for
+  exactly that.
+
+### W-09 — the cross-platform job runs its Bash under Bash, on LF files (`0fd9b56`)
+
+- **Changed:** `.github/workflows/check.yml`, `.gitattributes` (new),
+  `scripts/check-workflow-shells.mjs` (new), `Makefile`, `scripts/release.go`.
+- **Must be confirmed by:** a hosted run of the `test` job on all three runners. Nothing on
+  this machine can stand in for a Windows runner, and there is no remote yet.
+- **What a wrong answer would look like:** a step that behaves differently under Git Bash on
+  Windows than under PowerShell — `working-directory: web` steps and the single-quoted
+  `node -e` body are the ones to read first.
+
+### W-32 — an operator can read what the server reports about itself (`9a0b9fd`)
+
+- **Changed:** `internal/api/metrics_handler.go` (the `about` block),
+  `internal/backup/manifest.go` (`CurrentFormat`), `internal/api/metrics_test.go`,
+  `web/src/lib/server-details.ts` (new), `web/tests/server-details.test.mjs` (new, ten
+  cases), `web/src/lib/components/admin/Maintenance.svelte`, `web/src/app.css`,
+  `docs/admin.md`, `docs/deployment.md`.
+- **Must be confirmed by:** `go test ./internal/api -run TestMetrics`, `npm --prefix web
+  test`, and a browser read of **Manage server → Maintenance → Server details** after a
+  voice call, because the section is drawn from a live report.
+- **What a wrong answer would look like:** a figure shown as zero that was never measured;
+  the section still polling after it is closed or the tab is hidden.
+
+### W-37 — a new installation starts with scheduled backups on (`9654b5e`)
+
+**Confirm by a run before this branch is merged.**
+
+- **Changed:** `internal/db/models.go` (`NewInstallationSettings`), `internal/api/bootstrap.go`,
+  `internal/db/accounts.go`, `internal/api/settings_test.go` (three tests),
+  `web/src/lib/components/InstallWizard.svelte`, and eight guides.
+- **Must be confirmed by:** `go test ./internal/api -run 'Backup|Installation|OfflineSetup'`,
+  then the whole package, then a fresh installation watched for two minutes: one backup
+  appears, the checklist's copy line reads as tranche 35 wrote it, and a configured alert
+  destination receives the critical condition once.
+- **What changed for every other test:** each Go test server that goes through `setupAdmin`,
+  and each browser run, now has scheduled backups on. A server alive for more than a minute
+  takes a backup into its temporary data directory. Journeys that open the Maintenance tab:
+  `authority.spec.mjs` and `ownership.spec.mjs` (both only count controls).
+- **What a wrong answer would look like:** a backup attempted before setup; an existing
+  installation switched on by the upgrade; an alert delivered on every evaluation.
+
+### W-29 — the credential throttle counts failures (`5ffb6c1`)
+
+**Confirm by a run before this branch is merged. This is the sign-in path.**
+
+- **Changed:** `internal/api/middleware.go` (the limiter), `internal/api/auth.go`,
+  `internal/api/mfa.go`, `internal/api/bootstrap.go`, `internal/api/invitations.go`,
+  `internal/api/router.go`, `internal/api/throttle_test.go` (new, ten tests),
+  `internal/api/auth_test.go` (the old budget test removed), `internal/app/config.go`
+  (comment), `web/e2e/run.mjs` (comment), `.env.example`, and three guides.
+  `docs/security.md` now records decision D-17.
+- **Must be confirmed by:** `go test ./internal/api -run
+  'SignIn|Throttle|Invitation|Password|Table|Flood|IPv6|Rated|Name' -count=1`, then the whole
+  package (`mfa_test.go` and `sessions_test.go` exercise the re-check paths), then both
+  Chromium feature modes, in which every journey signs in.
+- **What a wrong answer would look like:** a correct password answered 429 for somebody who
+  has not been failing; an unknown and a known username answering differently; any
+  signed-in request refused while sign-in is being flooded.
+- **The harness still sets `BRRP_LOGIN_ATTEMPTS=400`.** It no longer needs to for successful
+  sign-ins. Whether to drop it is a harness decision for the pass, once the suites are green
+  with it.
+
+### W-31 — the two media debts (no commit; deliberately not changed)
+
+- **Write first:** a case in `web/tests/voice-state.test.mjs` — a screen's audio follows its
+  sharer's volume.
+- **Then change:** carry the owner on the screen-audio stream id from the server, parse it
+  beside `voice-N` in `voice.svelte.ts`, and apply `participantVolumes[owner]`.
+- **Then run:** `voice.spec.mjs`, the screen-audio case, in Chromium and Firefox.
+- Not done here because its only evidence is a voice journey.
+
+### W-38 — the reading review (`ae98418`)
+
+- One read-through of every commit from `e0c6280` to `5ffb6c1`; findings are in ledger
+  tranche 43. **Still owed:** a second read by a context that has seen none of it.
+
 ## 3. What the pass must not assume
 
 - A passing rerun does not close a failure; keep the first failing trace.
@@ -399,3 +497,14 @@ here from wherever they first arose, so one reading covers all of them.
    Nothing here builds a self-service departure; `docs/community-guide.md` and
    `docs/known-limitations.md` now state plainly how a member leaves today. Where it arose:
    the account-removal review in this session.
+6. **Seven backup copies or fourteen?** At the 12-hour cadence, seven copies is three and a
+   half days of history; it was a week at 24 hours. The default is unchanged and
+   `docs/admin.md` states the arithmetic. Where it arose: W-37.
+7. **Should an installation with scheduled backups switched off report a problem?** It
+   reports recovery as `ok`, "Scheduled backups are disabled." Now that a new installation
+   starts with them on, "off" is always somebody's choice — but the health check still says
+   nothing is wrong. Where it arose: W-37, `internal/app/recovery.go:136`.
+8. **Should the browser harness stop raising the sign-in budget?** `web/e2e/run.mjs` sets
+   `BRRP_LOGIN_ATTEMPTS=400`. Since W-29 a successful sign-in spends nothing, so the default
+   of 20 would do; dropping the override makes the suite test what ships. Where it arose:
+   W-29.
