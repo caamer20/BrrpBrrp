@@ -1,6 +1,7 @@
 package rtc
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
@@ -872,6 +873,25 @@ func TestAViewerReceivesScreenFramesOnTheOfferItMade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// connectPeer installs a reader for every remote track. Replace it before
+	// negotiating video, so there is exactly one reader of the offered receiver.
+	type receivedFrame struct {
+		receiver *webrtc.RTPReceiver
+		packet   *rtp.Packet
+	}
+	arrived := make(chan receivedFrame, 64)
+	viewer.pc.OnTrack(func(track *webrtc.TrackRemote, actual *webrtc.RTPReceiver) {
+		for {
+			packet, _, err := track.ReadRTP()
+			if err != nil {
+				return
+			}
+			select {
+			case arrived <- receivedFrame{actual, packet}:
+			default:
+			}
+		}
+	})
 	viewOffer, err := viewer.pc.CreateOffer(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -899,27 +919,17 @@ func TestAViewerReceivesScreenFramesOnTheOfferItMade(t *testing.T) {
 	}
 
 	// And the frames written to the screen output arrive on it.
-	arrived := make(chan struct{}, 64)
-	go func() {
-		track := receiver.Receiver().Track()
-		if track == nil {
-			return
-		}
-		for {
-			if _, _, err := track.ReadRTP(); err != nil {
-				return
-			}
-			select {
-			case arrived <- struct{}{}:
-			default:
-			}
-		}
-	}()
 	for n := uint32(1); n <= 20; n++ {
 		sfu.forwardPublication(sfuPeer(t, sfu, "ana"), PublicationScreenVideo, screenFrame(n))
 	}
 	select {
-	case <-arrived:
+	case frame := <-arrived:
+		if frame.receiver != receiver.Receiver() {
+			t.Fatal("screen frame arrived on a receiver the viewer did not offer")
+		}
+		if !bytes.Equal(frame.packet.Payload, screenFrame(1).Payload) {
+			t.Fatalf("screen payload = %x, want %x", frame.packet.Payload, screenFrame(1).Payload)
+		}
 	case <-time.After(handshakeBudget):
 		t.Fatal("no screen frame reached a viewer that asked for one")
 	}
