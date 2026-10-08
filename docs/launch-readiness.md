@@ -15,7 +15,7 @@ qualified for a production launch.
 | Upgrade fixtures | Connected for private CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Gated draft path prepared | Six native targets plus source/checksums; no application release or registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
-| Linux deployment | Unqualified | Docker image execution, systemd lifecycle, network and off-host recovery need target-host evidence. |
+| Linux deployment | Partly verified | Hosted Docker build/lifecycle passed. Systemd lifecycle, real deployment, external networks and off-host recovery need target-host evidence. |
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
 | Security, privacy and accessibility | Reviews outstanding | Automated checks are useful evidence; independent reviews remain open. |
 | Community beta and soak | Not started | The roadmap requires real community use and observation of a frozen candidate. |
@@ -42,13 +42,26 @@ development session; hosted logs and artifacts will be available in
   restricted channels disabled. These browser runs preceded the build-dependency patch below.
 - Dependency audit found `source-map-js` 1.2.1 affected by
   [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q). The lockfile is
-  updated to 1.2.2, and npm reports zero vulnerabilities. Static and frontend checks are rerun
-  after this patch.
+  updated to 1.2.2. `make check`, all 392 frontend tests and the npm audit passed after the patch;
+  GitHub marks the alert fixed.
 - First hosted Docker build found that the notices generator treated an absolute destination
-  as relative. That defect is fixed and verified with an actual absolute-path output locally;
-  hosted image rebuild/lifecycle remains pending.
-- Hosted qualification: [first main run](https://github.com/caamer20/BrrpBrrp/actions/runs/37821452830)
-  started for commit `5b20f5d`; Windows/macOS/Linux, race, Docker and recovery results remain pending.
+  as relative. That defect is fixed. The [Docker job on commit `4081dde`](https://github.com/caamer20/BrrpBrrp/actions/runs/37822474840)
+  passed Compose validation, the x64 build and container lifecycle/persistence check, and an ARM64
+  image build. ARM64 runtime and a real operator deployment remain unqualified.
+- Hosted macOS Go/static/frontend tests passed on commit `4081dde`. Linux exposed a host-dependent
+  notices comparison; the generator now covers the shared six-target release set. Linux and Windows
+  caller environments both verify the same 39-component notices/SBOM, and every target's module set
+  is covered. The race workers also now build their own embedded frontend on fresh runners.
+- The first hosted runs were superseded during fixes. Final cross-platform, race, browser, recovery
+  and rollback qualification is tracked in [GitHub Actions](https://github.com/caamer20/BrrpBrrp/actions).
+  Package creation and the optional draft prerelease remain blocked until those jobs pass.
+- The [manual qualification on `b956ad3`](https://github.com/caamer20/BrrpBrrp/actions/runs/37824339090)
+  passed macOS and Docker but failed Windows and Linux Go tests. Windows exposed backup URI
+  encoding and CPU-duration defects; both are repaired, with path/metrics regressions. Unix-only
+  test assumptions were corrected. Linux revocation tests now pause the HTTP writer explicitly
+  before the authority changes, preserving assertions for interrupted and unaffected streams.
+  Local app/database/backup/metrics tests and three repetitions of the affected API tests passed.
+  Fresh hosted qualification is still required for those repairs.
 
 ## Next steps in order
 

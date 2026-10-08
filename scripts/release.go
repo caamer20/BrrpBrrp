@@ -5,6 +5,7 @@ package main
 import (
 	"archive/zip"
 	"crypto/sha256"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -17,7 +18,8 @@ import (
 )
 
 func main() {
-	targets := flag.String("targets", "linux/amd64,linux/arm64,windows/amd64,windows/arm64,darwin/amd64,darwin/arm64", "comma-separated OS/architecture targets")
+	supported := releaseTargets()
+	targets := flag.String("targets", strings.Join(supported, ","), "comma-separated supported OS/architecture targets")
 	version := flag.String("version", "1.0.0-rc.1", "release version")
 	noticesOnly := flag.String("notices", "", "write dependency notices to this file without building packages")
 	sourceList := flag.Bool("source-list", false, "print the source-package contents (one path per line) without building anything")
@@ -49,6 +51,17 @@ func main() {
 	}
 	if strings.ContainsAny(*version, " /\\\n\r") {
 		fail(fmt.Errorf("invalid version"))
+	}
+	for _, target := range strings.Split(*targets, ",") {
+		known := false
+		for _, platform := range supported {
+			if target == platform {
+				known = true
+			}
+		}
+		if !known {
+			fail(fmt.Errorf("unsupported release target %q; dependency notices cover %s", target, strings.Join(supported, ",")))
+		}
 	}
 	goBin := os.Getenv("BRRP_GO")
 	if goBin == "" {
@@ -129,6 +142,19 @@ func main() {
 	fail(os.WriteFile("dist/releases/SHA256SUMS", []byte(sums.String()), 0644))
 	buildDockerSource(*version)
 	fmt.Println("Native packages are in dist/releases; Docker source and checksum are in dist.")
+}
+
+// The notice generator shares this list, so a target cannot be packaged without
+// its linked dependencies being included in the common notices and SBOM.
+func releaseTargets() []string {
+	data, err := os.ReadFile("scripts/release-targets.json")
+	fail(err)
+	var targets []string
+	fail(json.Unmarshal(data, &targets))
+	if len(targets) == 0 {
+		fail(fmt.Errorf("release target list is empty"))
+	}
+	return targets
 }
 
 func buildDockerSource(version string) {
@@ -264,16 +290,16 @@ func dockerSourcePaths() []string {
 		"Dockerfile", ".dockerignore", ".env.docker.example", "compose.yaml", "compose.turn.yaml", "compose.backup.yaml",
 		"go.mod", "go.sum", "README.md", "CONTRIBUTING.md", "LICENSE", "CLA.md", "CLA-SIGNATORIES.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "Makefile",
 		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md", "ROADMAP.md",
-		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json", "scripts/schema13-baselines.json",
+		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json", "scripts/schema13-baselines.json", "scripts/release-targets.json",
 		".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md",
 		".github/ISSUE_TEMPLATE/config.yml", ".github/ISSUE_TEMPLATE/bug_report.md", ".github/ISSUE_TEMPLATE/feature_request.md",
 	}
 	// The workflows are shipped so a consumer can see and reproduce the checks the
 	// source is expected to pass.
-	for _, workflow := range []string{"check.yml", "docker.yml"} {
+	for _, workflow := range []string{"check.yml", "docker.yml", "downloads.yml"} {
 		paths = append(paths, filepath.Join(".github", "workflows", workflow))
 	}
-	for _, script := range []string{"release.go", "check-browser-steps.mjs", "check-workflow-shells.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-compose-env.mjs", "check-env-coverage.mjs", "env-keys.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "check-schema-docs.mjs", "check-acceptance-matrix.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "seed-schema13-private.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "race-shard.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs", "backup-encrypted-rehearsal.mjs", "full-disk-rehearsal.mjs", "probe.mjs", "rehearsal-kit.mjs"} {
+	for _, script := range []string{"release.go", "update-download-badge.mjs", "check-browser-steps.mjs", "check-workflow-shells.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-compose-env.mjs", "check-env-coverage.mjs", "env-keys.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "check-schema-docs.mjs", "check-acceptance-matrix.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "seed-schema13-private.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "race-shard.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs", "backup-encrypted-rehearsal.mjs", "full-disk-rehearsal.mjs", "probe.mjs", "rehearsal-kit.mjs"} {
 		paths = append(paths, filepath.Join("scripts", script))
 	}
 	// The per-platform release scripts are a transitive dependency of `make release`:
@@ -341,7 +367,7 @@ func add(archive *zip.Writer, path, name string, mode os.FileMode) {
 
 // licenses returns the third-party notices for everything a release redistributes.
 // scripts/licenses.mjs is the single source of truth: it reads the module set the
-// compiler actually links into the binary, the packages the web bundle contains and
+// compiler links across the supported targets, the packages the web bundle contains and
 // the standard library, and it fails rather than ship a component whose license it
 // could not read. The same script writes the repository's THIRD-PARTY-NOTICES.md.
 func licenses(goBin, version string) []byte {

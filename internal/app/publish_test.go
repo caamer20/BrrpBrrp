@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,9 @@ func TestPublishExposesACompleteFileOnlyAfterItIsPublished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat published file: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
+	// Windows protects files through ACLs, not Unix permission bits. The atomic
+	// publication and content assertions above apply on every platform.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0600 {
 		t.Fatalf("published mode = %v, want 0600", perm)
 	}
 	assertOnly(t, dir, "attachment")

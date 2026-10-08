@@ -49,7 +49,8 @@ func TestConfigAndCertificate(t *testing.T) {
 }
 
 func TestRejectUnsafeConfig(t *testing.T) {
-	for _, pair := range [][2]string{{"BRRP_MAX_UPLOAD_BYTES", "999999999"}, {"BRRP_TLS_MODE", "invalid"}, {"BRRP_BASE_URL", "https://example.com/path"}, {"BRRP_BEHIND_PROXY", "true"}, {"BRRP_DB_FILE", "/outside.db"}} {
+	outsideDB := filepath.Join(t.TempDir(), "outside.db")
+	for _, pair := range [][2]string{{"BRRP_MAX_UPLOAD_BYTES", "999999999"}, {"BRRP_TLS_MODE", "invalid"}, {"BRRP_BASE_URL", "https://example.com/path"}, {"BRRP_BEHIND_PROXY", "true"}, {"BRRP_DB_FILE", outsideDB}} {
 		t.Run(pair[0], func(t *testing.T) {
 			t.Setenv("BRRP_DATA_DIR", t.TempDir())
 			t.Setenv(pair[0], pair[1])

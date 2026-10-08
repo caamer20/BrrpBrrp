@@ -21,7 +21,9 @@ import (
 // path, the attachment's stored name and its bytes.
 func createArchive(t *testing.T) (app.Config, string, string, []byte) {
 	t.Helper()
-	t.Setenv("BRRP_DATA_DIR", t.TempDir())
+	// Exercise actual SQLite readers with spaces, Unicode and URI metadata bytes
+	// on every host, including Windows drive paths in the hosted test matrix.
+	t.Setenv("BRRP_DATA_DIR", filepath.Join(t.TempDir(), "chat café #100% & data"))
 	config, err := app.LoadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +176,39 @@ func TestArchiveRecordsAndVerifiesWhatItContains(t *testing.T) {
 	}
 	if len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
 		t.Fatalf("digest %q is not a SHA-256 hex string", digest)
+	}
+}
+
+func TestArchiveRestoresThroughSpecialCharacterPaths(t *testing.T) {
+	_, archive, attachmentID, content := createArchive(t)
+	if _, _, err := VerifyArchive(context.Background(), archive); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	t.Setenv("BRRP_DATA_DIR", filepath.Join(t.TempDir(), "restored café #100% & data"))
+	destination, err := app.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := destination.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(destination.DataDir, "backup #100%.zip")
+	copyFile(t, archive, inside)
+	if err := Restore(context.Background(), destination, inside); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination.UploadDir, attachmentID))
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("restored attachment = %q, error = %v", got, err)
+	}
+	store, err := db.Open(destination.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var count int
+	if err := store.QueryRow("SELECT count(*) FROM attachments WHERE id=?", attachmentID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("restored attachment rows = %d, error = %v", count, err)
 	}
 }
 

@@ -31,6 +31,20 @@ the repository publicly, configure and test that intake, choose a private conduc
 review the tracked history and record support expectations. See [SECURITY.md](../SECURITY.md)
 and [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md).
 
+## README download count
+
+The About description lists Windows, macOS and Linux on x64 and ARM64. The README's
+local SVG badge works while the repository is private: **Release download count** queries
+all GitHub release pages with the workflow token and updates only `docs/assets/downloads.svg`.
+It runs daily, on release changes and on manual dispatch. An API failure leaves the previous
+successful count intact. Updates are serialized and use an ordinary fast-forward push.
+
+The count includes native and Docker source ZIPs attached to published version releases,
+including prereleases. Drafts, the archival CI fixture release and ancillary assets are excluded.
+It measures archive downloads rather than unique people or installations. Maintainers can also
+run `GITHUB_REPOSITORY=caamer20/BrrpBrrp node scripts/update-download-badge.mjs` with an
+authenticated `gh` CLI. The script and badge ship in the source archive.
+
 ## CI fixtures
 
 The repository variable `BRRP_CI_BASELINE_TAG` identifies the archival fixture release,
@@ -65,7 +79,7 @@ candidate package directory. Missing or mismatched bytes fail the job.
    Windows and macOS; ARM64 packaging alone is not an ARM64 runtime qualification.
 4. The optional final job downloads only the packages from this run, verifies both checksum
    manifests and creates a **draft prerelease** at the exact tested source commit. It refuses an
-   existing version. It neither publishes a stable release nor deploys a server.
+   existing version release or tag. It neither publishes a stable release nor deploys a server.
 5. Review the draft's notes, files, checksums and real-host evidence. Follow the
    [production runbook](production-readiness.md) before promoting it for production use.
 
