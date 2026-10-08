@@ -55,6 +55,13 @@ development session; hosted logs and artifacts will be available in
 - The first hosted runs were superseded during fixes. Final cross-platform, race, browser, recovery
   and rollback qualification is tracked in [GitHub Actions](https://github.com/caamer20/BrrpBrrp/actions).
   Package creation and the optional draft prerelease remain blocked until those jobs pass.
+- The [manual qualification on `b956ad3`](https://github.com/caamer20/BrrpBrrp/actions/runs/37824339090)
+  passed macOS and Docker but failed Windows and Linux Go tests. Windows exposed backup URI
+  encoding and CPU-duration defects; both are repaired, with path/metrics regressions. Unix-only
+  test assumptions were corrected. Linux revocation tests now pause the HTTP writer explicitly
+  before the authority changes, preserving assertions for interrupted and unaffected streams.
+  Local app/database/backup/metrics tests and three repetitions of the affected API tests passed.
+  Fresh hosted qualification is still required for those repairs.
 
 ## Next steps in order
 
