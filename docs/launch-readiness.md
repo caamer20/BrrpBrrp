@@ -63,7 +63,8 @@ development session; hosted logs and artifacts will be available in
   Local app/database/backup/metrics tests and three repetitions of the affected API tests passed.
   Fresh hosted qualification is still required for those repairs.
 - The next [baseline run on `e1dc5f1`](https://github.com/caamer20/BrrpBrrp/actions/runs/37828534690)
-  passed macOS, Docker and the Linux API suite, but the Linux screen-receiver test failed.
+  passed macOS, Docker, the Linux API suite and Windows API/app/database/backup/installer/metrics
+  packages, but the screen-receiver test failed on Linux and Windows.
   Its two competing RTP readers could consume the same packets before the assertion saw them.
   The test now uses one reader registered before negotiation and checks the offered receiver
   and exact screen payload. The focused test passed 25 repetitions and 10 with the race detector.
@@ -72,6 +73,11 @@ development session; hosted logs and artifacts will be available in
   and redistribution notices passed. Go vulnerability scanning found no affected code;
   one finding was confined to an unused required module. Hosted combined qualification remains
   the gate for preparing the candidate packages.
+  The combined suite ran at local integration revision `51b40e56`; the later RTC-only check
+  ran ten times at `d21d9da9`. After all eight PRs were squash-merged, main revision
+  [`426658f`](https://github.com/caamer20/BrrpBrrp/commit/426658f871c22a9234d64e431107bf3cddb94a78)
+  matched the later integration tree byte for byte. The subsequent change to this assessment
+  records evidence only. Final hosted qualification will run on the resulting main revision.
 - The private-compatible README download-count workflow passed. It counts published application
   archives and excludes draft releases and archival CI fixtures; the initial count is zero.
 
