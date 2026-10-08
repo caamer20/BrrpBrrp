@@ -2,6 +2,8 @@
 
 # BrrpBrrp
 
+[![Release archive downloads](docs/assets/downloads.svg)](https://github.com/caamer20/BrrpBrrp/releases)
+
 **[User manual](docs/manual/README.md) · [Installation](docs/installation.md) · [Roadmap](ROADMAP.md) · [Deployment readiness](docs/launch-readiness.md) · [Contributing](CONTRIBUTING.md)**
 
 **A small, self-hosted place to talk.** BrrpBrrp runs on a computer you control and gives a
@@ -49,6 +51,15 @@ The full set of guides, decision records and release notes is listed in the
 The repository is private while the candidate is qualified. **There is no published application release
 yet.** Build from source below, or use Docker to build from the checkout. Maintainers can prepare release
 archives through the [gated GitHub workflow](docs/github-setup.md#prepare-a-release).
+
+Native packages are built for **Windows, macOS and Linux**, each on **x64 and ARM64**.
+Docker images target Linux x64 and ARM64. Members connect through a browser, including
+phones and tablets; the web app can also be installed. Build targets and completed
+deployment qualification are tracked in [deployment readiness](docs/launch-readiness.md).
+
+The badge counts downloads of published native and Docker source ZIPs, including
+prereleases. It refreshes daily and on release changes, works with the private repository,
+and excludes draft releases and CI fixtures. It counts archive downloads, not unique users.
 
 When a candidate release is available, download the ZIP for your operating system and processor from
 [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases), verify its checksum, extract it, and run the setup wizard.

@@ -296,10 +296,10 @@ func dockerSourcePaths() []string {
 	}
 	// The workflows are shipped so a consumer can see and reproduce the checks the
 	// source is expected to pass.
-	for _, workflow := range []string{"check.yml", "docker.yml"} {
+	for _, workflow := range []string{"check.yml", "docker.yml", "downloads.yml"} {
 		paths = append(paths, filepath.Join(".github", "workflows", workflow))
 	}
-	for _, script := range []string{"release.go", "check-browser-steps.mjs", "check-workflow-shells.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-compose-env.mjs", "check-env-coverage.mjs", "env-keys.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "check-schema-docs.mjs", "check-acceptance-matrix.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "seed-schema13-private.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "race-shard.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs", "backup-encrypted-rehearsal.mjs", "full-disk-rehearsal.mjs", "probe.mjs", "rehearsal-kit.mjs"} {
+	for _, script := range []string{"release.go", "update-download-badge.mjs", "check-browser-steps.mjs", "check-workflow-shells.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-compose-env.mjs", "check-env-coverage.mjs", "env-keys.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "check-schema-docs.mjs", "check-acceptance-matrix.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "seed-schema13-private.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "race-shard.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs", "backup-encrypted-rehearsal.mjs", "full-disk-rehearsal.mjs", "probe.mjs", "rehearsal-kit.mjs"} {
 		paths = append(paths, filepath.Join("scripts", script))
 	}
 	// The per-platform release scripts are a transitive dependency of `make release`:
