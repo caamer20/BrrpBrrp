@@ -1355,34 +1355,51 @@ test('outbox restoration keeps later entries durable and cannot continue into an
   assert.equal(store.getItem(`brrp.outbox.${value.state.user.id}`), null);
 });
 
-test('acknowledging one restored send never drops later unconfirmed sends', async (t) => {
-  const value = recoveryWorkspace();
-  t.after(() => value.stop());
-  value.saveDrafts = true;
-  const entries = [savedSend(), savedSend({ content: 'next unconfirmed' })];
-  store.setItem(`brrp.outbox.${recoveryAccount}`, JSON.stringify(entries));
-  const second = deferred();
-  let calls = 0;
-  setHandler(async () => {
-    if (++calls === 1)
-      return message('saved', {
-        idempotency_key: entries[0].key,
-        user_id: recoveryAccount,
-        channel_id: recoveryChannel
-      });
-    assert.deepEqual(
-      JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`)).map((entry) => entry.key),
-      [entries[1].key]
+test(
+  'acknowledging one restored send never drops later unconfirmed sends',
+  { timeout: 5000 },
+  async (t) => {
+    const value = recoveryWorkspace();
+    t.after(() => value.stop());
+    value.saveDrafts = true;
+    const entries = [savedSend(), savedSend({ content: 'next unconfirmed' })];
+    store.setItem(`brrp.outbox.${recoveryAccount}`, JSON.stringify(entries));
+    const second = deferred();
+    const secondStarted = deferred();
+    let calls = 0;
+    setHandler(async (path, method) => {
+      // A successful send also updates the read cursor. Count only sends: a read
+      // acknowledgement is a separate request and may arrive under suite load.
+      if (path.endsWith('/read')) return {};
+      assert.equal(method, 'POST');
+      assert.match(path, /\/messages$/);
+      if (++calls === 1)
+        return message('saved', {
+          idempotency_key: entries[0].key,
+          user_id: recoveryAccount,
+          channel_id: recoveryChannel
+        });
+      assert.deepEqual(
+        JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`)).map((entry) => entry.key),
+        [entries[1].key]
+      );
+      secondStarted.resolve();
+      return second.promise;
+    });
+    const restoring = value.restoreOutbox();
+    await Promise.race([
+      secondStarted.promise,
+      restoring.then(() => assert.fail('restoration ended before the second send started'))
+    ]);
+    second.reject(apiError('server busy', 503));
+    await restoring;
+    assert.equal(calls, 2);
+    assert.equal(
+      JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`))[0].key,
+      entries[1].key
     );
-    return second.promise;
-  });
-  const restoring = value.restoreOutbox();
-  await new Promise((resolve) => setImmediate(resolve));
-  second.reject(apiError('server busy', 503));
-  await restoring;
-  assert.equal(calls, 2);
-  assert.equal(JSON.parse(store.getItem(`brrp.outbox.${recoveryAccount}`))[0].key, entries[1].key);
-});
+  }
+);
 
 test('disabling persistence clears saved sends but preserves the current session recovery', async (t) => {
   const value = recoveryWorkspace();

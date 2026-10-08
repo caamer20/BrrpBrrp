@@ -1,12 +1,32 @@
 {
-  "note": "Recorded identities of the preserved schema-13 executables the upgrade rehearsal may seed with. The rehearsal hashes the executable it is given and refuses anything that does not match this file: a binary of another platform, another revision or the current source is not the release the rehearsal is about. When a hosted Linux baseline is acquired, record its sha256 and embedded build revision under linux-amd64 first — the rehearsal fails loudly for a platform with no entry.",
+  "note": "Pinned schema-13 migration fixtures. Preserve original executable identities separately from fixtures reconstructed from exact historical source. The rehearsal verifies binary SHA-256 and embedded revision, and carries provenance into reports. Reconstructed Linux bytes establish migration from the historical application; compatibility with an actually distributed Linux schema-13 executable remains unverified.",
   "darwin-x64": {
     "binary": "dist/brrpbrrp-p9-checkpoint",
     "sha256": "fddd1e3f3ef3c9873e822dd96f625c3bcdfd036b76fdff2ba45c5835a4c3b57f",
     "revision": "2869db55394b2b2a004424672517b38d6908586b",
     "schema": 13,
     "recorded": "2026-10-01",
-    "source": "preserved local checkpoint from the p9 private-reporting line; hash re-verified in review 17"
+    "source": "preserved local checkpoint from the p9 private-reporting line; hash re-verified in review 17",
+    "provenance": "preserved-executable"
   },
-  "linux-amd64": null
+  "linux-x64": {
+    "binary": "brrpbrrp",
+    "sha256": "b72c56863e5697bc8777822d9c7b450cd7eb67645cc702a5186c565e679c8863",
+    "revision": "2869db55394b2b2a004424672517b38d6908586b",
+    "schema": 13,
+    "recorded": "2026-10-08",
+    "provenance": "reconstructed-from-source",
+    "archive": "brrpbrrp-schema13-linux-amd64.zip",
+    "archive_sha256": "6ab7e9ab9436a6777b7b3f92e61afcb6959e83b295376668a33d31a6f81c1acf",
+    "go_toolchain": "go1.27.1",
+    "node": "v24.2.0",
+    "npm": "11.4.2",
+    "vcs_modified": false,
+    "build_commands": [
+      "npm ci --prefix web",
+      "npm run build --prefix web",
+      "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o brrpbrrp ./cmd/brrpbrrp"
+    ],
+    "source": "Migration fixture from exact historical schema-13 source and locked dependencies. These bytes were reconstructed on 2026-10-08, not preserved from a previously distributed Linux release."
+  }
 }

@@ -2,7 +2,7 @@
 
 BrrpBrrp is being built as a self-hosted community chat application. Start with the [roadmap](docs/roadmap.md), [architecture](docs/architecture.md) and [production runbook](docs/production-readiness.md).
 
-BrrpBrrp is released under the [MIT License](LICENSE), and everything a release redistributes is listed with its own license in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Outside contributions are covered by the project's [Contributor License Agreement](CLA.md), which you accept when you open a pull request. This development guide itself grants no license.
+BrrpBrrp is released under the [MIT License](LICENSE), and everything a release redistributes is listed with its own license in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Outside contributions are covered by the project's [Contributor License Agreement](CLA.md); include its signature sentence in your pull request and have the signature recorded as described below. This development guide itself grants no license.
 
 ## Development
 

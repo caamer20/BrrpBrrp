@@ -13,6 +13,11 @@
 coverage.out
 .DS_Store
 /StartupProfileData-NonInteractive
+/StartupProfileData-NonInteractive*
+/web/report-*/
+/check-results/
+/brrpbrrp
+/brrpbrrp.exe
 /.freebuff/
 /.codex/
 /.agents/

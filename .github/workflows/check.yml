@@ -3,8 +3,16 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      prepare_release:
+        description: Create a draft prerelease after every automated gate passes
+        type: boolean
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: check-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   test:
     strategy:
@@ -67,6 +75,8 @@ jobs:
       # the rest of the tree in one, with the split proven to be a partition before any of
       # it runs (scripts/race-shard.mjs --self-test).
       - run: go build ./cmd/brrpbrrp
+      - name: Go tests on this platform
+        run: go test -count=1 -timeout 45m ./...
       # The released binary redistributes these dependencies, so the notices must
       # match them: a stale file or an unreadable license fails here.
       - run: node scripts/licenses.mjs --check
@@ -170,7 +180,7 @@ jobs:
   browser:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -187,6 +197,9 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      - name: Install Playwright browsers and system dependencies
+        working-directory: web
+        run: npx playwright install --with-deps chromium firefox
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
       # The browser-step audit executes shell command lines and writes a POSIX
@@ -197,9 +210,9 @@ jobs:
       # test matrix above is unchanged.
       - run: node scripts/check-browser-steps.mjs --self-test
       - run: node scripts/check-browser-steps.mjs
-      # Both feature gates are required: the default-off suite proves the shipped
-      # default, and the opted-in suite must visibly include the direct-message
-      # journeys. A run that silently skipped them would pass nothing extra.
+      # Both existing private-conversation harness modes are required. Restricted
+      # channels remain off in this harness; these runs do not prove the shipped
+      # defaults. Restricted-channel acceptance is tracked in ROADMAP.md.
       #
       # `shell: bash` is declared, not left to the runner's default. The default
       # Linux shell is `bash -e`, which has no pipefail, so `npm run test:e2e |
@@ -210,7 +223,7 @@ jobs:
       # status fails the step. scripts/check-browser-steps.mjs audits that
       # property and proves it by running these step bodies against a failing
       # stub; it is not a substitute for this job actually running.
-      - name: Browser journeys (default feature set)
+      - name: Browser journeys (conversation features disabled)
         working-directory: web
         shell: bash
         env:
@@ -228,13 +241,6 @@ jobs:
           npm run test:e2e 2>&1 | tee browser-private.log
           test -d test-results && mv test-results test-results-private || true
           grep -q '\[directs\]' browser-private.log || { echo 'FAIL: the opted-in run never executed the directs project'; exit 1; }
-      # The engine the media journeys run under next. Installed in its own step so the
-      # audited step below stays a hermetic shell body (the audit executes it with a stub
-      # for `npm`, and a real download inside it would make the audit depend on the
-      # network).
-      - name: Install the Firefox engine
-        working-directory: web
-        run: npx playwright install firefox
       # The media journeys under a second engine. It is its own invocation because the
       # voice spec creates the accounts and roles it uses, so one installation serves one
       # pass of it — and because a codec policy that has only ever met Chromium is a
@@ -267,7 +273,6 @@ jobs:
             web/browser-private.log
             web/browser-firefox.log
             web/report-firefox/
-            web/browser-private.log
             web/test-results/
             web/test-results-default/
             web/test-results-private/
@@ -313,42 +318,26 @@ jobs:
       # product half is proven by the guard's own tests either way.
       - name: Full-disk rehearsal
         run: node scripts/full-disk-rehearsal.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/full-disk.json
-      # The schema-13 rehearsal needs a schema-13 data directory, and only a real
-      # schema-13 executable can write one: a current binary produces a current
-      # database, and the rehearsal's own checks reject that. The seed is therefore
-      # built by a schema-13 executable acquired from the operator's approved host and
-      # verified against the digest provided with it.
-      #
-      # Nothing here names a version: the version was never the identity. The
-      # rehearsal's `--make-seed` verifies the executable's SHA256 against
-      # scripts/schema13-baselines.json for this platform and refuses a mismatch or a
-      # platform with no recorded identity (review 17, V17-05). The linux-amd64 entry
-      # is deliberately null until a hosted archive is acquired and its identity
-      # recorded; this step therefore fails with that exact instruction rather than
-      # seeding from the wrong bytes or silently skipping.
+      # Linux uses an explicitly reconstructed fixture from the exact schema-13
+      # checkpoint. Its archive and executable digests are pinned, and provenance
+      # survives into the reports. This establishes migration from historical source,
+      # not the identity of a previously distributed Linux schema-13 executable.
+      # Authenticated release retrieval also works while this repository is private.
       - name: Build the schema-13 upgrade seed from the verified baseline
+        shell: bash
         env:
-          SCHEMA13_BASELINE_URL: ${{ vars.BRRP_SCHEMA13_BASELINE_URL }}
-          SCHEMA13_BASELINE_SHA256: ${{ vars.BRRP_SCHEMA13_BASELINE_SHA256 }}
+          CI_BASELINE_TAG: ${{ vars.BRRP_CI_BASELINE_TAG }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if [ -z "${SCHEMA13_BASELINE_URL}" ] || [ -z "${SCHEMA13_BASELINE_SHA256}" ]; then
-            echo "No schema-13 baseline is configured for this repository." >&2
-            echo "Acquire the archived linux/amd64 schema-13 release from the approved host," >&2
-            echo "set BRRP_SCHEMA13_BASELINE_URL and BRRP_SCHEMA13_BASELINE_SHA256 as repository" >&2
-            echo "variables, and record its sha256 and embedded revision under linux-amd64 in" >&2
-            echo "scripts/schema13-baselines.json. Then this step and the rehearsal can run." >&2
-            exit 1
-          fi
+          test -n "$CI_BASELINE_TAG" || { echo 'Set BRRP_CI_BASELINE_TAG to the private CI fixture release.' >&2; exit 1; }
           mkdir -p /tmp/brrp-s13 && rm -rf /tmp/brrp-s13/*
-          curl -fsSL "${SCHEMA13_BASELINE_URL}" -o /tmp/brrp-s13/baseline.zip
-          echo "${SCHEMA13_BASELINE_SHA256}  /tmp/brrp-s13/baseline.zip" | sha256sum -c -
-          unzip -q /tmp/brrp-s13/baseline.zip -d /tmp/brrp-s13
-          old_binary="$(find /tmp/brrp-s13 -maxdepth 3 -type f -name brrpbrrp | head -1)"
-          if [ -z "${old_binary}" ]; then
-            echo "the downloaded archive contains no brrpbrrp executable" >&2
-            exit 1
-          fi
-          node scripts/upgrade-schema13-private.mjs --make-seed /tmp/brrp-s13/data --old-binary "${old_binary}" --report check-results/schema13-seed.json
+          gh release download "$CI_BASELINE_TAG" --pattern brrpbrrp-schema13-linux-amd64.zip --dir /tmp/brrp-s13
+          digest="$(node -p 'require("./scripts/schema13-baselines.json")["linux-x64"].archive_sha256')"
+          echo "$digest  /tmp/brrp-s13/brrpbrrp-schema13-linux-amd64.zip" | sha256sum -c -
+          unzip -q /tmp/brrp-s13/brrpbrrp-schema13-linux-amd64.zip -d /tmp/brrp-s13
+          chmod +x /tmp/brrp-s13/brrpbrrp
+          node scripts/upgrade-schema13-private.mjs --make-seed /tmp/brrp-s13/data --old-binary /tmp/brrp-s13/brrpbrrp --report check-results/schema13-seed.json
       - name: Schema-13 upgrade rehearsal
         run: node scripts/upgrade-schema13-private.mjs --seed-dir /tmp/brrp-s13/data --binary "$(pwd)/dist/brrpbrrp-recovery" --report check-results/schema13.json
       - name: Package one native and one source archive
@@ -392,20 +381,26 @@ jobs:
         working-directory: web
       - name: Build the candidate
         run: mkdir -p dist check-results && go build -trimpath -ldflags="-s -w" -o dist/brrpbrrp-recovery ./cmd/brrpbrrp
-      # BRRP_BASELINE_RELEASE_URL is a repository/organization variable pointing at
-      # the approved archive host. Without it the fetch fails and the gate cannot
-      # pass, which is deliberate: an unverifiable baseline is not a rollback test.
+      # Archived alpha bytes are retrieved with authentication and then checked
+      # against the unchanged pinned identities. Keep them outside dist/releases
+      # so they cannot be uploaded as candidate packages.
       - name: Stage the pinned archived releases
+        shell: bash
         env:
-          BRRP_BASELINE_RELEASE_URL: ${{ vars.BRRP_BASELINE_RELEASE_URL }}
+          CI_BASELINE_TAG: ${{ vars.BRRP_CI_BASELINE_TAG }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          test -n "$CI_BASELINE_TAG" || { echo 'Set BRRP_CI_BASELINE_TAG to the private CI fixture release.' >&2; exit 1; }
+          mkdir -p /tmp/brrp-baselines
+          gh release download "$CI_BASELINE_TAG" --pattern 'brrpbrrp-0.4.0-alpha.*-linux-amd64.zip' --dir /tmp/brrp-baselines
           node scripts/fetch-baseline-release.mjs --self-test
-          node scripts/fetch-baseline-release.mjs --version 0.4.0-alpha.5 --platform linux/amd64
-          node scripts/fetch-baseline-release.mjs --version 0.4.0-alpha.3 --platform linux/amd64
+          node scripts/fetch-baseline-release.mjs --version 0.4.0-alpha.5 --platform linux/amd64 --dir /tmp/brrp-baselines --dest /tmp/brrp-verified-baselines
+          node scripts/fetch-baseline-release.mjs --version 0.4.0-alpha.3 --platform linux/amd64 --dir /tmp/brrp-baselines --dest /tmp/brrp-verified-baselines
       - name: Upgrade/rollback against the packaged checkpoint
-        run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release "$(pwd)/dist/releases/brrpbrrp-0.4.0-alpha.5-linux-amd64.zip" --report check-results/rollback-alpha5.json
+        run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release /tmp/brrp-verified-baselines/brrpbrrp-0.4.0-alpha.5-linux-amd64.zip --report check-results/rollback-alpha5.json
       - name: Upgrade/rollback against the legacy baseline
-        run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release "$(pwd)/dist/releases/brrpbrrp-0.4.0-alpha.3-linux-amd64.zip" --report check-results/rollback-alpha3.json
+        run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release /tmp/brrp-verified-baselines/brrpbrrp-0.4.0-alpha.3-linux-amd64.zip --report check-results/rollback-alpha3.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -444,3 +439,41 @@ jobs:
           path: |
             dist/brrpbrrp-docker-source-*.zip
             dist/DOCKER-SOURCE-SHA256SUMS
+  release-draft:
+    if: github.event_name == 'workflow_dispatch' && inputs.prepare_release && github.ref == 'refs/heads/main'
+    needs: packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: brrpbrrp-native-packages
+          path: release-assets
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: brrpbrrp-docker-source
+          path: release-assets
+      - name: Verify assets and create a draft prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd release-assets
+          sha256sum -c SHA256SUMS
+          sha256sum -c DOCKER-SOURCE-SHA256SUMS
+          cd ..
+          version="$(node -p 'require("./web/package.json").version')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || { echo 'Invalid release version'; exit 1; }
+          notes="docs/releases/$version.md"
+          test -f "$notes"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo 'A release with this version already exists. Review it or choose a new version.' >&2
+            exit 1
+          fi
+          gh release create "v$version" release-assets/* \
+            --target "$RELEASE_COMMIT" --title "BrrpBrrp $version" \
+            --notes-file "$notes" --draft --prerelease --latest=false

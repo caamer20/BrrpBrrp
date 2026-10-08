@@ -184,7 +184,7 @@ func releaseDocPaths() []string {
 		// dockerSourcePaths, and this is the list a *binary* package stages: a document
 		// added here and not there would make the two packages disagree about what is
 		// shipped, which is what the packaging check compares.
-		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md",
+		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md", "ROADMAP.md",
 	}
 	for _, path := range docsTree() {
 		if nativeSkipDocs[path] {
@@ -263,8 +263,10 @@ func dockerSourcePaths() []string {
 	paths := []string{
 		"Dockerfile", ".dockerignore", ".env.docker.example", "compose.yaml", "compose.turn.yaml", "compose.backup.yaml",
 		"go.mod", "go.sum", "README.md", "CONTRIBUTING.md", "LICENSE", "CLA.md", "CLA-SIGNATORIES.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "Makefile",
-		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md",
-		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json",
+		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md", "ROADMAP.md",
+		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json", "scripts/schema13-baselines.json",
+		".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md",
+		".github/ISSUE_TEMPLATE/config.yml", ".github/ISSUE_TEMPLATE/bug_report.md", ".github/ISSUE_TEMPLATE/feature_request.md",
 	}
 	// The workflows are shipped so a consumer can see and reproduce the checks the
 	// source is expected to pass.

@@ -13,7 +13,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -142,9 +142,19 @@ for (const [name, range] of Object.entries(manifest.dependencies || {})) {
 }
 
 // A Go-built binary also contains portions of the standard library.
+// Homebrew keeps the toolchain in libexec and its LICENSE in the same installed
+// distribution's parent. Accept that exact layout without substituting a license
+// from another toolchain or downloading a guessed text.
+const goRoot = go("env", "GOROOT");
+const goLicenseDirectory =
+  !licenseFile(goRoot) &&
+  basename(goRoot) === "libexec" &&
+  existsSync(join(dirname(goRoot), "LICENSE"))
+    ? dirname(goRoot)
+    : goRoot;
 components.push(
   component(
-    go("env", "GOROOT"),
+    goLicenseDirectory,
     "the Go standard library",
     go("env", "GOVERSION"),
   ),

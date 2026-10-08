@@ -5,7 +5,8 @@
 //   node scripts/upgrade-schema13-private.mjs --seed-dir PATH --binary PATH
 //
 // The seed directory must have been produced by scripts/seed-schema13-private.mjs
-// against an actual archived schema-13 executable. This script copies it, migrates
+// against an identified schema-13 executable. Preserved and reconstructed fixtures
+// have distinct provenance in the manifest and reports. This script copies it, migrates
 // the copy with the current binary, and compares every preserved value rather than
 // checking that rows still exist: a migration that rewrote an expiry, truncated a
 // snapshot or altered a request state would leave the same row count.
@@ -43,12 +44,13 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // The recorded identity of the preserved schema-13 baseline, per platform.
 //
-// The rehearsal's value depends on the fixture having been written by the *actual*
-// preserved release, so the executable is identified rather than trusted: its SHA256
+// The rehearsal's value depends on the fixture having been written by the recorded
+// historical application, so the executable is identified rather than trusted: its SHA256
 // must match the recorded one for this platform, and its embedded build revision is
 // checked beside it. A platform with no recorded baseline fails loudly instead of
 // accepting a lookalike — a binary of another platform or another revision is not the
-// release the rehearsal is about (review 17, V17-05).
+// fixture the rehearsal is about (review 17, V17-05). A reconstruction proves migration
+// from historical source; it does not establish the identity of a distributed release.
 function verifyBaseline(path) {
   const manifestPath = join(repoRoot, "scripts", "schema13-baselines.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -76,7 +78,7 @@ function verifyBaseline(path) {
   }
   return {
     ok: true,
-    entry: { platform, sha256, revision: entry.revision, schema: entry.schema },
+    entry: { platform, ...entry, sha256 },
     detail: `${platform} ${sha256.slice(0, 12)}… revision ${entry.revision.slice(0, 12)}…`,
   };
 }

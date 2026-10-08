@@ -16,10 +16,12 @@ Use GitHub's private vulnerability reporting: open the repository's **Security**
 choose **Report a vulnerability**. That report is visible only to maintainers, and it is
 the channel for security reports — do not open a public issue containing exploit details.
 
-**This intake is not live yet.** The public repository does not exist, the setting is not
-enabled, and no test report has been delivered, which the project's own plan (WP-01)
-requires before a public launch. Until then, report privately to the account that
-published the release you are running.
+**This intake is not live yet.** [The repository](https://github.com/caamer20/BrrpBrrp) is
+private during candidate qualification. GitHub's public vulnerability intake is unavailable
+on this private repository. Enable it and deliver a test report before a public launch,
+as required by the project's plan (WP-01). Authorized collaborators can use **Security →
+Advisories → New draft security advisory** for a private maintainer discussion. A private
+reporting contact for people without repository access must be established before public launch.
 
 Please include:
 
