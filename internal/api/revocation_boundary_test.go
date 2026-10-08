@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +83,9 @@ func drain(t *testing.T, response *http.Response, already int64) int64 {
 		n, err := response.Body.Read(buffer)
 		delivered += int64(n)
 		if err != nil {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("download failed without a clean or truncated end: %v", err)
+			}
 			return delivered
 		}
 	}
