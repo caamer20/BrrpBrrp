@@ -9,7 +9,7 @@ require (
 	github.com/pion/interceptor v0.1.48
 	github.com/pion/rtcp v1.2.17
 	github.com/pion/rtp v1.10.5
-	github.com/pion/stun/v3 v3.1.5
+	github.com/pion/stun/v3 v3.1.7
 	github.com/pion/turn/v4 v4.1.4
 	github.com/pion/webrtc/v4 v4.2.20
 	golang.org/x/crypto v0.57.0

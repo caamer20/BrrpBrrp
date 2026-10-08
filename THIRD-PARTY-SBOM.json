@@ -245,7 +245,7 @@
     {
       "type": "library",
       "name": "github.com/pion/stun/v3",
-      "version": "v3.1.5",
+      "version": "v3.1.7",
       "licenses": [
         {
           "license": {
