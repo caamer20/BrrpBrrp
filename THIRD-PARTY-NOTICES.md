@@ -43,7 +43,7 @@ arrive without its terms being recorded here.
 | `github.com/pion/sctp` | v1.11.3 | MIT |
 | `github.com/pion/sdp/v3` | v3.0.20 | MIT |
 | `github.com/pion/srtp/v3` | v3.1.0 | MIT |
-| `github.com/pion/stun/v3` | v3.1.5 | MIT |
+| `github.com/pion/stun/v3` | v3.1.7 | MIT |
 | `github.com/pion/stun/v4` | v4.0.1 | MIT |
 | `github.com/pion/transport/v4` | v4.1.0 | MIT |
 | `github.com/pion/transport/v5` | v5.1.1 | MIT |
@@ -53,7 +53,7 @@ arrive without its terms being recorded here.
 | `github.com/remyoudompheng/bigfft` | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause |
 | `github.com/SherClockHolmes/webpush-go` | v1.4.0 | MIT |
 | `github.com/wlynxg/anet` | v0.0.5 | BSD-3-Clause |
-| `golang.org/x/crypto` | v0.56.0 | BSD-3-Clause |
+| `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause |
 | `golang.org/x/image` | v0.46.0 | BSD-3-Clause |
 | `golang.org/x/net` | v0.58.0 | BSD-3-Clause |
 | `golang.org/x/sys` | v0.48.0 | BSD-3-Clause |
@@ -233,7 +233,7 @@ Applies to:
 - `github.com/pion/sctp` v1.11.3
 - `github.com/pion/sdp/v3` v3.0.20
 - `github.com/pion/srtp/v3` v3.1.0
-- `github.com/pion/stun/v3` v3.1.5
+- `github.com/pion/stun/v3` v3.1.7
 - `github.com/pion/stun/v4` v4.0.1
 - `github.com/pion/transport/v4` v4.1.0
 - `github.com/pion/transport/v5` v5.1.1
@@ -456,7 +456,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Applies to:
 
-- `golang.org/x/crypto` v0.56.0
+- `golang.org/x/crypto` v0.57.0
 - `golang.org/x/image` v0.46.0
 - `golang.org/x/net` v0.58.0
 - `golang.org/x/sys` v0.48.0

@@ -245,7 +245,7 @@
     {
       "type": "library",
       "name": "github.com/pion/stun/v3",
-      "version": "v3.1.5",
+      "version": "v3.1.7",
       "licenses": [
         {
           "license": {
@@ -365,7 +365,7 @@
     {
       "type": "library",
       "name": "golang.org/x/crypto",
-      "version": "v0.56.0",
+      "version": "v0.57.0",
       "licenses": [
         {
           "license": {
