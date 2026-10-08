@@ -38,7 +38,15 @@ development session; hosted logs and artifacts will be available in
 - Chromium browser journeys, conversation features disabled: 30 passed, zero failed (3.4 minutes).
 - Preserved macOS schema-13 seed and upgrade: passed; every compared value and identity was retained,
   and provenance appears in the seed and upgrade reports.
-- Chromium private-conversation mode: running. Both modes keep restricted channels disabled.
+- Chromium private-conversation mode: 45 passed, zero failed (5.0 minutes). Both modes keep
+  restricted channels disabled. These browser runs preceded the build-dependency patch below.
+- Dependency audit found `source-map-js` 1.2.1 affected by
+  [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q). The lockfile is
+  updated to 1.2.2, and npm reports zero vulnerabilities. Static and frontend checks are rerun
+  after this patch.
+- First hosted Docker build found that the notices generator treated an absolute destination
+  as relative. That defect is fixed and verified with an actual absolute-path output locally;
+  hosted image rebuild/lifecycle remains pending.
 - Hosted qualification: [first main run](https://github.com/caamer20/BrrpBrrp/actions/runs/37821452830)
   started for commit `5b20f5d`; Windows/macOS/Linux, race, Docker and recovery results remain pending.
 
