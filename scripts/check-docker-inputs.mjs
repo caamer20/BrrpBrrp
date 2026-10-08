@@ -61,6 +61,7 @@ if (process.argv.includes("--self-test")) {
       "internal/app/app.go": "package app\n",
       "scripts/release.go": "//go:build ignore\n\npackage main\n",
       "scripts/licenses.mjs": "// fixture\n",
+      "scripts/release-targets.json": '["linux/amd64"]\n',
       "web/assets.go": "package web\n",
       "web/index.html": "<!doctype html>\n",
       "web/package.json": "{}\n",
@@ -117,6 +118,7 @@ COPY --from=build /out/THIRD_PARTY_NOTICES.txt /usr/share/licenses/brrpbrrp/THIR
     const complaints = [
       "has no Node runtime",
       "without copying scripts/licenses.mjs",
+      "without copying scripts/release-targets.json",
       "without copying web/package.json",
       "without the bundled frontend packages",
       "does not copy the project LICENSE",
@@ -351,7 +353,7 @@ for (const stage of stages) {
     if (!line.startsWith("RUN ")) return;
     // The notices generator reads the linked module set with the Go toolchain and
     // the bundled frontend packages with Node, whether it is invoked directly or
-    // through scripts/release.go -notices. Both runtimes and all three inputs must
+    // through scripts/release.go -notices. Both runtimes and the declared inputs must
     // be in the stage that runs it: this is the defect class the audit exists for.
     const generatesNotices =
       /scripts\/licenses\.mjs/.test(line) ||
@@ -367,7 +369,7 @@ for (const stage of stages) {
           `stage ${stage.name}: generates notices but has no Go toolchain in its base image or a prior install`,
         );
       }
-      for (const input of ["scripts/licenses.mjs", "web/package.json"]) {
+      for (const input of ["scripts/licenses.mjs", "scripts/release-targets.json", "web/package.json"]) {
         if (
           !copiedSources.some(
             (value) => value.stage === stage.name && value.source === input,
