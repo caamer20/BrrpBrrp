@@ -10,11 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 
 	"brrpbrrp/internal/app"
+	"brrpbrrp/internal/db"
 	"github.com/google/uuid"
 )
 
@@ -456,8 +456,7 @@ func verifyCoverage(ctx context.Context, databasePath string, manifest Manifest)
 // backup database references. It opens the file read-only, so it can run against
 // an archive that was never restored.
 func readDatabaseInventory(ctx context.Context, path string) (int, map[string]bool, error) {
-	uri := url.URL{Scheme: "file", Path: path}
-	source, err := sql.Open("sqlite", uri.String()+"?mode=ro")
+	source, err := sql.Open("sqlite", db.DatabaseFileURI(path)+"?mode=ro")
 	if err != nil {
 		return 0, nil, err
 	}

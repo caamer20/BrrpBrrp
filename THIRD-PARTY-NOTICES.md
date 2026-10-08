@@ -8,6 +8,9 @@ compiler links into the `brrpbrrp` executable, and the frontend packages bundled
 into the web assets that executable serves. Every one of them is listed below with
 the license it is distributed under and the license text it carries.
 
+These notices cover the union of linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/amd64, darwin/arm64.
+An individual binary may contain a subset of these components.
+
 Regenerate this file from the current dependency set with:
 
 ```sh

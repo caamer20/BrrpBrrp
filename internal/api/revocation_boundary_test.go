@@ -2,30 +2,59 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"brrpbrrp/internal/db"
 	"brrpbrrp/internal/ws"
 )
 
-// startDownload opens a file response and leaves it open, so the test can act while
-// the server is still streaming.
-func startDownload(t *testing.T, s *Server, handler http.Handler, cookie *http.Cookie, attachmentID string) (*http.Response, int64) {
+// pausedDownloadWriter flushes one chunk and blocks before the next read. This
+// prevents fast loopback sockets from buffering the whole file before revocation.
+// It never checks authorization: the production reader must stop the revoked copy.
+type pausedDownloadWriter struct {
+	http.ResponseWriter
+	paused, release chan struct{}
+	once            sync.Once
+}
+
+func (w *pausedDownloadWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	w.once.Do(func() {
+		w.ResponseWriter.(http.Flusher).Flush()
+		close(w.paused)
+		<-w.release
+	})
+	return n, err
+}
+
+func (w *pausedDownloadWriter) Flush() { w.ResponseWriter.(http.Flusher).Flush() }
+
+// startDownload returns an admitted, paused download and an explicit resume
+// function. Cleanup always releases the writer, including on failed assertions.
+func startDownload(t *testing.T, s *Server, handler http.Handler, cookie *http.Cookie, attachmentID string) (*http.Response, int64, func()) {
 	t.Helper()
-	server := httptest.NewServer(handler)
+	paused, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	resume := func() { once.Do(func() { close(release) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(&pausedDownloadWriter{ResponseWriter: w, paused: paused, release: release}, r)
+	}))
 	t.Cleanup(server.Close)
+	t.Cleanup(resume)
 	download, err := http.NewRequest(http.MethodGet, server.URL+"/api/uploads/"+attachmentID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	download.Header.Set("Origin", s.config.BaseURL)
 	download.AddCookie(cookie)
-	response, err := (&http.Client{}).Do(download)
+	response, err := (&http.Client{Timeout: time.Minute}).Do(download)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
@@ -37,7 +66,12 @@ func startDownload(t *testing.T, s *Server, handler http.Handler, cookie *http.C
 	if _, err := io.ReadFull(response.Body, head); err != nil {
 		t.Fatalf("first read: %v", err)
 	}
-	return response, int64(len(head))
+	select {
+	case <-paused:
+	case <-time.After(time.Minute):
+		t.Fatal("download did not reach its pause boundary")
+	}
+	return response, int64(len(head)), resume
 }
 
 // drain reads a download to its end and reports how many bytes arrived.
@@ -49,6 +83,9 @@ func drain(t *testing.T, response *http.Response, already int64) int64 {
 		n, err := response.Body.Read(buffer)
 		delivered += int64(n)
 		if err != nil {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("download failed without a clean or truncated end: %v", err)
+			}
 			return delivered
 		}
 	}
@@ -96,14 +133,16 @@ func TestARevokedSessionEndsItsOwnStreamsAndKeepsTheOthers(t *testing.T) {
 	other := second.Result().Cookies()[0]
 	attachmentID, size := sharedArchive(t, s, handler, admin)
 
-	revoked, revokedHead := startDownload(t, s, handler, insider, attachmentID)
-	surviving, survivingHead := startDownload(t, s, handler, other, attachmentID)
+	revoked, revokedHead, resumeRevoked := startDownload(t, s, handler, insider, attachmentID)
+	surviving, survivingHead, resumeSurviving := startDownload(t, s, handler, other, attachmentID)
 
 	// The account revokes one of its own devices while both responses are open.
 	victim := currentSession(t, handler, insider)
 	if w := request(t, handler, "DELETE", "/api/me/sessions/"+victim.ID, nil, other); w.Code != 200 {
 		t.Fatalf("revoke one session: %d %s", w.Code, w.Body.String())
 	}
+	resumeRevoked()
+	resumeSurviving()
 	if delivered := drain(t, revoked, revokedHead); delivered >= size {
 		t.Fatalf("the revoked session received the whole file: %d of %d bytes", delivered, size)
 	}
@@ -121,14 +160,16 @@ func TestAChangedPasswordEndsEveryStreamThatCredentialAdmitted(t *testing.T) {
 	_, member := memberAccount(t, s, "member")
 	attachmentID, size := sharedArchive(t, s, handler, admin)
 
-	adminStream, adminHead := startDownload(t, s, handler, admin, attachmentID)
-	memberStream, memberHead := startDownload(t, s, handler, member, attachmentID)
+	adminStream, adminHead, resumeAdminStream := startDownload(t, s, handler, admin, attachmentID)
+	memberStream, memberHead, resumeMemberStream := startDownload(t, s, handler, member, attachmentID)
 
 	changed := request(t, handler, "POST", "/api/me/password",
 		map[string]string{"current_password": "correct horse battery", "new_password": "a different long passphrase"}, admin)
 	if changed.Code != 200 {
 		t.Fatalf("password change: %d %s", changed.Code, changed.Body.String())
 	}
+	resumeAdminStream()
+	resumeMemberStream()
 	if delivered := drain(t, adminStream, adminHead); delivered >= size {
 		t.Fatalf("a stream admitted by the changed password received the whole file: %d of %d bytes", delivered, size)
 	}
@@ -153,14 +194,16 @@ func TestAnOperatorPasswordResetEndsTheStreamsTheOldCredentialAdmitted(t *testin
 	_, bystander := memberAccount(t, s, "bystander")
 	attachmentID, size := sharedArchive(t, s, handler, admin)
 
-	targetStream, targetHead := startDownload(t, s, handler, target, attachmentID)
-	bystanderStream, bystanderHead := startDownload(t, s, handler, bystander, attachmentID)
+	targetStream, targetHead, resumeTargetStream := startDownload(t, s, handler, target, attachmentID)
+	bystanderStream, bystanderHead, resumeBystanderStream := startDownload(t, s, handler, bystander, attachmentID)
 
 	reset := request(t, handler, "POST", "/api/admin/users/"+targetID+"/reset-password",
 		map[string]any{"new_password": "a replacement passphrase", "confirm": "target"}, admin)
 	if reset.Code != http.StatusOK {
 		t.Fatalf("operator password reset: %d %s", reset.Code, reset.Body.String())
 	}
+	resumeTargetStream()
+	resumeBystanderStream()
 	if delivered := drain(t, targetStream, targetHead); delivered >= size {
 		t.Fatalf("the reset left its admitted download running: %d of %d bytes", delivered, size)
 	}

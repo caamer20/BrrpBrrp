@@ -33,9 +33,10 @@ for 1.0.0. The honest state is:
 - Every planned feature family is implemented, including roles and delegation, restricted channels,
   consented direct conversations and groups, blocking, named threads, moderation timeouts, member data
   export, voice with screen sharing, verified backups and operator alerts.
-- The last full local test pass was on an earlier commit. The most recent changes have passed the static
-  checks only and are **shipped, not run**: both conversation features switched on by default, the
-  screen-share volume fix, and the version change.
+- On 8 October, the candidate passed the local Go suites, 392 frontend tests, static/package checks,
+  30 browser journeys with conversation features off and 45 with private conversations on. Both browser
+  modes keep restricted channels off. The Linux race sweep and cross-platform hosted qualification are
+  still separate evidence; see [deployment readiness](docs/launch-readiness.md).
 - No release gate has passed. Gates need things a development machine cannot supply: a second host,
   a real network, a physical device, an independent reviewer, or elapsed days.
 
@@ -44,13 +45,14 @@ execution ledger, `planning/v1-execution-ledger-2026-10-01.md`, in the developme
 
 ## The path to 1.0.0
 
-### 1. Run what has been written but not run
+### 1. Complete automated candidate qualification
 
-**Open gate.** Nothing in this step needs new code; it needs the test suites to be run on the candidate.
+**Open gate.** The local non-race suites and both existing browser modes passed on 8 October.
+Complete the hosted checks and retain results against the candidate source and package bytes.
 
-- The Go suites and the browser journeys on the candidate, in both conversation-feature modes.
-- The `-race` sweep, which has not been part of the last pass.
-- The new tests for the two default switches, the screen-share volume fix and the version.
+- Hosted Go suites on Windows, macOS and Linux, and browser journeys in both existing harness modes.
+- The Linux `-race` sweep, which was not part of the local pass.
+- A browser mode and journeys for the shipped restricted-channel default (step 2).
 - Any failure found here becomes a defect to fix and re-run, not a note to carry.
 
 ### 2. Exercise restricted channels in a browser
@@ -81,7 +83,8 @@ and the access inspector's statement.
 - **Windows:** install, service lifecycle, file permissions, the firewall rules and the tray, on a real host.
 - **Linux:** the systemd installation and the dedicated service account, on a real host.
 - **Docker:** the image is built, its health check passes, and the smoke test runs on a Docker host. The
-  image has never been built.
+  first hosted build found a notices output-path defect; its corrected build and runtime qualification
+  are tracked in [deployment readiness](docs/launch-readiness.md).
 - **Two networks:** a voice call between two networks, including one where UDP is blocked and the relay's
   TCP or TLS fallback carries it.
 - **Devices:** a phone and a tablet for touch, the on-screen keyboard, background and resume, push

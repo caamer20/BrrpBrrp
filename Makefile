@@ -65,7 +65,7 @@ env-coverage:
 source-package:
 	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
 notices:
-	BRRP_GO='$(GO)' node scripts/licenses.mjs ./cmd/brrpbrrp --version $(VERSION)
+	BRRP_GO='$(GO)' node scripts/licenses.mjs ./cmd/brrpbrrp $(if $(VERSION),--version $(VERSION),)
 
 # Capacity qualification. Both halves need a running server, so neither is wired into
 # `check`: a capacity run on a developer's laptop is a development measurement, and
