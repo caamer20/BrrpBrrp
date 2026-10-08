@@ -62,6 +62,18 @@ development session; hosted logs and artifacts will be available in
   before the authority changes, preserving assertions for interrupted and unaffected streams.
   Local app/database/backup/metrics tests and three repetitions of the affected API tests passed.
   Fresh hosted qualification is still required for those repairs.
+- The next [baseline run on `e1dc5f1`](https://github.com/caamer20/BrrpBrrp/actions/runs/37828534690)
+  passed macOS, Docker and the Linux API suite, but the Linux screen-receiver test failed.
+  Its two competing RTP readers could consume the same packets before the assertion saw them.
+  The test now uses one reader registered before negotiation and checks the offered receiver
+  and exact screen payload. The focused test passed 25 repetitions and 10 with the race detector.
+- The eight dependency/action updates were checked together in an isolated integration tree:
+  all 397 frontend tests, the full Go suite (API 253 seconds), `make check`, workflow syntax
+  and redistribution notices passed. Go vulnerability scanning found no affected code;
+  one finding was confined to an unused required module. Hosted combined qualification remains
+  the gate for preparing the candidate packages.
+- The private-compatible README download-count workflow passed. It counts published application
+  archives and excludes draft releases and archival CI fixtures; the initial count is zero.
 
 ## Next steps in order
 
