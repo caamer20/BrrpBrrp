@@ -353,7 +353,7 @@
     {
       "type": "library",
       "name": "golang.org/x/crypto",
-      "version": "v0.56.0",
+      "version": "v0.57.0",
       "licenses": [
         {
           "license": {
