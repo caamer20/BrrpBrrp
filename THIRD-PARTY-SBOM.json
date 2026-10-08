@@ -13,6 +13,16 @@
         "vendor": "brrpbrrp",
         "name": "scripts/licenses.mjs"
       }
+    ],
+    "properties": [
+      {
+        "name": "brrpbrrp:scope",
+        "value": "union-of-supported-release-targets"
+      },
+      {
+        "name": "brrpbrrp:release-targets",
+        "value": "linux/amd64,linux/arm64,windows/amd64,windows/arm64,darwin/amd64,darwin/arm64"
+      }
     ]
   },
   "components": [
