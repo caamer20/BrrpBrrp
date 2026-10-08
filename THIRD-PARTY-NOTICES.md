@@ -31,28 +31,29 @@ arrive without its terms being recorded here.
 | `github.com/google/uuid` | v1.6.0 | BSD-3-Clause |
 | `github.com/mattn/go-isatty` | v0.0.24 | MIT |
 | `github.com/ncruces/go-strftime` | v1.0.0 | MIT |
-| `github.com/pion/datachannel` | v1.6.2 | MIT |
-| `github.com/pion/dtls/v3` | v3.1.8 | MIT |
-| `github.com/pion/ice/v4` | v4.4.2 | MIT |
-| `github.com/pion/interceptor` | v0.1.48 | MIT |
+| `github.com/pion/datachannel` | v1.6.3 | MIT |
+| `github.com/pion/dtls/v3` | v3.1.9 | MIT |
+| `github.com/pion/ice/v4` | v4.4.4 | MIT |
+| `github.com/pion/interceptor` | v0.1.49 | MIT |
 | `github.com/pion/logging` | v0.2.4 | MIT |
-| `github.com/pion/mdns/v2` | v2.2.0 | MIT |
+| `github.com/pion/mdns/v2` | v2.2.1 | MIT |
 | `github.com/pion/randutil` | v0.1.0 | MIT |
-| `github.com/pion/rtcp` | v1.2.17 | MIT |
+| `github.com/pion/rtcp` | v1.2.18 | MIT |
 | `github.com/pion/rtp` | v1.10.5 | MIT |
-| `github.com/pion/sctp` | v1.11.1 | MIT |
-| `github.com/pion/sdp/v3` | v3.0.19 | MIT |
-| `github.com/pion/srtp/v3` | v3.0.13 | MIT |
-| `github.com/pion/stun/v3` | v3.1.5 | MIT |
-| `github.com/pion/stun/v4` | v4.0.0 | MIT |
+| `github.com/pion/sctp` | v1.11.3 | MIT |
+| `github.com/pion/sdp/v3` | v3.0.20 | MIT |
+| `github.com/pion/srtp/v3` | v3.1.0 | MIT |
+| `github.com/pion/stun/v3` | v3.1.7 | MIT |
+| `github.com/pion/stun/v4` | v4.0.1 | MIT |
 | `github.com/pion/transport/v4` | v4.1.0 | MIT |
+| `github.com/pion/transport/v5` | v5.1.1 | MIT |
 | `github.com/pion/turn/v4` | v4.1.4 | MIT |
-| `github.com/pion/turn/v5` | v5.1.0 | MIT |
-| `github.com/pion/webrtc/v4` | v4.2.20 | MIT |
+| `github.com/pion/turn/v5` | v5.1.2 | MIT |
+| `github.com/pion/webrtc/v4` | v4.2.22 | MIT |
 | `github.com/remyoudompheng/bigfft` | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause |
 | `github.com/SherClockHolmes/webpush-go` | v1.4.0 | MIT |
 | `github.com/wlynxg/anet` | v0.0.5 | BSD-3-Clause |
-| `golang.org/x/crypto` | v0.56.0 | BSD-3-Clause |
+| `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause |
 | `golang.org/x/image` | v0.46.0 | BSD-3-Clause |
 | `golang.org/x/net` | v0.58.0 | BSD-3-Clause |
 | `golang.org/x/sys` | v0.48.0 | BSD-3-Clause |
@@ -224,19 +225,20 @@ SOFTWARE.
 
 Applies to:
 
-- `github.com/pion/datachannel` v1.6.2
-- `github.com/pion/dtls/v3` v3.1.8
-- `github.com/pion/ice/v4` v4.4.2
-- `github.com/pion/interceptor` v0.1.48
-- `github.com/pion/rtcp` v1.2.17
-- `github.com/pion/sctp` v1.11.1
-- `github.com/pion/sdp/v3` v3.0.19
-- `github.com/pion/srtp/v3` v3.0.13
-- `github.com/pion/stun/v3` v3.1.5
-- `github.com/pion/stun/v4` v4.0.0
+- `github.com/pion/datachannel` v1.6.3
+- `github.com/pion/dtls/v3` v3.1.9
+- `github.com/pion/ice/v4` v4.4.4
+- `github.com/pion/interceptor` v0.1.49
+- `github.com/pion/rtcp` v1.2.18
+- `github.com/pion/sctp` v1.11.3
+- `github.com/pion/sdp/v3` v3.0.20
+- `github.com/pion/srtp/v3` v3.1.0
+- `github.com/pion/stun/v3` v3.1.7
+- `github.com/pion/stun/v4` v4.0.1
 - `github.com/pion/transport/v4` v4.1.0
-- `github.com/pion/turn/v5` v5.1.0
-- `github.com/pion/webrtc/v4` v4.2.20
+- `github.com/pion/transport/v5` v5.1.1
+- `github.com/pion/turn/v5` v5.1.2
+- `github.com/pion/webrtc/v4` v4.2.22
 
 ```text
 MIT License
@@ -273,7 +275,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Applies to:
 
-- `github.com/pion/mdns/v2` v2.2.0
+- `github.com/pion/mdns/v2` v2.2.1
 
 ```text
 MIT License
@@ -454,7 +456,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Applies to:
 
-- `golang.org/x/crypto` v0.56.0
+- `golang.org/x/crypto` v0.57.0
 - `golang.org/x/image` v0.46.0
 - `golang.org/x/net` v0.58.0
 - `golang.org/x/sys` v0.48.0
