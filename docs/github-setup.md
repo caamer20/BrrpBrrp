@@ -45,6 +45,30 @@ It measures archive downloads rather than unique people or installations. Mainta
 run `GITHUB_REPOSITORY=caamer20/BrrpBrrp node scripts/update-download-badge.mjs` with an
 authenticated `gh` CLI. The script and badge ship in the source archive.
 
+## Actions pause and resume
+
+On 8 October, the owner requested that no runners start before the Actions limit resets.
+Repository Actions execution was disabled, and **Check**, **Docker** and **Release download count**
+were paused. Superseded runs were canceled, and no runs remain active or queued. Download-count
+updates also wait for Actions to resume. The final attempted qualification did not execute any
+steps because GitHub reported an account payment/spending-limit issue.
+
+Only after the limit reset is confirmed, restore the previously active configuration and run
+qualification on main:
+
+```sh
+gh api --method PUT repos/caamer20/BrrpBrrp/actions/permissions -F enabled=true -f allowed_actions=all
+gh workflow enable check.yml --repo caamer20/BrrpBrrp
+gh workflow enable docker.yml --repo caamer20/BrrpBrrp
+gh workflow enable downloads.yml --repo caamer20/BrrpBrrp
+gh workflow run check.yml --repo caamer20/BrrpBrrp --ref main -f prepare_release=true
+```
+
+These commands can start runners and are documented here, not executed during the pause.
+The final workflow still requires all automated gates before packages or a draft prerelease are
+prepared. Local archives do not bypass those gates. Billing/usage problems may require account
+attention even after a presumed reset; see [GitHub's billing troubleshooting](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#reviewing-billing-errors).
+
 ## CI fixtures
 
 The repository variable `BRRP_CI_BASELINE_TAG` identifies the archival fixture release,

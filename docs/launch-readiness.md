@@ -11,9 +11,9 @@ qualified for a production launch.
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Prepared for private development | README, manual, roadmap, policies, issue/PR templates, review ownership and dependency updates are present. |
-| Automated verification | In progress on this candidate | Local and hosted outcomes are recorded below; a workflow definition is not a passing run. |
+| Automated verification | Hosted gates paused pending the Actions limit reset | Local and prior hosted outcomes are recorded below; final hosted qualification is outstanding. |
 | Upgrade fixtures | Connected for private CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
-| Distribution | Gated draft path prepared | Six native targets plus source/checksums; no application release or registry image is published. |
+| Distribution | Local candidate built; hosted draft blocked | Six native targets plus source/checksums built locally. No application release or registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
 | Linux deployment | Partly verified | Hosted Docker build/lifecycle passed. Systemd lifecycle, real deployment, external networks and off-host recovery need target-host evidence. |
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
@@ -80,6 +80,27 @@ development session; hosted logs and artifacts will be available in
   records evidence only. Final hosted qualification will run on the resulting main revision.
 - The private-compatible README download-count workflow passed. It counts published application
   archives and excludes draft releases and archival CI fixtures; the initial count is zero.
+- Final [hosted qualification at `9d7cb4d`](https://github.com/caamer20/BrrpBrrp/actions/runs/37833439182)
+  could not start its runners. GitHub reported an account payment/spending-limit issue; no
+  test steps executed. At the owner's request, repository Actions execution and the three
+  project workflows were paused until the Actions limit resets. There are no running or queued
+  workflows. See [pause and resume instructions](github-setup.md#actions-pause-and-resume).
+- Local, **unqualified** candidate archives at source `9d7cb4d7` were built for all six targets,
+  with a Docker source ZIP, SBOM and verified checksum manifests. The actual extracted macOS
+  package and a fresh build from the extracted source ZIP passed CLI/setup/backup/restore/locking/
+  health/UI/clean-shutdown consumer checks. This does not establish Windows or Linux runtime acceptance.
+- Final local recovery rehearsals passed: 23 community checks, 172 private-state checks and
+  18 checks of the encrypted backup procedure using OpenSSL. These were disposable local destinations,
+  not a qualification of a real off-host deployment.
+- Firefox media verification passed all five journeys, together with its nine Chromium setup
+  dependencies (14 total, 1.5 minutes), on the final merged code. A first attempt used a broken
+  cached Firefox that could not load XPCOM; a fresh task-local browser installation passed smoke
+  launch and the full invocation. The browser cache failure was not a product test pass.
+
+Local candidate files, provenance, checksum manifests and recovery/consumer/browser reports are
+kept under `dist/candidates/9d7cb4d7f2d4/` in the development checkout. They are generated artifacts,
+excluded from Git, and are not a published or hosted-qualified release. This assessment's later
+documentation changes do not alter that candidate's source revision.
 
 ## Next steps in order
 
