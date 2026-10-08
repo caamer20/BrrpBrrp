@@ -63,7 +63,7 @@ arrive without its terms being recorded here.
 | `modernc.org/mathutil` | v1.7.1 | BSD-3-Clause |
 | `modernc.org/memory` | v1.12.1 | BSD-3-Clause |
 | `modernc.org/sqlite` | v1.58.0 | BSD-3-Clause |
-| `svelte` | 5.57.0 | MIT |
+| `svelte` | 5.57.1 | MIT |
 | `the Go standard library` | go1.27.1 | BSD-3-Clause |
 
 ## License texts
@@ -641,7 +641,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Applies to:
 
-- `svelte` 5.57.0
+- `svelte` 5.57.1
 
 ```text
 Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
