@@ -20,7 +20,8 @@ or a public repository. The repository remains private, as requested. Required c
 protection cannot be enforced by that feature until the account plan or visibility changes.
 The package workflow still requires its prerequisite jobs to pass.
 
-When branch protection becomes available, require the hosted checks on `main`.
+When branch protection and sufficient Actions allowance become available, restore pull-request
+verification before requiring the hosted checks on `main`.
 Use the actual check names from a completed run, including the OS matrix, race shards,
 browser, Docker and recovery jobs. Do not require the manual `packages`, `rollback` or
 `release-draft` jobs on ordinary pull requests. A single-maintainer repository should not require
@@ -49,25 +50,47 @@ authenticated `gh` CLI. The script and badge ship in the source archive.
 
 On 8 October, the owner requested that no runners start before the Actions limit resets.
 Repository Actions execution was disabled, and **Check**, **Docker** and **Release download count**
-were paused. Superseded runs were canceled, and no runs remain active or queued. Download-count
-updates also wait for Actions to resume. The final attempted qualification did not execute any
-steps because GitHub reported an account payment/spending-limit issue.
+were paused. The final attempted qualification did not execute any steps because GitHub reported
+an account payment/spending-limit issue. The owner then authorized a retry using at most 10% of
+the Actions allowance. The authenticated CLI cannot read billing usage with its current scopes;
+the allowance must be confirmed in billable minutes before dispatch.
 
-Only after the limit reset is confirmed, restore the previously active configuration and run
-qualification on main:
+**Budget check** is manual-only and runs one standard Ubuntu job, with a selected timeout of
+2, 5, 8, 10, 15 or 20 minutes. Reserve additional minutes for
+[billing rounding](https://docs.github.com/en/billing/reference/actions-runner-pricing) and cleanup when
+selecting a timeout below the approved allowance. Run it once at the reviewed source revision;
+do not automatically retry a failure. It checks the frontend, shared static audits and Linux Go
+tests without the race detector. It never prepares archives or a release draft. A pass is partial
+verification: Windows/macOS, race, real browsers, vulnerability scanning, Docker, recovery,
+rollback and package consumption still require full qualification.
+
+**Check** is also manual-only during the budget restriction. Its complete job graph and package
+dependencies remain intact, but pushes and pull requests no longer start verification. The shared
+setup action and `scripts/ci-audit.mjs` remove duplicated setup and audits; `make check` uses the
+same static gates. Download-count automation stays disabled throughout the capped retry.
+
+After confirming the allowance, enable only the budget workflow and dispatch it on `main` with
+an explicitly chosen timeout. Check that `main` still matches the reviewed commit first:
 
 ```sh
 gh api --method PUT repos/caamer20/BrrpBrrp/actions/permissions -F enabled=true -f allowed_actions=all
-gh workflow enable check.yml --repo caamer20/BrrpBrrp
-gh workflow enable docker.yml --repo caamer20/BrrpBrrp
-gh workflow enable downloads.yml --repo caamer20/BrrpBrrp
-gh workflow run check.yml --repo caamer20/BrrpBrrp --ref main -f prepare_release=true
+gh workflow enable budget.yml --repo caamer20/BrrpBrrp
+gh workflow run budget.yml --repo caamer20/BrrpBrrp --ref main -f timeout_minutes=8
 ```
 
-These commands can start runners and are documented here, not executed during the pause.
-The final workflow still requires all automated gates before packages or a draft prerelease are
-prepared. Local archives do not bypass those gates. Billing/usage problems may require account
-attention even after a presumed reset; see [GitHub's billing troubleshooting](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#reviewing-billing-errors).
+The example timeout is not authorization to spend eight minutes. Choose it only when it fits the
+confirmed allowance with reserve. After that one attempt completes, pause execution again:
+
+```sh
+gh workflow disable budget.yml --repo caamer20/BrrpBrrp
+gh api --method PUT repos/caamer20/BrrpBrrp/actions/permissions -F enabled=false
+```
+
+Full qualification needs a separately sufficient allowance: enable **Check** and **Docker**, then
+dispatch **Check** on `main`. Every existing gate must pass before archives or an optional draft
+prerelease are prepared. Local archives and a green **Budget check** do not bypass those gates.
+Billing/usage problems may require account attention even after a presumed reset; see
+[GitHub's billing troubleshooting](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#reviewing-billing-errors).
 
 ## CI fixtures
 

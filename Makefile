@@ -20,30 +20,8 @@ test: web
 # evidence, a check that was renamed or deleted, and a plan id missing from the matrix all
 # fail the build. The frontend unit tests for the checks themselves live in web/tests.
 check: web
-	@node scripts/check-acceptance-matrix.mjs
-	$(GO) vet ./...
-	@unformatted="$$($(GOFMT) -l internal cmd scripts)"; \
-	if [ -n "$$unformatted" ]; then \
-		echo "these files are not gofmt-canonical:"; \
-		echo "$$unformatted"; \
-		exit 1; \
-	fi
-	$(GO) mod tidy -diff
 	cd web && npm run check && npm run format:check
-	BRRP_GO='$(GO)' node scripts/licenses.mjs --check
-	node scripts/check-doc-links.mjs --self-test
-	node scripts/check-doc-links.mjs
-	node scripts/check-schema-docs.mjs --self-test
-	node scripts/check-schema-docs.mjs
-	node scripts/check-docker-inputs.mjs --self-test
-	node scripts/check-docker-inputs.mjs
-	node scripts/check-compose-env.mjs --self-test
-	node scripts/check-compose-env.mjs
-	node scripts/check-env-coverage.mjs --self-test
-	node scripts/check-env-coverage.mjs
-	node scripts/check-workflow-shells.mjs --self-test
-	node scripts/check-workflow-shells.mjs
-	BRRP_GO='$(GO)' node scripts/check-source-package.mjs
+	BRRP_GO='$(GO)' BRRP_GOFMT='$(GOFMT)' node scripts/ci-audit.mjs
 	node scripts/check-browser-steps.mjs --self-test
 	node scripts/check-browser-steps.mjs
 

@@ -1,8 +1,4 @@
 name: Docker
-# Called by .github/workflows/check.yml, where the image result is one of the jobs the
-# manual packaging job requires, so a distribution cannot be promoted while the image
-# build or its container lifecycle check has failed. Runtime-triggered runs come from
-# that caller alone; dispatch this workflow directly only to build an image by itself.
 on:
   workflow_call:
   workflow_dispatch:

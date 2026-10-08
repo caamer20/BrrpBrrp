@@ -288,18 +288,19 @@ var nativeScriptDirs = []string{"linux", "windows", "macos"}
 func dockerSourcePaths() []string {
 	paths := []string{
 		"Dockerfile", ".dockerignore", ".env.docker.example", "compose.yaml", "compose.turn.yaml", "compose.backup.yaml",
-		"go.mod", "go.sum", "README.md", "CONTRIBUTING.md", "LICENSE", "CLA.md", "CLA-SIGNATORIES.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "Makefile",
+		"go.mod", "go.sum", "README.md", "CONTRIBUTING.md", "LICENSE", "CLA.md", "CLA-SIGNATORIES.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "THIRD-PARTY-SBOM.json", "Makefile",
 		"CHANGELOG.md", "CODE_OF_CONDUCT.md", "SUPPORT.md", "ROADMAP.md",
 		".env.example", "scripts/backup.sh", "scripts/restore.sh", "scripts/baseline-releases.json", "scripts/schema13-baselines.json", "scripts/release-targets.json",
-		".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md",
+		".github/actions/setup/action.yml", ".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md",
 		".github/ISSUE_TEMPLATE/config.yml", ".github/ISSUE_TEMPLATE/bug_report.md", ".github/ISSUE_TEMPLATE/feature_request.md",
+		"planning/acceptance-matrix.json",
 	}
 	// The workflows are shipped so a consumer can see and reproduce the checks the
 	// source is expected to pass.
-	for _, workflow := range []string{"check.yml", "docker.yml", "downloads.yml"} {
+	for _, workflow := range []string{"check.yml", "budget.yml", "docker.yml", "downloads.yml"} {
 		paths = append(paths, filepath.Join(".github", "workflows", workflow))
 	}
-	for _, script := range []string{"release.go", "update-download-badge.mjs", "check-browser-steps.mjs", "check-workflow-shells.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-compose-env.mjs", "check-env-coverage.mjs", "env-keys.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "check-schema-docs.mjs", "check-acceptance-matrix.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "seed-schema13-private.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "race-shard.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs", "backup-encrypted-rehearsal.mjs", "full-disk-rehearsal.mjs", "probe.mjs", "rehearsal-kit.mjs"} {
+	for _, script := range []string{"release.go", "ci-audit.mjs", "update-download-badge.mjs", "check-browser-steps.mjs", "check-workflow-shells.mjs", "check-docker.mjs", "check-docker-inputs.mjs", "check-compose-env.mjs", "check-env-coverage.mjs", "env-keys.mjs", "check-package.mjs", "check-source-package.mjs", "check-doc-links.mjs", "check-schema-docs.mjs", "check-acceptance-matrix.mjs", "licenses.mjs", "prepare-preview.mjs", "upgrade-recovery.mjs", "upgrade-recovery-private.mjs", "upgrade-rollback.mjs", "upgrade-schema13-private.mjs", "schema13-seed.mjs", "seed-schema13-private.mjs", "capacity-fixture.mjs", "capacity-load.mjs", "race-shard.mjs", "fetch-baseline-release.mjs", "preview-chime.mjs", "backup-encrypted-rehearsal.mjs", "full-disk-rehearsal.mjs", "probe.mjs", "rehearsal-kit.mjs"} {
 		paths = append(paths, filepath.Join("scripts", script))
 	}
 	// The per-platform release scripts are a transitive dependency of `make release`:

@@ -253,6 +253,19 @@ for (const [line] of makefile.matchAll(/^\t.*$/gm)) {
   }
 }
 
+// Local actions and reusable workflows are dependencies of the shipped CI files.
+for (const path of contents) {
+  if (!path.startsWith(".github/") || !/\.ya?ml$/.test(path)) continue;
+  const source = readFileSync(diskPath(root, path), "utf8");
+  for (const [, reference] of source.matchAll(/uses:\s*\.\/([^\s#]+)/g)) {
+    const candidates = /\.ya?ml$/.test(reference)
+      ? [reference]
+      : [posix.join(reference, "action.yml"), posix.join(reference, "action.yaml")];
+    if (!candidates.some((candidate) => packaged(candidate)))
+      fail(`${path} uses ${reference}, which the source package does not contain`);
+  }
+}
+
 // 3b — a packaged module's relative imports must resolve inside the package. A
 // script the Makefile never names but a packaged web test imports is exactly the
 // dependency the review found missing, so the rule reads the imports as well as the

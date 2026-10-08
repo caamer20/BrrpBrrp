@@ -145,7 +145,7 @@ The complete list is in [known limitations](docs/known-limitations.md).
 | `web/` | The Svelte application, its unit tests and browser journeys |
 | `docs/` | Guides, the end-user manual in `docs/manual/`, decision records in `docs/adr/`, release records |
 | `scripts/` | Release packaging, audits and rehearsals |
-| `planning/` | The execution ledger and verification queue that record how each change was made (development repository; not in release packages) |
+| `planning/` | Development ledger and verification queue. Only `acceptance-matrix.json`, needed by the source checks, ships in source packages. |
 
 ## Contributing, security and licence
 
