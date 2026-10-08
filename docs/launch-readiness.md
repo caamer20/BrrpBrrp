@@ -1,7 +1,7 @@
 # Project and deployment readiness
 
 Assessment date: **8 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
-feature families are implemented, and a private GitHub repository is being established for
+feature families are implemented, and a private GitHub repository is configured for
 cross-platform qualification. It is ready for structured candidate testing; it is not yet
 qualified for a production launch.
 
@@ -15,7 +15,7 @@ qualified for a production launch.
 | Upgrade fixtures | Connected for private CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Gated draft path prepared | Six native targets plus source/checksums; no application release or registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
-| Linux deployment | Unqualified | Docker image execution, systemd lifecycle, network and off-host recovery need target-host evidence. |
+| Linux deployment | Partly verified | Hosted Docker build/lifecycle passed. Systemd lifecycle, real deployment, external networks and off-host recovery need target-host evidence. |
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
 | Security, privacy and accessibility | Reviews outstanding | Automated checks are useful evidence; independent reviews remain open. |
 | Community beta and soak | Not started | The roadmap requires real community use and observation of a frozen candidate. |
@@ -30,8 +30,50 @@ development session; hosted logs and artifacts will be available in
 - Svelte/TypeScript checks: zero errors and zero warnings; formatting passed.
 - Frontend unit suite: 392 passed on rerun. An initial run exposed a test that counted a read-cursor
   request as another send; that test now counts sends separately and awaits the second send explicitly.
-- Full Go suite, static/package audits and browser verification: pending completion of this pass.
-- Hosted Windows/macOS/Linux tests, race shards, Docker and recovery: pending the first hosted run.
+- Full Go suite: passed on macOS with `go test -count=1 -timeout 20m ./...`; the API package
+  completed in 274 seconds. This pass did not use the race detector.
+- `make check`: passed, including Go vet/module/formatting, notices, document links,
+  Docker/Compose/environment audits, source-package contents and workflow failure propagation.
+- Workflow syntax: passed actionlint 1.7.12.
+- Chromium browser journeys, conversation features disabled: 30 passed, zero failed (3.4 minutes).
+- Preserved macOS schema-13 seed and upgrade: passed; every compared value and identity was retained,
+  and provenance appears in the seed and upgrade reports.
+- Chromium private-conversation mode: 45 passed, zero failed (5.0 minutes). Both modes keep
+  restricted channels disabled. These browser runs preceded the build-dependency patch below.
+- Dependency audit found `source-map-js` 1.2.1 affected by
+  [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q). The lockfile is
+  updated to 1.2.2. `make check`, all 392 frontend tests and the npm audit passed after the patch;
+  GitHub marks the alert fixed.
+- First hosted Docker build found that the notices generator treated an absolute destination
+  as relative. That defect is fixed. The [Docker job on commit `4081dde`](https://github.com/caamer20/BrrpBrrp/actions/runs/37822474840)
+  passed Compose validation, the x64 build and container lifecycle/persistence check, and an ARM64
+  image build. ARM64 runtime and a real operator deployment remain unqualified.
+- Hosted macOS Go/static/frontend tests passed on commit `4081dde`. Linux exposed a host-dependent
+  notices comparison; the generator now covers the shared six-target release set. Linux and Windows
+  caller environments both verify the same 39-component notices/SBOM, and every target's module set
+  is covered. The race workers also now build their own embedded frontend on fresh runners.
+- The first hosted runs were superseded during fixes. Final cross-platform, race, browser, recovery
+  and rollback qualification is tracked in [GitHub Actions](https://github.com/caamer20/BrrpBrrp/actions).
+  Package creation and the optional draft prerelease remain blocked until those jobs pass.
+- The [manual qualification on `b956ad3`](https://github.com/caamer20/BrrpBrrp/actions/runs/37824339090)
+  passed macOS and Docker but failed Windows and Linux Go tests. Windows exposed backup URI
+  encoding and CPU-duration defects; both are repaired, with path/metrics regressions. Unix-only
+  test assumptions were corrected. Linux revocation tests now pause the HTTP writer explicitly
+  before the authority changes, preserving assertions for interrupted and unaffected streams.
+  Local app/database/backup/metrics tests and three repetitions of the affected API tests passed.
+  Fresh hosted qualification is still required for those repairs.
+- The next [baseline run on `e1dc5f1`](https://github.com/caamer20/BrrpBrrp/actions/runs/37828534690)
+  passed macOS, Docker and the Linux API suite, but the Linux screen-receiver test failed.
+  Its two competing RTP readers could consume the same packets before the assertion saw them.
+  The test now uses one reader registered before negotiation and checks the offered receiver
+  and exact screen payload. The focused test passed 25 repetitions and 10 with the race detector.
+- The eight dependency/action updates were checked together in an isolated integration tree:
+  all 397 frontend tests, the full Go suite (API 253 seconds), `make check`, workflow syntax
+  and redistribution notices passed. Go vulnerability scanning found no affected code;
+  one finding was confined to an unused required module. Hosted combined qualification remains
+  the gate for preparing the candidate packages.
+- The private-compatible README download-count workflow passed. It counts published application
+  archives and excludes draft releases and archival CI fixtures; the initial count is zero.
 
 ## Next steps in order
 

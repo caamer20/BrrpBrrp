@@ -164,10 +164,12 @@ func databaseURI(path string) string {
 }
 
 func databaseURIWithDurability(path, synchronous string) string {
-	return databaseFileURI(path) + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(" + synchronous + ")"
+	return DatabaseFileURI(path) + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(" + synchronous + ")"
 }
 
-func databaseFileURI(path string) string {
+// DatabaseFileURI encodes an absolute database filename without interpreting drive
+// letters, spaces or URI-special characters as connection options.
+func DatabaseFileURI(path string) string {
 	// SQLite expects /C:/... for an absolute Windows drive path. Without the
 	// leading slash, net/url treats the drive letter as a URI authority.
 	path = filepath.ToSlash(path)
@@ -198,7 +200,7 @@ func openExisting(path, options string) (*Store, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	database, err := sql.Open("sqlite", databaseFileURI(path)+options)
+	database, err := sql.Open("sqlite", DatabaseFileURI(path)+options)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +228,7 @@ func ReadSetting(path, key string) (string, error) {
 	if _, err := os.Stat(path); err != nil {
 		return "", err
 	}
-	database, err := sql.Open("sqlite", databaseFileURI(path)+"?mode=ro&_pragma=busy_timeout(5000)")
+	database, err := sql.Open("sqlite", DatabaseFileURI(path)+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return "", err
 	}

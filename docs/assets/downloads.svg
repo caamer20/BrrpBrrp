@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="146" height="20" role="img" aria-label="Release downloads: 0">
+  <title>Release downloads: 0</title>
+  <clipPath id="rounded"><rect width="146" height="20" rx="3"/></clipPath>
+  <g clip-path="url(#rounded)"><path fill="#555" d="M0 0h112v20H0z"/><path fill="#2368a0" d="M112 0h34v20H112z"/></g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11"><text x="56" y="14">release downloads</text><text x="129" y="14">0</text></g>
+</svg>

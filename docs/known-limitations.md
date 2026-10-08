@@ -118,9 +118,9 @@ is not evidence that it works.
 | Platform | State |
 | --- | --- |
 | macOS, native (darwin/amd64) | Built and run here: the Go suites, the browser suites and the recovery rehearsals were all executed on this host. |
-| Linux, native | Cross-compiled. No Linux host has run the binary. |
-| Windows, native | Cross-compiled, including the Windows process counters, which are compiled and not executed. No Windows host has run the binary; installation, service lifecycle, ACLs and the Tailscale deployment are unqualified. |
-| Docker / any container runtime | **The image has never been built.** There is no container runtime on the machine this work is done on, so `Dockerfile`, `compose.yaml` and the Docker guide have been audited statically (`scripts/check-docker-inputs.mjs`, in `make check`) and nothing about them has been executed. Volume ownership, port forwarding, container health and the container smoke script (`scripts/check-docker.mjs`) remain a Linux Docker host's job. |
+| Linux, native | Cross-compiled; hosted Go qualification is running. Native systemd installation, physical networks and off-host recovery remain unqualified. |
+| Windows, native | Cross-compiled; hosted Go qualification is running. Installation, service lifecycle, ACLs, tray and the Tailscale deployment remain unqualified. |
+| Docker / any container runtime | Hosted x64 image build and container lifecycle/persistence checks passed on 8 October, and the ARM64 image built. Real host operation, ARM64 runtime, external media networks and off-host recovery remain unqualified. See [deployment readiness](launch-readiness.md). |
 | Physical devices | None. No phone, tablet or second machine has been used: touch, on-screen keyboards, background/resume, push notifications and certificate trust are all unqualified. |
 | Second host / off-host storage | None. Both-host recovery, an off-host backup destination and a restore on different hardware remain qualification work. |
 | Independent reviews | Not entered. Security, privacy and accessibility reviews are the owner's, and the gate flip waits on them. |
