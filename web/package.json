@@ -14,7 +14,7 @@
     "format:check": "prettier --check src public tests e2e index.html *.json *.ts *.mjs"
   },
   "dependencies": {
-    "svelte": "^5.0.0"
+    "svelte": "^5.57.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
