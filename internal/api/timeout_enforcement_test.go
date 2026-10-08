@@ -258,8 +258,8 @@ func TestASuspendedAccountStopsStreamingCommunityContentAndKeepsPrivateStreams(t
 		t.Fatalf("community send: %d %s", communityMessage.Code, communityMessage.Body.String())
 	}
 
-	privateStream, privateHead := startDownload(t, s, handler, alice, privateUpload.ID)
-	communityStream, communityHead := startDownload(t, s, handler, alice, communityUpload.ID)
+	privateStream, privateHead, resumePrivateStream := startDownload(t, s, handler, alice, privateUpload.ID)
+	communityStream, communityHead, resumeCommunityStream := startDownload(t, s, handler, alice, communityUpload.ID)
 	privateSize, communitySize := privateUpload.FileSize, communityUpload.FileSize
 
 	// The suspension lands while both responses are open.
@@ -267,6 +267,8 @@ func TestASuspendedAccountStopsStreamingCommunityContentAndKeepsPrivateStreams(t
 		map[string]any{"minutes": 15, "reason": "community cooling off"}, admin); w.Code != http.StatusOK {
 		t.Fatalf("timeout: %d %s", w.Code, w.Body.String())
 	}
+	resumePrivateStream()
+	resumeCommunityStream()
 	if delivered := drain(t, communityStream, communityHead); delivered >= communitySize {
 		t.Fatalf("community content kept streaming through a suspension: %d of %d bytes", delivered, communitySize)
 	}

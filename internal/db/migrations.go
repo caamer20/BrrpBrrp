@@ -6,10 +6,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -360,13 +358,9 @@ func synchronousName(level int) string {
 }
 
 func inspectionURI(path string) string {
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
-	if !strings.HasPrefix(uri.Path, "/") {
-		uri.Path = "/" + uri.Path
-	}
 	// Deliberately no journal_mode or synchronous pragma: preflight must not
 	// change how an existing database persists.
-	return uri.String() + "?mode=rw&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	return DatabaseFileURI(path) + "?mode=rw&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 }
 
 func recordedVersions(database *sql.DB) ([]int, error) {
