@@ -261,7 +261,7 @@ jobs:
       # so the `mv` above never happens and a failed run leaves its artifacts
       # under test-results/; uploading only the renamed directories would
       # discard exactly the traces, screenshots and logs a failure produces.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: browser-report
@@ -357,7 +357,7 @@ jobs:
           go build -trimpath -o /tmp/brrp-source-built ./cmd/brrpbrrp
           cd "$GITHUB_WORKSPACE"
           node scripts/check-package.mjs /tmp/brrp-source-built
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: recovery-reports
           path: check-results/*.json
@@ -401,7 +401,7 @@ jobs:
         run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release /tmp/brrp-verified-baselines/brrpbrrp-0.4.0-alpha.5-linux-amd64.zip --report check-results/rollback-alpha5.json
       - name: Upgrade/rollback against the legacy baseline
         run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release /tmp/brrp-verified-baselines/brrpbrrp-0.4.0-alpha.3-linux-amd64.zip --report check-results/rollback-alpha3.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: rollback-reports
@@ -429,11 +429,11 @@ jobs:
         working-directory: web
       - run: go mod download
       - run: go run scripts/release.go
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: brrpbrrp-native-packages
           path: dist/releases/*
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: brrpbrrp-docker-source
           path: |
