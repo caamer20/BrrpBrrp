@@ -43,7 +43,7 @@ arrive without its terms being recorded here.
 | `github.com/pion/sctp` | v1.11.1 | MIT |
 | `github.com/pion/sdp/v3` | v3.0.19 | MIT |
 | `github.com/pion/srtp/v3` | v3.0.13 | MIT |
-| `github.com/pion/stun/v3` | v3.1.5 | MIT |
+| `github.com/pion/stun/v3` | v3.1.7 | MIT |
 | `github.com/pion/stun/v4` | v4.0.0 | MIT |
 | `github.com/pion/transport/v4` | v4.1.0 | MIT |
 | `github.com/pion/turn/v4` | v4.1.4 | MIT |
@@ -232,7 +232,7 @@ Applies to:
 - `github.com/pion/sctp` v1.11.1
 - `github.com/pion/sdp/v3` v3.0.19
 - `github.com/pion/srtp/v3` v3.0.13
-- `github.com/pion/stun/v3` v3.1.5
+- `github.com/pion/stun/v3` v3.1.7
 - `github.com/pion/stun/v4` v4.0.0
 - `github.com/pion/transport/v4` v4.1.0
 - `github.com/pion/turn/v5` v5.1.0
