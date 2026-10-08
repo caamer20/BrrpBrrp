@@ -51,8 +51,15 @@ func ProcessUsage() (residentBytes int64, cpuSeconds float64, ok bool) {
 	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
 		return 0, 0, false
 	}
-	cpu := float64(kernel.Nanoseconds()+user.Nanoseconds()) / 1e9
+	// These FILETIMEs are durations in 100 ns ticks, not timestamps since 1601.
+	// Nanoseconds() converts a timestamp to the Unix epoch and yields negative CPU.
+	cpu := filetimeSeconds(kernel) + filetimeSeconds(user)
 	return int64(counters.workingSetSize), cpu, true
+}
+
+func filetimeSeconds(value windows.Filetime) float64 {
+	ticks := uint64(value.HighDateTime)<<32 | uint64(value.LowDateTime)
+	return float64(ticks) / 1e7
 }
 
 func PID() int { return os.Getpid() }

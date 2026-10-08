@@ -72,8 +72,8 @@ func TestRemovingReadFromTheImplicitDefaultRoleEndsTheStreamsItAdmitted(t *testi
 
 	// A file in a public channel both accounts may read, and one open response each.
 	attachmentID, size := sharedArchive(t, s, handler, admin)
-	implicitStream, implicitHead := startDownload(t, s, handler, implicit, attachmentID)
-	readerStream, readerHead := startDownload(t, s, handler, reader, attachmentID)
+	implicitStream, implicitHead, resumeImplicitStream := startDownload(t, s, handler, implicit, attachmentID)
+	readerStream, readerHead, resumeReaderStream := startDownload(t, s, handler, reader, attachmentID)
 
 	// Narrowing the default role is what revokes the implicit holder's read capability.
 	role := defaultRole(t, handler, admin)
@@ -88,6 +88,8 @@ func TestRemovingReadFromTheImplicitDefaultRoleEndsTheStreamsItAdmitted(t *testi
 	// The stream the implicit holder was admitted for stops, which is the boundary the
 	// defect crossed: bytes already written cannot be recalled, but the server stops
 	// sending the rest.
+	resumeImplicitStream()
+	resumeReaderStream()
 	if delivered := drain(t, implicitStream, implicitHead); delivered >= size {
 		t.Fatalf("an implicit default-role holder received the whole file after channel.read was removed: %d of %d bytes", delivered, size)
 	}
