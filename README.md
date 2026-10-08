@@ -9,6 +9,8 @@ small community text channels, private conversations, voice rooms and screen sha
 native program with its own database file, and it needs no hosted account, no database service and
 no third-party chat platform.
 
+![BrrpBrrp workspace with demo channels and conversations](docs/assets/workspace.png)
+
 - **Text channels** with persistent history, replies, focused threads, reactions, mentions, pins,
   file sharing, full-text search and slow mode.
 - **Private conversations** that start only when the other person accepts, groups, and blocking in both
@@ -74,7 +76,8 @@ docker compose --env-file .env.docker exec brrpbrrp /usr/local/bin/brrpbrrp setu
 
 The defaults serve `https://localhost:8082` with a generated local certificate authority. Trust its public
 root before you use voice. The [Docker guide](docs/docker.md) covers LAN and public HTTPS, voice ports,
-backups and updates. **The container image has not yet been built on a Docker host.**
+backups and updates. The hosted Docker build and container lifecycle check passed on 8 October;
+real deployment qualification remains in [deployment readiness](docs/launch-readiness.md).
 
 ## Backups and restore
 

@@ -169,6 +169,15 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.1'
+      # Jobs have separate filesystems. The Go packages embed web/dist, so every
+      # fresh race worker must build its own matching frontend before compiling tests.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
       - name: The shard split is a partition before it runs
         run: node scripts/race-shard.mjs --self-test
       - name: Race sweep shard ${{ matrix.shard }}
@@ -471,6 +480,11 @@ jobs:
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || { echo 'Invalid release version'; exit 1; }
           notes="docs/releases/$version.md"
           test -f "$notes"
+          git ls-remote --tags origin "refs/tags/v$version" > /tmp/brrp-existing-release-tag
+          if [ -s /tmp/brrp-existing-release-tag ]; then
+            echo 'A version tag already exists. Refusing to attach tested packages to an existing tag.' >&2
+            exit 1
+          fi
           if gh release view "v$version" >/dev/null 2>&1; then
             echo 'A release with this version already exists. Review it or choose a new version.' >&2
             exit 1

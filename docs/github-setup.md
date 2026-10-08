@@ -65,7 +65,7 @@ candidate package directory. Missing or mismatched bytes fail the job.
    Windows and macOS; ARM64 packaging alone is not an ARM64 runtime qualification.
 4. The optional final job downloads only the packages from this run, verifies both checksum
    manifests and creates a **draft prerelease** at the exact tested source commit. It refuses an
-   existing version. It neither publishes a stable release nor deploys a server.
+   existing version release or tag. It neither publishes a stable release nor deploys a server.
 5. Review the draft's notes, files, checksums and real-host evidence. Follow the
    [production runbook](production-readiness.md) before promoting it for production use.
 

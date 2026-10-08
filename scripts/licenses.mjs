@@ -3,7 +3,7 @@
 //
 // The released binary embeds the web bundle, and the Go compiler links third-party
 // packages into it, so a release redistributes both. This script reads the linked
-// module set from the Go toolchain, the bundled frontend packages from
+// module union for every supported release target from the Go toolchain, the bundled frontend packages from
 // web/package.json, and each component's own license file, then writes the notices
 // file. It fails instead of guessing: an unidentified or missing license stops a
 // release rather than shipping one that claims a license it never read.
@@ -110,17 +110,21 @@ function component(directory, name, version) {
   return { name, version, license, text };
 }
 
-// Every module whose packages the compiler links into the released binary.
-const modules = go(
-  "list",
-  "-deps",
-  "-f",
-  "{{if .Module}}{{if not .Module.Main}}{{.Module.Path}}\t{{.Module.Version}}{{end}}{{end}}",
-  target,
-)
-  .split("\n")
-  .filter(Boolean)
-  .map((line) => line.split("\t"));
+// One file ships beside every platform archive. Enumerate their union rather
+// than the host's subset, which omitted platform-specific libraries on Linux.
+// The packager reads this same target list and rejects unsupported targets.
+const releaseTargets = JSON.parse(readFileSync(join(root, "scripts/release-targets.json"), "utf8"));
+const modules = releaseTargets.flatMap((platform) => {
+  const [GOOS, GOARCH] = platform.split("/");
+  return execFileSync(GO, [
+    "list", "-deps", "-f",
+    "{{if .Module}}{{if not .Module.Main}}{{.Module.Path}}\t{{.Module.Version}}{{end}}{{end}}",
+    target,
+  ], {
+    cwd: root, encoding: "utf8", maxBuffer: 32 << 20,
+    env: { ...process.env, CGO_ENABLED: "0", GOOS, GOARCH },
+  }).trim().split("\n").filter(Boolean).map((line) => line.split("\t"));
+});
 const unique = new Map(
   modules.map(([path, version]) => [`${path}@${version}`, [path, version]]),
 );
@@ -190,6 +194,9 @@ const lines = [
   "into the web assets that executable serves. Every one of them is listed below with",
   "the license it is distributed under and the license text it carries.",
   "",
+  `These notices cover the union of ${releaseTargets.join(", ")}.`,
+  "An individual binary may contain a subset of these components.",
+  "",
   "Regenerate this file from the current dependency set with:",
   "",
   "```sh",
@@ -240,6 +247,10 @@ const sbomText =
           version: option("--version", "unknown"),
         },
         tools: [{ vendor: "brrpbrrp", name: "scripts/licenses.mjs" }],
+        properties: [
+          { name: "brrpbrrp:scope", value: "union-of-supported-release-targets" },
+          { name: "brrpbrrp:release-targets", value: releaseTargets.join(",") },
+        ],
       },
       components: components.map((entry) => ({
         type: "library",
