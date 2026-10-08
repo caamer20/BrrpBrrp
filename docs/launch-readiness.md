@@ -1,7 +1,7 @@
 # Project and deployment readiness
 
 Assessment date: **8 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
-feature families are implemented, and a private GitHub repository is being established for
+feature families are implemented, and a private GitHub repository is configured for
 cross-platform qualification. It is ready for structured candidate testing; it is not yet
 qualified for a production launch.
 
@@ -30,8 +30,17 @@ development session; hosted logs and artifacts will be available in
 - Svelte/TypeScript checks: zero errors and zero warnings; formatting passed.
 - Frontend unit suite: 392 passed on rerun. An initial run exposed a test that counted a read-cursor
   request as another send; that test now counts sends separately and awaits the second send explicitly.
-- Full Go suite, static/package audits and browser verification: pending completion of this pass.
-- Hosted Windows/macOS/Linux tests, race shards, Docker and recovery: pending the first hosted run.
+- Full Go suite: passed on macOS with `go test -count=1 -timeout 20m ./...`; the API package
+  completed in 274 seconds. This pass did not use the race detector.
+- `make check`: passed, including Go vet/module/formatting, notices, document links,
+  Docker/Compose/environment audits, source-package contents and workflow failure propagation.
+- Workflow syntax: passed actionlint 1.7.12.
+- Chromium browser journeys, conversation features disabled: 30 passed, zero failed (3.4 minutes).
+- Preserved macOS schema-13 seed and upgrade: passed; every compared value and identity was retained,
+  and provenance appears in the seed and upgrade reports.
+- Chromium private-conversation mode: running. Both modes keep restricted channels disabled.
+- Hosted qualification: [first main run](https://github.com/caamer20/BrrpBrrp/actions/runs/37821452830)
+  started for commit `5b20f5d`; Windows/macOS/Linux, race, Docker and recovery results remain pending.
 
 ## Next steps in order
 

@@ -15,8 +15,13 @@ Dependabot checks Go modules, frontend packages, Docker images and GitHub Action
 Vulnerability alerts and automated security updates are enabled. Review dependency changes and
 regenerate third-party notices when the linked dependency set changes.
 
-Require the hosted checks on `main` when the account's private-repository plan supports branch
-protection. Use the actual check names from a completed run, including the OS matrix, race shards,
+GitHub returned HTTP 403 for private branch protection on this account: it requires GitHub Pro
+or a public repository. The repository remains private, as requested. Required checks and force-push
+protection cannot be enforced by that feature until the account plan or visibility changes.
+The package workflow still requires its prerequisite jobs to pass.
+
+When branch protection becomes available, require the hosted checks on `main`.
+Use the actual check names from a completed run, including the OS matrix, race shards,
 browser, Docker and recovery jobs. Do not require the manual `packages`, `rollback` or
 `release-draft` jobs on ordinary pull requests. A single-maintainer repository should not require
 its owner to approve their own pull request.
