@@ -2,12 +2,16 @@
 
 # BrrpBrrp
 
+[![Release archive downloads](docs/assets/downloads.svg)](https://github.com/caamer20/BrrpBrrp/releases)
+
 **[User manual](docs/manual/README.md) · [Installation](docs/installation.md) · [Roadmap](ROADMAP.md) · [Deployment readiness](docs/launch-readiness.md) · [Contributing](CONTRIBUTING.md)**
 
 **A small, self-hosted place to talk.** BrrpBrrp runs on a computer you control and gives a
 small community text channels, private conversations, voice rooms and screen sharing. It is one
 native program with its own database file, and it needs no hosted account, no database service and
 no third-party chat platform.
+
+![BrrpBrrp workspace with demo channels and conversations](docs/assets/workspace.png)
 
 - **Text channels** with persistent history, replies, focused threads, reactions, mentions, pins,
   file sharing, full-text search and slow mode.
@@ -48,6 +52,15 @@ The repository is private while the candidate is qualified. **There is no publis
 yet.** Build from source below, or use Docker to build from the checkout. Maintainers can prepare release
 archives through the [gated GitHub workflow](docs/github-setup.md#prepare-a-release).
 
+Native packages are built for **Windows, macOS and Linux**, each on **x64 and ARM64**.
+Docker images target Linux x64 and ARM64. Members connect through a browser, including
+phones and tablets; the web app can also be installed. Build targets and completed
+deployment qualification are tracked in [deployment readiness](docs/launch-readiness.md).
+
+The badge counts downloads of published native and Docker source ZIPs, including
+prereleases. It refreshes daily and on release changes, works with the private repository,
+and excludes draft releases and CI fixtures. It counts archive downloads, not unique users.
+
 When a candidate release is available, download the ZIP for your operating system and processor from
 [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases), verify its checksum, extract it, and run the setup wizard.
 The wizard installs the server as a background service, checks the port and storage, and creates your
@@ -74,7 +87,8 @@ docker compose --env-file .env.docker exec brrpbrrp /usr/local/bin/brrpbrrp setu
 
 The defaults serve `https://localhost:8082` with a generated local certificate authority. Trust its public
 root before you use voice. The [Docker guide](docs/docker.md) covers LAN and public HTTPS, voice ports,
-backups and updates. **The container image has not yet been built on a Docker host.**
+backups and updates. The hosted Docker build and container lifecycle check passed on 8 October;
+real deployment qualification remains in [deployment readiness](docs/launch-readiness.md).
 
 ## Backups and restore
 

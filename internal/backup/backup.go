@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -174,8 +173,7 @@ func Create(ctx context.Context, store *db.Store, config app.Config, out string,
 }
 
 func snapshotFiles(path string) ([]string, error) {
-	uri := url.URL{Scheme: "file", Path: path}
-	snapshot, err := sql.Open("sqlite", uri.String()+"?mode=ro")
+	snapshot, err := sql.Open("sqlite", db.DatabaseFileURI(path)+"?mode=ro")
 	if err != nil {
 		return nil, err
 	}
@@ -387,8 +385,7 @@ func Restore(ctx context.Context, config app.Config, source string) error {
 }
 
 func validateDatabase(path string) error {
-	uri := url.URL{Scheme: "file", Path: path}
-	source, err := sql.Open("sqlite", uri.String()+"?mode=ro")
+	source, err := sql.Open("sqlite", db.DatabaseFileURI(path)+"?mode=ro")
 	if err != nil {
 		return err
 	}

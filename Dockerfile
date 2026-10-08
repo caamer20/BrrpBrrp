@@ -27,6 +27,7 @@ COPY --from=frontend /src/web/dist/ ./web/dist/
 COPY web/package.json ./web/package.json
 COPY --from=frontend /src/web/node_modules ./web/node_modules
 COPY scripts/licenses.mjs ./scripts/licenses.mjs
+COPY scripts/release-targets.json ./scripts/release-targets.json
 RUN --mount=type=cache,target=/go/pkg/mod apk add --no-cache nodejs && \
     mkdir -p /notices && \
     BRRP_GO=go node scripts/licenses.mjs ./cmd/brrpbrrp /notices/THIRD_PARTY_NOTICES.txt

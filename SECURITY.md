@@ -19,9 +19,10 @@ the channel for security reports — do not open a public issue containing explo
 **This intake is not live yet.** [The repository](https://github.com/caamer20/BrrpBrrp) is
 private during candidate qualification. GitHub's public vulnerability intake is unavailable
 on this private repository. Enable it and deliver a test report before a public launch,
-as required by the project's plan (WP-01). Authorized collaborators can use **Security →
-Advisories → New draft security advisory** for a private maintainer discussion. A private
-reporting contact for people without repository access must be established before public launch.
+as required by the project's plan (WP-01). Draft security advisories also cannot be created
+in a private repository. A private reporting contact is pending and must be established
+before public launch. Until it is named, use an existing private communication channel with
+the project maintainer; do not put exploit details in repository issues or pull requests.
 
 Please include:
 

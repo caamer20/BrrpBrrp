@@ -1,9 +1,8 @@
-# Host qualification procedures — Windows and Linux
+# Host qualification procedures — Windows, Linux and macOS
 
-**Status:** prepared, **not executed**. No Windows host, Docker daemon, PowerShell or
-Tailscale peer is available in the environment this was written in, so nothing here has
-been run. Every step below is written to be executed by somebody with access to a host,
-and every one records what it observed rather than only that it passed.
+**Status:** target-host procedures prepared, **not executed**. Local development and hosted
+CI evidence are tracked in [deployment readiness](launch-readiness.md). Every procedure below
+must record what it observed on the actual installation rather than inherit a build or test result.
 
 Run these before any G-gate is claimed. They are the difference between "the product
 works" and "the product works on the two deployments the owner requires".
@@ -16,12 +15,13 @@ works" and "the product works on the two deployments the owner requires".
 | --- | --- | --- |
 | Windows x64 host with a supported build | Required deployment target | Owner |
 | Linux amd64 host with Docker + Compose | Required deployment target | Owner |
+| Clean macOS host/user and Linux systemd host | Native installation qualification | Owner |
 | A Tailscale peer on the Windows host | The owner's chosen private-network path | Owner |
 | Account able to install a service (Administrator) | The installer registers one | Owner |
 | An HTTPS certificate or a trusted reverse proxy | Plain HTTP is not shipped publicly | Owner |
 
-**Nothing below can be qualified locally.** A local binary on a developer machine is
-evidence about the binary, not about the deployment.
+These are deployment procedures. A local binary or a hosted test run is evidence about
+that execution; it does not establish a service installation on another host.
 
 ---
 
@@ -254,7 +254,55 @@ to reduce the qualified media profile or to raise the documented link requiremen
 
 ---
 
-## 4. Evidence template
+## 4. macOS service and Linux native service
+
+These procedures extend qualification to all three platforms. They are prepared, not executed.
+Use a clean host or a disposable user/VM and the exact candidate archive, with its archive digest
+verified first. Record x64 and ARM64 results separately; cross-compiling an archive does not run it.
+
+### 4.1 macOS LaunchAgent
+
+Run `./brrpbrrp install` as the normal signed-in user, without sudo. The wizard installs a
+per-user LaunchAgent named `co.brrpbrrp.server`, so it starts when that user signs in, rather
+than before login as a machine-wide daemon. Record the actual paths selected by the wizard.
+The default binary is under `~/Library/Application Support/BrrpBrrp/`, with configuration in
+its `data/server.env` and the agent in `~/Library/LaunchAgents/co.brrpbrrp.server.plist`.
+
+1. Complete setup; confirm the agent and the server's own health check agree that it is running.
+   Inspect the agent with `launchctl print "gui/$(id -u)/co.brrpbrrp.server"` and validate its
+   plist with `plutil -lint ~/Library/LaunchAgents/co.brrpbrrp.server.plist`.
+2. Confirm install/data directories are private to the user, configuration and TLS private keys
+   are protected, and the server is using the selected port and trusted browser address.
+3. Sign out, sign in, and reboot then sign in. Confirm automatic recovery and retained accounts,
+   messages, attachments and certificates. Record the dependency on that user's login.
+4. Exercise graceful stop/start and recovery from an unexpected process exit. Confirm logs
+   identify the incident and no competing server continues to hold the data directory or port.
+5. Back up, install the candidate update through the wizard, and compare login, search and
+   attachment bytes. Rehearse rollback with the matching pre-upgrade backup into a fresh folder.
+6. Open `./brrpbrrp install` again and use its uninstall flow; confirm the wizard removes only the recognized agent/application
+   files and preserves data. Reinstall and prove the preserved installation is usable.
+7. Apply the shared network, voice, screen, device and off-host restore procedures above.
+   Automated browser tests on a Mac do not replace this service qualification.
+
+### 4.2 Linux systemd installation
+
+On a clean systemd host, run `sudo ./brrpbrrp install` from the extracted archive and record
+the wizard's selected paths. The wizard defaults to `/usr/local/lib/brrpbrrp/brrpbrrp`, data
+in `/var/lib/brrpbrrp` and configuration in that data directory. The older shell installer
+has different binary/configuration paths; qualify the installation method being advertised.
+
+1. Confirm `systemctl status brrpbrrp` and the installed binary's `healthcheck --config PATH`
+   succeed. Inspect `systemctl cat brrpbrrp` for the dedicated `brrpbrrp` user, restart policy,
+   graceful-stop timeout and write restrictions.
+2. Verify directory ownership, private settings/TLS files and the configured listener/firewall.
+   Reboot and prove the service starts before an interactive user logs in.
+3. Stop/start the service, simulate an unexpected process exit, then inspect recovery and logs.
+4. Repeat update, failed-update rollback, off-host restore, uninstall and reinstall checks using
+   the candidate's native wizard. Confirm uninstall preserves data and configuration.
+5. Execute the same external HTTPS, media, device, push, capacity and monitoring acceptance as
+   the Docker deployment. Native and Docker results are separate entries in the evidence record.
+
+## 5. Evidence template
 
 One JSON file per run, under `planning/m5-checkpoint/`. Record, for each procedure:
 
@@ -278,16 +326,14 @@ been thought about hard enough.
 
 ---
 
-## 5. What is blocked, and what is not
+## 6. What remains to qualify
 
-**Blocked on the owner:** every section above. No Windows host, no Linux Docker host, no
-Tailscale peer, and no physical client devices exist in this environment — `docker` and
-`pwsh` are both absent from it.
+Clean Windows, Linux Docker/systemd and macOS service qualification still require target
+hosts and physical clients. The development Mac can run local tests, but it has no Docker
+daemon or PowerShell and its normal user installation is not a clean service rehearsal.
+Hosted runners can supply automated build/container evidence, not the complete device and
+operational acceptance above.
 
-**Not blocked, and continuing regardless:** all implementation work in M3 through M7,
-the local test suites, the recovery rehearsals, the browser journeys, and the release
-engineering. None of them wait on a host.
-
-**The right time to ask for the hosts is now**, because a Windows and a Linux machine
-are ordinary to provision and the qualification above takes a day of somebody's
-attention once they exist. Everything else in the plan is unaffected either way.
+Local tests, recovery rehearsals, browser journeys and release engineering can continue
+while hosts are arranged. Retain a pass/fail record for each advertised deployment method
+and architecture; do not carry a pass from one method or machine to another.
