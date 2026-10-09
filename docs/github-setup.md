@@ -52,8 +52,12 @@ On 8 October, the owner requested that no runners start before the Actions limit
 Repository Actions execution was disabled, and **Check**, **Docker** and **Release download count**
 were paused. The final attempted qualification did not execute any steps because GitHub reported
 an account payment/spending-limit issue. The owner then authorized a retry using at most 10% of
-the Actions allowance. The authenticated CLI cannot read billing usage with its current scopes;
-the allowance must be confirmed in billable minutes before dispatch.
+the Actions allowance. The authenticated CLI cannot read billing usage with its current scopes.
+The owner explicitly approved one Ubuntu attempt with an eight-minute job timeout and a
+ten-minute billable allowance. The [attempt on `80a166c`](https://github.com/caamer20/BrrpBrrp/actions/runs/37888802201)
+failed before a runner was assigned or any steps executed. GitHub again reported recent failed
+account payments or a spending limit that needs attention. Actions and the budget workflow were
+disabled again; another attempt requires the account issue to be cleared and an available allowance.
 
 **Budget check** is manual-only and runs one standard Ubuntu job, with a selected timeout of
 2, 5, 8, 10, 15 or 20 minutes. Reserve additional minutes for

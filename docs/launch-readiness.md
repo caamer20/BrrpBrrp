@@ -11,7 +11,7 @@ qualified for a production launch.
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Prepared for private development | README, manual, roadmap, policies, issue/PR templates, review ownership and dependency updates are present. |
-| Automated verification | Capped retry prepared; hosted execution paused | One manual Linux job is available for the 10% allowance. Full hosted qualification remains outstanding. |
+| Automated verification | Capped retry blocked by account billing; execution paused | GitHub assigned no runner and executed no steps in the latest attempt. Full hosted qualification remains outstanding. |
 | Upgrade fixtures | Connected for private CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Local candidate built; hosted draft blocked | Six native targets plus source/checksums built locally. No application release or registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
@@ -88,7 +88,11 @@ development session; hosted logs and artifacts will be available in
 - The owner authorized a retry within 10% of the Actions allowance. Workflows now share setup
   and static audits, and full qualification is manual-only to prevent automatic spending. The
   new one-job **Budget check** has a bounded timeout and cannot package or qualify a release.
-  Hosted execution remains paused until the numerical allowance is confirmed.
+  The owner later approved one attempt with an eight-minute job timeout and ten-minute billable
+  allowance. The [budget run at `80a166c`](https://github.com/caamer20/BrrpBrrp/actions/runs/37888802201)
+  failed before runner assignment or any steps. GitHub reported recent failed account payments
+  or a spending limit needing attention. Repository execution and the budget workflow were paused
+  again; this attempt establishes no hosted test results. Account billing must be resolved before retrying.
   Local workflow syntax, failure controls, `make check` and all 397 frontend tests passed.
   Fresh source-package verification found two missing audit inputs; its manifest now includes
   the tracked SBOM and acceptance matrix, along with the new shared action and script.
