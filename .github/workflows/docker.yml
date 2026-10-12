@@ -18,7 +18,7 @@ jobs:
         run: |
           npm ci --prefix web
           cd web
-          npx playwright install --with-deps firefox
+          npx playwright install --with-deps chromium firefox
       - name: Write the isolated audio startup probe
         run: |
           cat > "$RUNNER_TEMP/audio-probe.mjs" <<'JS'
@@ -27,7 +27,7 @@ jobs:
           import { pathToFileURL } from 'node:url';
           import { writeFileSync } from 'node:fs';
           const { firefox } = await import(pathToFileURL(resolve('web/node_modules/playwright-core/index.mjs')).href);
-          const server = createServer((req,res) => res.end('<button id="join">Join voice</button>'));
+          const server = createServer((req,res) => { res.setHeader('Content-Type','text/html');res.end('<button id="join">Join voice</button>'); });
           await new Promise(r => server.listen(0,'127.0.0.1',r));
           const browser = await firefox.launch({headless:true,firefoxUserPrefs:{'media.volume_scale':'0.0'}});
           try {
@@ -78,3 +78,11 @@ jobs:
           assert.equal(after.captureEntered,true);assert.equal(after.captureResume,true);
           assert.ok(after.captureTime>0);assert.equal(after.trackState,'live');
           JS
+      - uses: ./.github/actions/setup
+      - name: Build the unchanged application for the Linux Firefox transport check
+        run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
+      - name: Run all five real Firefox voice journeys with the silent backend
+        working-directory: web
+        env:
+          BRRP_E2E_FIREFOX: '1'
+        run: npm run test:e2e -- --project=voice-firefox
