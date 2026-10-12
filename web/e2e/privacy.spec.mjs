@@ -566,8 +566,34 @@ test('channel mention mute is stored per account and survives reload without cha
   await createAccount(request, other);
   const state = await (await request.get('/api/state')).json();
   const general = state.channels.find((channel) => channel.name === 'general');
+  const history = await request.post(`/api/channels/${general.id}/messages`, {
+    data: { content: 'Initial mute journey history', idempotency_key: 'mute-initial-history' }
+  });
+  expect(history.status()).toBe(201);
+  const latest = await history.json();
+  const controlResponse = await request.post('/api/channels', {
+    data: { name: 'mute-unread-control', type: 'text' }
+  });
+  expect(controlResponse.status()).toBe(201);
+  const control = await controlResponse.json();
+  const unreadMessage = await request.post(`/api/channels/${control.id}/messages`, {
+    data: { content: 'Keep this unopened message unread', idempotency_key: 'mute-unread-control' }
+  });
+  expect(unreadMessage.status()).toBe(201);
   await signIn(page, member);
+  // The workspace header appears before the opened channel's normal read receipt.
+  // Compare mute state only after that receipt commits, without issuing one ourselves.
+  await expect
+    .poll(
+      async () => {
+        const unread = await (await page.request.get('/api/unread')).json();
+        return unread.find((entry) => entry.channel_id === general.id)?.last_read_message_id;
+      },
+      { timeout: 10000, message: 'the opened channel committed its initial read receipt' }
+    )
+    .toBe(latest.id);
   const before = await (await page.request.get('/api/unread')).json();
+  expect(before.find((entry) => entry.channel_id === control.id)?.count).toBe(1);
   const mute = page.getByRole('button', {
     name: 'Mute mention notifications for #general',
     exact: true

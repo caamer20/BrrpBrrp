@@ -36,6 +36,20 @@ The completed exact-version results and publication status are recorded in
 [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0). This is a stable
 publication decision, not a claim that the outstanding production acceptance has been completed.
 
+## Stable qualification timing repair on 12 October
+
+[Qualification at `65919da`](https://github.com/caamer20/BrrpBrrp/actions/runs/38281383759)
+passed native suites, audits, whole-source security review, Docker and recovery/rollback.
+The private-mode mute journey took its unread baseline just before the opened channel's
+normal read receipt. The trace shows that receipt completed before the mute click; the
+resulting read-state difference was unrelated to muting. Packaging stayed blocked.
+
+The journey now seeds known history and a separate unread control channel, waits for the
+opened channel's real persisted cursor, and retains the full unread comparison and
+persistence/account-isolation checks. It uses bounded polling rather than a delay or a
+test-issued read receipt. No product code is changed. Fresh exact-source security review
+and complete qualification remain required before publication.
+
 ## Toolchain repair on 12 October
 
 Qualification at `d5b9e451` passed native Go, static, CodeQL/findings and Docker checks,
