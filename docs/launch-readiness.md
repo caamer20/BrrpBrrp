@@ -11,7 +11,7 @@ qualified for a production launch.
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Public development repository | Publication audit, reporting contacts/intake, policies, templates, review ownership and dependency updates are present. |
-| Automated verification | Public CI passed; qualification gates active | The security repair passed native Go/static/CodeQL checks. Seven installer false positives are individually reviewed. The next full run caught standard-library vulnerabilities in Go 1.27.1 and blocked packaging; the patched compiler/source must qualify before publication. |
+| Automated verification | Public CI passed; qualification gates active | Patched Go 1.27.2 passed native/security/race/recovery/rollback/Docker checks and three Chromium modes. Seven installer false positives are individually reviewed. WebKit launch exposed inherited Chromium options; the repaired harness/source must complete qualification before publication. |
 | Upgrade fixtures | Connected for CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Publication requires full qualification | Six native targets plus source/checksums are defined. Exact tested revision, run, assets and publication status belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). No registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
@@ -30,6 +30,22 @@ Current CI and Docker builds use Go 1.27.2; `go.mod` enforces that minimum even 
 audits now gate native tests early; release Docker qualification waits for the shared tests.
 Historical baseline compiler provenance stays unchanged. The updated source needs renewed
 individual CodeQL review and complete frozen-revision qualification, recorded on GitHub Releases.
+
+## Browser harness repair on 12 October
+
+[Qualification at `9728e30d`](https://github.com/caamer20/BrrpBrrp/actions/runs/38224987648)
+passed the patched dependency audits, all three native suites, exact-source CodeQL/findings,
+five race shards, Docker, recovery and both rollback rehearsals. Chromium passed with
+conversation features off, private conversations enabled and shipped defaults. WebKit
+rejected inherited Chromium-only launch flags before any journey could run; Firefox was
+not reached. Packaging stayed blocked and no candidate assets or tag were published.
+
+The harness now isolates each engine's launch arguments/channel and puts Firefox's
+string audio preference under `launchOptions`. The regression runs Playwright's actual
+configuration resolver with an explicit Chrome channel; the old configuration fails it.
+The repaired harness passed seven WebKit journeys and fourteen Firefox/setup journeys
+locally, plus all 414 frontend tests and static/source-package checks. Complete new
+frozen-main qualification remains required before publication.
 
 ## Public preparation on 11 October
 

@@ -16,6 +16,9 @@ No checkpoint alone marks a production gate passed; read its known issues and ve
 - Update `golang.org/x/net` and regenerate dependency notices and the SBOM.
 - Run strict npm/Go vulnerability audits in the shared audit gate before native tests;
   release Docker qualification also waits for that gate through the shared test job.
+- Isolate Chromium launch flags and optional channels from WebKit/Firefox qualification,
+  and pass Firefox's audio preference through its supported launch options. A regression
+  checks the projects after Playwright resolves inherited configuration.
 - Fresh complete-source review and full qualification remain required before publication.
 
 ## Release preparation — 11 October 2026
