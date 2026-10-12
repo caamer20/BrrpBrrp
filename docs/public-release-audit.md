@@ -51,8 +51,9 @@ grant, outsider denial and live revocation. Engine coverage includes Chromium, F
 and the documented WebKit core subset. Results belong to the exact invocation recorded in
 deployment readiness; adding a journey is not a passing result.
 
-The download badge is updated on a separate `badges` branch, so its automation does not push
-through protection on `main`. Release artifacts have explicit retention periods, and untrusted
+At audit time, the download badge was updated on a separate `badges` branch, so its automation
+did not push through protection on `main`. The [current counter](github-setup.md#readme-download-count)
+requires no extra branch or workflow. Release artifacts have explicit retention periods, and untrusted
 pull-request jobs keep repository contents read-only. CodeQL can write security-analysis results,
 while release signing/publication permissions remain confined to manual `main` packaging.
 

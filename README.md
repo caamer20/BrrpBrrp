@@ -3,7 +3,7 @@
 # BrrpBrrp
 
 [![CI](https://github.com/caamer20/BrrpBrrp/actions/workflows/ci.yml/badge.svg)](https://github.com/caamer20/BrrpBrrp/actions/workflows/ci.yml)
-[![Release archive downloads](https://raw.githubusercontent.com/caamer20/BrrpBrrp/badges/downloads.svg)](https://github.com/caamer20/BrrpBrrp/releases)
+[![Release asset downloads](https://img.shields.io/github/downloads/caamer20/BrrpBrrp/total?label=Release%20asset%20downloads)](https://github.com/caamer20/BrrpBrrp/releases)
 
 **[User manual](docs/manual/README.md) · [Installation](docs/installation.md) · [Roadmap](ROADMAP.md) · [Deployment readiness](docs/launch-readiness.md) · [Contributing](CONTRIBUTING.md)**
 
@@ -59,9 +59,9 @@ Docker images target Linux x64 and ARM64. Members connect through a browser, inc
 phones and tablets; the web app can also be installed. Build targets and completed
 deployment qualification are tracked in [deployment readiness](docs/launch-readiness.md).
 
-The badge counts downloads of published native and Docker source ZIPs, including
-prereleases. It refreshes daily and on release changes, updates the separate badge branch,
-and excludes draft releases and CI fixtures. It counts archive downloads, not unique users.
+The badge counts downloads of all published release assets, including prereleases,
+archival fixtures, automated CI downloads, checksums and provenance. It counts asset
+downloads, not installations or unique users, and refreshes through Shields without an Actions job.
 
 When a candidate release is available, download the ZIP for your operating system and processor from
 [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases), verify its checksum, extract it, and run the setup wizard.

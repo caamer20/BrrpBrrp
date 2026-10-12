@@ -30,7 +30,6 @@ release-write permissions belong only to the optional manual draft job on `main`
 | **CodeQL** | PRs, `main`, weekly, manual audit; reused by qualification | Go and JavaScript/TypeScript code scanning |
 | **Release qualification** | Manual | Complete CI, CodeQL, race shards, browser engines/modes, Docker, recovery, rollback, package consumers and candidate archives |
 | **Docker** | Qualification caller or manual | Compose validation, x64 lifecycle/persistence, ARM64 image build |
-| **Release download count** | Daily, release changes or manual | Filtered published archive count on the `badges` branch |
 | **Budget check** | Manual fallback | One capped Linux job; never qualifies or packages a release |
 
 CI and Docker pin Go 1.27.2. The `go.mod` minimum also rejects older local compilers.
@@ -52,17 +51,15 @@ If account restrictions block future runs, pause execution and resolve the accou
 
 ## README download count
 
-The badge at `badges/downloads.svg` includes native and Docker source ZIPs attached to
-published version releases, including prereleases. Drafts, archival CI fixtures and ancillary
-assets are excluded. It counts archive downloads rather than unique people or installations.
-The updater writes only the standalone `badges` branch; it does not bypass protection on `main`.
-An API failure preserves the last successful count, and updates are serialized.
+The README uses the standard [Shields all-release asset download badge](https://shields.io/badges/git-hub-downloads-all-assets-all-releases).
+It counts all published release assets, including prereleases, archival fixtures,
+automated CI downloads, checksums and provenance. It counts asset downloads rather
+than installations or unique people. Shields refreshes the badge through GitHub's API;
+its cache can delay changes, and an upstream outage can make it unavailable.
 
-The source archive includes the updater and an initial local SVG. With an authenticated `gh` CLI:
-
-```sh
-GITHUB_REPOSITORY=caamer20/BrrpBrrp node scripts/update-download-badge.mjs --output /tmp/downloads.svg
-```
+The badge requires no scheduled workflow, write token, generated source changes or
+separate branch. `main` is the only permanent branch. The former filtered ZIP counter
+and its `badges` branch have been retired; fixture assets retain their original identities.
 
 ## CI fixtures
 
