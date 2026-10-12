@@ -69,3 +69,47 @@ test('malformed SARIF, unknown rules and security severity fail closed', () => {
   for (const score of [undefined, '', 'unknown', '-1', '11'])
     assert.ok(assessSarif(sarif(score)).problems.length);
 });
+
+test('GitHub CodeQL query-pack extension rules are checked, including referenced findings', () => {
+  const extension = sarif('8.1');
+  extension.runs[0].tool.extensions = [
+    { name: 'codeql/go-queries', rules: extension.runs[0].tool.driver.rules }
+  ];
+  delete extension.runs[0].tool.driver.rules;
+  extension.runs[0].results = [];
+  assert.deepEqual(assessSarif(extension), { problems: [], findings: 0 });
+  extension.runs[0].results = [{ rule: { index: 0, toolComponent: { index: 0 } } }];
+  assert.match(assessSarif(extension).problems.join(';'), /High security finding/);
+});
+
+test('unknown tool components and ambiguous rule identifiers fail closed', () => {
+  const missing = sarif('8.1');
+  missing.runs[0].results[0].rule = { toolComponent: { index: 10 } };
+  assert.throws(() => assessSarif(missing), /unknown or ambiguous tool component/);
+  const ambiguous = sarif('8.1');
+  ambiguous.runs[0].tool.extensions = [{ rules: ambiguous.runs[0].tool.driver.rules }];
+  assert.throws(() => assessSarif(ambiguous), /identifiable rule/);
+});
+
+test('component names, GUIDs and indices must identify the same unique component', () => {
+  const response = sarif('4.3');
+  const medium = response.runs[0].tool.driver.rules;
+  const critical = structuredClone(sarif('9.8').runs[0].tool.driver.rules);
+  delete response.runs[0].tool.driver.rules;
+  response.runs[0].tool.extensions = [
+    { name: 'queries', guid: 'one', rules: medium },
+    { name: 'queries', guid: 'two', rules: critical }
+  ];
+  for (const toolComponent of [
+    { name: 'queries' },
+    { index: 0, name: 'different' },
+    { index: 0, guid: 'two' }
+  ]) {
+    response.runs[0].results = [{ rule: { id: 'go/example', toolComponent } }];
+    assert.throws(() => assessSarif(response), /unknown or ambiguous/);
+  }
+  response.runs[0].results = [
+    { rule: { id: 'go/example', toolComponent: { index: 1, name: 'queries', guid: 'two' } } }
+  ];
+  assert.match(assessSarif(response).problems.join(';'), /Critical security finding/);
+});

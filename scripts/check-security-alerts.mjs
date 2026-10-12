@@ -43,16 +43,60 @@ export function assessSarif(sarif) {
   let findings = 0;
   for (const run of sarif.runs) {
     const driver = run.tool?.driver;
-    if (driver?.name !== "CodeQL" || !Array.isArray(driver.rules))
-      throw new Error("SARIF must contain CodeQL rules");
+    const components = [driver, ...(run.tool?.extensions ?? [])];
+    if (
+      driver?.name !== "CodeQL" ||
+      components.some(
+        (component) =>
+          component.rules !== undefined && !Array.isArray(component.rules),
+      )
+    )
+      throw new Error("SARIF must contain valid CodeQL rule components");
+    const rules = components.flatMap((component) => component.rules ?? []);
+    if (!rules.length) throw new Error("SARIF contains no CodeQL rules");
     const results = run.results ?? [];
     if (!Array.isArray(results)) throw new Error("Malformed SARIF results");
     for (const result of results) {
       findings++;
-      const rule =
-        driver.rules.find((entry) => entry.id === result.ruleId) ??
-        driver.rules[result.ruleIndex];
-      if (!rule || (result.ruleId && rule.id !== result.ruleId))
+      const reference = result.rule ?? {};
+      const ruleId = result.ruleId ?? reference.id;
+      const extension = reference.toolComponent;
+      let component = driver;
+      if (extension) {
+        let matches;
+        if (extension.index !== undefined) {
+          if (!Number.isSafeInteger(extension.index) || extension.index < 0)
+            throw new Error(
+              "SARIF finding refers to an unknown tool component",
+            );
+          matches = [run.tool.extensions?.[extension.index]].filter(Boolean);
+        } else {
+          if (!extension.name && !extension.guid)
+            throw new Error(
+              "SARIF finding refers to an unknown tool component",
+            );
+          matches = components;
+        }
+        matches = matches.filter(
+          (entry) =>
+            (!extension.name || entry.name === extension.name) &&
+            (!extension.guid || entry.guid === extension.guid),
+        );
+        if (matches.length !== 1)
+          throw new Error(
+            "SARIF finding refers to an unknown or ambiguous tool component",
+          );
+        component = matches[0];
+      }
+      const candidates = ruleId
+        ? (extension ? (component.rules ?? []) : rules).filter(
+            (entry) => entry.id === ruleId,
+          )
+        : [component.rules?.[reference.index ?? result.ruleIndex]].filter(
+            Boolean,
+          );
+      const rule = candidates.length === 1 ? candidates[0] : undefined;
+      if (!rule || (reference.id && rule.id !== reference.id))
         throw new Error("SARIF finding has no identifiable rule");
       const value = rule.properties?.["security-severity"];
       const security =

@@ -42,8 +42,9 @@ replace verification of the current commit.
 
 Private runs on 8 October were blocked before runner assignment by GitHub's account
 payment/spending-limit message, including the approved eight-minute budget attempt.
-Public runner startup must still be verified; visibility alone is not a completed test.
-If account restrictions block it again, keep execution paused and resolve the account issue.
+Public runner startup was verified on 11 October: the preparation PR reached real build/test
+steps and both CodeQL analyses completed. Full results belong in deployment readiness.
+If account restrictions block future runs, pause execution and resolve the account issue.
 
 ## README download count
 

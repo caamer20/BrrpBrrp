@@ -30,7 +30,7 @@ qualified for a production launch.
 - Routine CI now shares one Linux frontend/static job and native Go coverage on three fixed OS labels.
   Full qualification retains its promotion dependencies and adds CodeQL, shipped-default browser
   coverage and the WebKit core subset. The badge writes a separate branch.
-- All 403 frontend tests passed locally. The new shipped-default restricted-channel journey and its
+- All 406 frontend tests passed locally. The new shipped-default restricted-channel journey and its
   nine setup dependencies passed (10 total). It exposed and regresses an access-inspector confirmation
   that was immediately cleared during refresh; that UI defect is fixed. Individual grants, outsider
   denial and live revocation are covered. Broader real-host and independent review work remains open.
