@@ -24,13 +24,13 @@ export default defineConfig({
   use: {
     ...devices['Desktop Chrome'],
     baseURL: process.env.BRRP_E2E_BASE_URL,
-    channel: process.env.BRRP_E2E_BROWSER || undefined,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
     // Media permissions never need a person in this harness. The voice RTP journey
     // supplies its own deterministic Web Audio track, because Chromium fake-device capture
     // can stall in the host audio service; its actual peer/SFU/RTP assertions remain real.
     launchOptions: {
+      channel: process.env.BRRP_E2E_BROWSER || undefined,
       args: [
         '--use-fake-device-for-media-stream',
         '--use-fake-ui-for-media-stream',
@@ -90,7 +90,13 @@ export default defineConfig({
             // it blocked (6 October). The cost is stated where it is paid: the offline-shell
             // segment of the setup journey has no worker to wait for and records itself as
             // not exercised under this project.
-            use: { ...devices['Desktop Safari'], serviceWorkers: 'block' },
+            use: {
+              ...devices['Desktop Safari'],
+              serviceWorkers: 'block',
+              // Replace the Chromium launch options, including its optional channel.
+              // WebKit rejects Chromium's fake-media arguments before a journey starts.
+              launchOptions: { args: [] }
+            },
             grep: /first setup|member requests their data export|detectable violations|message permalink|Arabic message|Back and Forward|phone width/
           }
         ]
@@ -150,7 +156,10 @@ export default defineConfig({
               // same thing, and it is a *string* preference deliberately —
               // `media.volume_scale` is declared as a string in Gecko and read back as a
               // float, so a number here would be stored as the wrong type and ignored.
-              firefoxUserPrefs: { 'media.volume_scale': '0.0' }
+              launchOptions: {
+                args: [],
+                firefoxUserPrefs: { 'media.volume_scale': '0.0' }
+              }
             }
           }
         ]
