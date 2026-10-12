@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "source_digest": "380b44af562a037cd525432ad7d174f0a01cbce2d4f70a0ef73c866e4b28a7f1",
+  "findings": [
+    {
+      "identity": "93625bccb072c40827b55bb933fc6539c943fbc4a9fea25ae5edcfc143fa270f",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/request-forgery",
+      "path": "internal/installer/account.go",
+      "line": 56,
+      "disposition": "false-positive",
+      "reason": "This is the authenticated local installer checking the server it is installing, not a community-member-controlled outbound request. New plans use loopback or a literal private IPv4 address belonging to this computer. The public proxy URL is not the request destination. Resumed destinations come from trusted local operator configuration rather than makePlan; protection of those files is part of the host trust boundary. The client disables proxy use and rejects redirects.",
+      "evidence": [
+        "internal/installer/server.go: Run and handler bind to IPv4 loopback and enforce peer, exact Host, random bearer secret and Origin before API handlers.",
+        "internal/installer/settings.go: makePlan bounds the port; computer/proxy destinations are loopback and network destinations must occur in localIPs.",
+        "internal/installer/account.go: clientFor constructs the destination from Plan.Address, sets Proxy:nil, and rejects redirects.",
+        "internal/installer/install.go: existingInstallation and docs/codeql-findings-review.md: resumed installation metadata and server.env are trusted local operator configuration; this is not an arbitrary remote destination validation claim."
+      ]
+    },
+    {
+      "identity": "ce253d32af5eab026a46652fb1d390572840fc647d20ad91e972c7337b6cb42d",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/path-injection",
+      "path": "internal/app/config.go",
+      "line": 216,
+      "disposition": "false-positive",
+      "reason": "The reported Lstat is the metadata inspection inside the path-containment and symlink checker itself. It walks the selected path and ancestors to reject symlinks, after lexical containment validation. The installer caller is an authenticated local operator selecting the data directory. Reading this metadata implements the intended check; it is not a community member obtaining arbitrary file contents. This does not promise resistance to hostile local filesystem races.",
+      "evidence": [
+        "internal/app/config.go: Contained computes absolute/clean paths, rejects parent traversal, then Lstat checks every existing ancestor for symlinks.",
+        "internal/installer/settings.go: makePlan requires an absolute dedicated data directory, rejects NUL/CR/LF and calls Contained before installation.",
+        "internal/installer/server.go: handler authenticates the loopback wizard session before check/apply.",
+        "SECURITY.md and docs/codeql-findings-review.md: host-level access and hostile local filesystem actors are outside this review boundary."
+      ]
+    },
+    {
+      "identity": "af5c221e5d38a7adbdb2056901cab9b465f6e7286b8863d482ada40ffe3cc157",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/path-injection",
+      "path": "internal/installer/settings.go",
+      "line": 106,
+      "disposition": "false-positive",
+      "reason": "checkDestination intentionally inspects the authenticated operator-selected installation/data paths for existing application, database and configuration files so it can refuse an unsafe fresh installation. makePlan validates the absolute dedicated directory and symlink ancestors before this check. The install directory and executable paths come from local defaults. This metadata check is not an arbitrary path operation available to community members.",
+      "evidence": [
+        "internal/installer/server.go: check and apply call makePlan before checkDestination behind the authenticated loopback handler.",
+        "internal/installer/settings.go: makePlan validates absolute paths, dedicated directories, control characters and containment.",
+        "internal/installer/settings.go: checkDestination only Lstat-inspects the planned binary/config/database/installation record and refuses existing installations or data."
+      ]
+    },
+    {
+      "identity": "83997f99ad4badb3253bea9c0560431ca153b15e03ef08c9cbfd86af9d88b1c7",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/path-injection",
+      "path": "internal/installer/settings.go",
+      "line": 127,
+      "disposition": "false-positive",
+      "reason": "The parent-directory Stat walk deliberately finds the existing disk ancestor of the authenticated operator-selected data folder to check free storage. makePlan validates that folder before checkDestination. This is a metadata/storage-capacity check for the authorized local installation, not a remote community user choosing a file to read or write. The review assumes trusted host filesystem access and does not claim race-proof path resolution.",
+      "evidence": [
+        "internal/installer/server.go: check/apply are authenticated local wizard operations and run makePlan first.",
+        "internal/installer/settings.go: makePlan validates the absolute dedicated data directory and symlink ancestors.",
+        "internal/installer/settings.go: checkDestination walks filepath.Dir until an existing ancestor, then calls app.FreeDiskBytes and requires 256 MB."
+      ]
+    },
+    {
+      "identity": "79c94f1455cb34245d517fd7ff0dad45a477e3e545a393247110896822c2115c",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/path-injection",
+      "path": "internal/installer/account.go",
+      "line": 25,
+      "disposition": "false-positive",
+      "reason": "The installer reads the installed server TLS certificate from the authorized local data directory to establish trust for its local-network setup connection. The new plan directory is validated by makePlan; resumed plans are trusted local installation metadata/server configuration and must remain protected. This reads the intended certificate for the operator installation and does not expose arbitrary file content through the community API.",
+      "evidence": [
+        "internal/installer/account.go: clientFor reads only DataDir/certs/tls.crt for network mode and parses it as a certificate pool.",
+        "internal/installer/server.go and internal/installer/settings.go: fresh installation plans are created behind bearer/Host/Origin checks and validated by makePlan.",
+        "docs/codeql-findings-review.md: resumed plans do not pass through makePlan again; locally stored installation/server configuration is trusted operator input."
+      ]
+    },
+    {
+      "identity": "d4d615926b62a422ace42206598bc296bc650c38484af16c2e784f29e69c34ae",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/path-injection",
+      "path": "internal/installer/account.go",
+      "line": 29,
+      "disposition": "false-positive",
+      "reason": "The installer optionally reads the installed server root certificate from the authorized local data directory to verify its local-network setup connection. The new plan directory is validated by makePlan; resumed plans are trusted local installation metadata/server configuration and must remain protected. The fallback reads the intended certificate file and does not provide community users arbitrary file-read authority.",
+      "evidence": [
+        "internal/installer/account.go: clientFor reads only DataDir/certs/root.crt, falls back only when absent, and requires valid certificate PEM.",
+        "internal/installer/server.go and internal/installer/settings.go: fresh plans are created behind bearer/Host/Origin checks and validated by makePlan.",
+        "docs/codeql-findings-review.md: trusted resumed installation records/server.env are not revalidated through makePlan; host protection remains required."
+      ]
+    },
+    {
+      "identity": "93a5fa2a668576ce192de2889cacb9d64db26ce59fc19d85ac7a3874808c9829",
+      "component": "codeql/go-queries",
+      "component_version": "1.6.12+a7057b836bf29767461026718b14d20790b9085f",
+      "rule": "go/path-injection",
+      "path": "internal/installer/settings.go",
+      "line": 115,
+      "disposition": "false-positive",
+      "reason": "checkDestination deliberately lists the authenticated operator-selected data directory to reject a nonempty folder before a fresh installation. makePlan first validates that this is an absolute dedicated directory and checks symlink ancestors. The listing is only used to return a generic nonempty-folder error, not to expose directory entries. Community users cannot call this privileged loopback wizard operation.",
+      "evidence": [
+        "internal/installer/server.go: the loopback handler requires exact Host, random bearer secret and Origin before check/apply.",
+        "internal/installer/settings.go: makePlan validates the data directory before checkDestination.",
+        "internal/installer/settings.go: ReadDir is used only for len(entries)>0 and a generic refusal to use existing data."
+      ]
+    }
+  ]
+}

@@ -11,9 +11,9 @@ qualified for a production launch.
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Public development repository | Publication audit, reporting contacts/intake, policies, templates, review ownership and dependency updates are present. |
-| Automated verification | Public CI and full qualification prepared | Optimized contribution checks and complete release gates are configured. Final hosted outcomes remain pending below. |
+| Automated verification | Public CI passed; qualification gates active | The preparation PR passed Windows/macOS/Linux Go, frontend/static and CodeQL checks. Full-main security analysis found baseline issues under review; release qualification blocks until addressed. |
 | Upgrade fixtures | Connected for CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
-| Distribution | Local candidate built; hosted draft blocked | Six native targets plus source/checksums built locally. No application release or registry image is published. |
+| Distribution | Publication requires full qualification | Six native targets plus source/checksums are defined. Exact tested revision, run, assets and publication status belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). No registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
 | Linux deployment | Partly verified | Hosted Docker build/lifecycle passed. Systemd lifecycle, real deployment, external networks and off-host recovery need target-host evidence. |
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
@@ -34,6 +34,15 @@ qualified for a production launch.
   nine setup dependencies passed (10 total). It exposed and regresses an access-inspector confirmation
   that was immediately cleared during refresh; that UI defect is fixed. Individual grants, outsider
   denial and live revocation are covered. Broader real-host and independent review work remains open.
+
+The first full-main scan at `13c990d` found 19 baseline findings that the PR's changed-code analysis
+had not reported. The qualification gate blocked packaging. [CodeQL review](codeql-findings-review.md)
+records the repairs and the exact-source policy for individually reviewed false positives. Release
+notes carry the final frozen-revision qualification result; this checkpoint is not that result.
+
+The repair tree passed 413 frontend tests, including 15 findings-gate controls, plus local
+app/backup/installer tests, activity filter/pagination tests and the static/workflow gates.
+Fresh hosted full-ref scanning and qualification are still required before publication.
 
 ## Verification on 8 October
 

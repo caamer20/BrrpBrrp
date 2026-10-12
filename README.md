@@ -27,7 +27,7 @@ no third-party chat platform.
 - **Light, dark and system themes**, a phone layout and an installable web app.
 
 > **Status: 1.0.0-rc.1, a release candidate.** This is the feature set intended for version 1.0.0. It has
-> **not been published**, has **no independent security, privacy or accessibility review**, and no beta has
+> **no independent security, privacy or accessibility review**, and no beta has
 > run. Two conversation features — restricted channels and private conversations — are **on by default** and
 > have not been reviewed. Automated verification and real-host qualification are tracked separately in
 > [deployment readiness](docs/launch-readiness.md). Read the [release record](docs/releases/1.0.0-rc.1.md) and [known limitations](docs/known-limitations.md)
@@ -49,7 +49,9 @@ The full set of guides, decision records and release notes is listed in the
 
 ## Quick start
 
-The source repository is public. **There is no published application release yet.** Build from source below, or use Docker to build from the checkout. Maintainers can prepare release
+The source repository is public. Download a versioned candidate from [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases)
+when published, or build from source below or with Docker. The archival CI fixture release is for migration tests;
+its binaries should not be installed as a current server. Maintainers prepare release
 archives through the [gated GitHub workflow](docs/github-setup.md#prepare-a-release).
 
 Native packages are built for **Windows, macOS and Linux**, each on **x64 and ARM64**.
@@ -58,7 +60,7 @@ phones and tablets; the web app can also be installed. Build targets and complet
 deployment qualification are tracked in [deployment readiness](docs/launch-readiness.md).
 
 The badge counts downloads of published native and Docker source ZIPs, including
-prereleases. It refreshes daily and on release changes, uses the protected-main-compatible badge branch,
+prereleases. It refreshes daily and on release changes, updates the separate badge branch,
 and excludes draft releases and CI fixtures. It counts archive downloads, not unique users.
 
 When a candidate release is available, download the ZIP for your operating system and processor from

@@ -52,7 +52,7 @@ Backups are unencrypted and include hashes and private push keys. Restore only b
 
 ## Reporting a vulnerability
 
-[SECURITY.md](../SECURITY.md) is the reporting policy: GitHub's private vulnerability reporting is the channel, host-level access is explicitly out of scope because the operator already holds the data, and the policy says plainly that the intake is not live until the public repository exists and a test report has been delivered. The project also ships under the MIT License with generated dependency notices ([THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md)); a dependency whose license cannot be read fails the notices check rather than being shipped unnoticed.
+[SECURITY.md](../SECURITY.md) is the reporting policy: GitHub's private vulnerability reporting is enabled, with the owner-provided private contact as a fallback. Host-level access is explicitly out of scope because the operator already holds the data. The project also ships under the MIT License with generated dependency notices ([THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md)); a dependency whose license cannot be read fails the notices check rather than being shipped unnoticed.
 
 ## Release checks
 

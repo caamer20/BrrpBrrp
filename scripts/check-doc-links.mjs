@@ -184,9 +184,8 @@ function selfTest() {
     const afterAbsolute = checkDocuments(tree, documents, optional);
     expect(
       "absolute and fragment links are ignored",
-      !afterAbsolute.some(
-        (failure) =>
-          failure.includes("example.com") || failure.includes("#top"),
+      !afterAbsolute.some((failure) =>
+        failure.startsWith("README.md links to "),
       ),
     );
   } finally {

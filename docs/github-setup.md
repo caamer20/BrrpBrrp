@@ -27,7 +27,7 @@ release-write permissions belong only to the optional manual draft job on `main`
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
 | **CI** | PRs and pushes to `main`; reused by qualification | Frontend/static audits once on Linux; native Go builds/tests on Ubuntu, Windows and macOS; historical secret scanning |
-| **CodeQL** | PRs, `main`, weekly; reused by qualification | Go and JavaScript/TypeScript code scanning |
+| **CodeQL** | PRs, `main`, weekly, manual audit; reused by qualification | Go and JavaScript/TypeScript code scanning |
 | **Release qualification** | Manual | Complete CI, CodeQL, race shards, browser engines/modes, Docker, recovery, rollback, package consumers and candidate archives |
 | **Docker** | Qualification caller or manual | Compose validation, x64 lifecycle/persistence, ARM64 image build |
 | **Release download count** | Daily, release changes or manual | Filtered published archive count on the `badges` branch |
@@ -88,8 +88,10 @@ candidate package directory. Missing or mismatched bytes fail the job.
 2. Run **Actions → Release qualification → Run workflow** on `main`. Leave **Create a draft
    prerelease** unchecked to qualify archives, or check it to prepare a draft after every gate passes.
 3. Packaging waits for all required job families, including CodeQL analysis and an exact-revision
-   SARIF findings gate that blocks high/critical security findings. Later branch fixes, GitHub
-   dismissals and SARIF suppressions do not waive this gate. Browser checks cover feature
+   SARIF findings gate that blocks unreviewed high/critical security findings. Later branch fixes,
+   GitHub dismissals and SARIF suppressions do not waive this gate. Individually reviewed false positives
+   require exact result/flow/query-pack identity and a matching digest of the analyzed Git tree;
+   see [CodeQL review](codeql-findings-review.md). Browser checks cover feature
    off/private modes, shipped defaults with restricted-channel grants/revocation, Firefox media and
    the documented WebKit core subset. ARM64 packaging is not ARM64 runtime qualification.
 4. Package generation signs GitHub/Sigstore build provenance on `main`. The optional draft job

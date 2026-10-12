@@ -33,9 +33,11 @@ are enabled. Conduct/privacy reports have an owner-provided private contact.
 
 Routine CI verifies frontend/static checks once on Linux and Go builds/tests on Windows,
 macOS and Linux. CodeQL scans Go and JavaScript/TypeScript. A separate release gate requires both analyses at the
-exact source/ref and inspects those analysis IDs' SARIF results for high/critical security findings;
+exact source/ref and inspects those analysis IDs' SARIF results for unreviewed high/critical security findings;
 successful analysis alone is not a clean-findings result. Later branch fixes, dismissals and SARIF
-suppressions do not waive the gate. Lower-severity findings remain review work. Full release qualification additionally requires race shards, browser
+suppressions do not waive the gate. Reviewed false positives require exact finding/flow/query-pack identity
+and an unchanged analyzed source-tree digest; [the review record](codeql-findings-review.md) explains the policy.
+Lower-severity findings remain review work. Full release qualification additionally requires race shards, browser
 journeys, dependency scans, Docker lifecycle/builds, recovery, historical rollback and
 extracted-package consumption before archives or an optional draft prerelease are prepared.
 Only standard GitHub-hosted runner labels are used; workflow actions are pinned to commit SHAs.

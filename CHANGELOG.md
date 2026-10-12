@@ -5,9 +5,9 @@ Dated changes to BrrpBrrp, newest first. Each entry is a summary of a record und
 what was not, and what the checkpoint does not prove. Dates are the ones the records state;
 where a record states none, none is given here either.
 
-Every version below is a **local development checkpoint**, not a published release, and
-none of them marks a G0–G8 release gate passed. Read the record's "Known issues" section
-before deciding anything on the strength of one.
+The dated entries preserve development checkpoints. Publication status and exact-build
+qualification belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases).
+No checkpoint alone marks a production gate passed; read its known issues and verification scope.
 
 ## Release preparation — 11 October 2026
 
@@ -18,6 +18,9 @@ before deciding anything on the strength of one.
 - Protected-main-compatible download badge branch, current SHA-pinned Actions, artifact retention
   and signed build-provenance verification before draft release creation.
 - Stable production qualification remains open; see deployment readiness.
+- Activity filters use SQL parameters; explicit port/ZIP path guards and test/audit cleanup
+  address full-main CodeQL findings. Any individually reviewed false positives are bound to
+  exact result/flow/query-pack identities and the analyzed source tree.
 
 ## 1.0.0-rc.1 — 6 October 2026
 

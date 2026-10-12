@@ -172,16 +172,16 @@ async function waitForWindow(target) {
 // later step is not something the server accepts, and producing one would be a
 // rehearsal that passes for a reason the product does not offer.
 async function loginWithFactor(base, username, password, secret) {
-  const passwordOnly = await api(base, "POST", "/api/login", {
+  const firstFactor = await api(base, "POST", "/api/login", {
     body: { username, password },
   });
   if (
-    passwordOnly.cookie ||
-    passwordOnly.body?.second_factor_required !== true ||
+    firstFactor.cookie ||
+    firstFactor.body?.second_factor_required !== true ||
     !secret
   )
-    return passwordOnly;
-  let last = passwordOnly;
+    return firstFactor;
+  let last = firstFactor;
   for (let attempt = 0; attempt < 3; attempt++) {
     await waitForWindow(currentWindow() + attempt);
     last = await api(base, "POST", "/api/login", {
@@ -925,13 +925,13 @@ async function main() {
     `HTTP ${download.status}, sha256 ${downloadDigest.slice(0, 12)}`,
   );
   if (dataset.second_factor) {
-    const passwordOnly = await api(server.base, "POST", "/api/login", {
+    const firstFactor = await api(server.base, "POST", "/api/login", {
       body: { username: "owner", password },
     });
     check(
       "the upgraded installation still answers with a second-factor step",
-      passwordOnly.body?.second_factor_required === true,
-      `HTTP ${passwordOnly.status}`,
+      firstFactor.body?.second_factor_required === true,
+      `HTTP ${firstFactor.status}`,
     );
     const withCode = await loginWithFactor(
       server.base,

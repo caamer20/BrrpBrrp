@@ -127,6 +127,11 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return c, err
 	}
+	// Keep the bounds next to the narrowing conversion as well as in number's
+	// validation, so both static analysis and future callers see the invariant.
+	if min < 1024 || min > 65535 || max < min || max > 65535 {
+		return c, errors.New("voice ports must be between 1024 and 65535")
+	}
 	c.VoicePortMin, c.VoicePortMax = uint16(min), uint16(max)
 	if c.VoiceExternalIP != "" && net.ParseIP(c.VoiceExternalIP) == nil {
 		return c, errors.New("BRRP_VOICE_EXTERNAL_IP must be an IP address")
