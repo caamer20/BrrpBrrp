@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG NODE_IMAGE=node:24.21.0-alpine3.24
-ARG GO_IMAGE=golang:1.27.1-alpine3.24
+ARG GO_IMAGE=golang:1.27.2-alpine3.24
 
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS frontend
 WORKDIR /src/web
@@ -17,7 +17,7 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS notices
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go version && go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY web/*.go ./web/
@@ -35,7 +35,7 @@ RUN --mount=type=cache,target=/go/pkg/mod apk add --no-cache nodejs && \
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go version && go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY web/*.go ./web/

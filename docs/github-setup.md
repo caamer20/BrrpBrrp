@@ -26,12 +26,16 @@ release-write permissions belong only to the optional manual draft job on `main`
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| **CI** | PRs and pushes to `main`; reused by qualification | Frontend/static audits once on Linux; native Go builds/tests on Ubuntu, Windows and macOS; historical secret scanning |
+| **CI** | PRs and pushes to `main`; reused by qualification | Frontend/static, npm/Go vulnerability and secret audits once on Linux; native Go builds/tests on Ubuntu, Windows and macOS after audits pass |
 | **CodeQL** | PRs, `main`, weekly, manual audit; reused by qualification | Go and JavaScript/TypeScript code scanning |
 | **Release qualification** | Manual | Complete CI, CodeQL, race shards, browser engines/modes, Docker, recovery, rollback, package consumers and candidate archives |
 | **Docker** | Qualification caller or manual | Compose validation, x64 lifecycle/persistence, ARM64 image build |
 | **Release download count** | Daily, release changes or manual | Filtered published archive count on the `badges` branch |
 | **Budget check** | Manual fallback | One capped Linux job; never qualifies or packages a release |
+
+CI and Docker pin Go 1.27.2. The `go.mod` minimum also rejects older local compilers.
+The native test matrix waits for the shared audit job; full release Docker qualification
+waits for the complete shared tests. Scanner/network errors fail the audits.
 
 Only standard GitHub-hosted runner labels are used. They are
 [free for public repositories](https://docs.github.com/en/actions/concepts/billing-and-usage);
@@ -99,6 +103,9 @@ candidate package directory. Missing or mismatched bytes fail the job.
    provenance against the exact source commit, workflow and main ref, then
    creates a **draft prerelease** at the exact tested source commit. It refuses an existing version
    release or tag. Review notes, files, checksums and real-host evidence before publishing.
+   After verifying the draft, create the annotated version tag at that qualified commit and
+   confirm its peeled SHA. Protect version tags against updates/deletion before publishing
+   the candidate as a prerelease. A stable release still requires the remaining production gates.
 5. Follow the [production runbook](production-readiness.md). A green automated run does not supply
    independent reviews, real-host/device qualification, capacity measurement or community beta evidence.
 

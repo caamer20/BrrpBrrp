@@ -110,7 +110,7 @@ covers the procedure, and [upgrading](docs/upgrading.md) covers updates and roll
 
 ## Build from source
 
-Use Go 1.27.1 or newer and Node.js 22.12 or newer. Build the frontend before the Go binary, because the binary
+Use Go 1.27.2 or newer and Node.js 22.12 or newer. Build the frontend before the Go binary, because the binary
 embeds it:
 
 ```sh

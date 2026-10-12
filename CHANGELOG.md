@@ -9,6 +9,15 @@ The dated entries preserve development checkpoints. Publication status and exact
 qualification belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases).
 No checkpoint alone marks a production gate passed; read its known issues and verification scope.
 
+## Release toolchain hardening — 12 October 2026
+
+- Go 1.27.2 is the minimum build compiler and the pinned CI/Docker toolchain, fixing the
+  standard-library vulnerabilities that blocked the first complete hosted qualification.
+- Update `golang.org/x/net` and regenerate dependency notices and the SBOM.
+- Run strict npm/Go vulnerability audits in the shared audit gate before native tests;
+  release Docker qualification also waits for that gate through the shared test job.
+- Fresh complete-source review and full qualification remain required before publication.
+
 ## Release preparation — 11 October 2026
 
 - Public repository, private security intake and owner-supplied conduct/privacy contact.

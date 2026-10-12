@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - name: Require tested analysis results without high or critical findings
+      - name: Reject unreviewed high or critical findings in the tested source
         run: node scripts/check-security-alerts.mjs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,12 +72,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - run: npm audit --audit-level=moderate
-        working-directory: web
       - name: Install Playwright browsers and system dependencies
         working-directory: web
         run: npx playwright install --with-deps chromium firefox webkit
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
       - run: node scripts/check-browser-steps.mjs --self-test
       - run: node scripts/check-browser-steps.mjs
@@ -150,6 +147,7 @@ jobs:
             web/test-results-default/
             web/test-results-private/
   docker:
+    needs: test
     uses: ./.github/workflows/docker.yml
   recovery:
     needs: test

@@ -55,7 +55,7 @@ arrive without its terms being recorded here.
 | `github.com/wlynxg/anet` | v0.0.5 | BSD-3-Clause |
 | `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause |
 | `golang.org/x/image` | v0.46.0 | BSD-3-Clause |
-| `golang.org/x/net` | v0.58.0 | BSD-3-Clause |
+| `golang.org/x/net` | v0.60.0 | BSD-3-Clause |
 | `golang.org/x/sys` | v0.48.0 | BSD-3-Clause |
 | `golang.org/x/text` | v0.42.0 | BSD-3-Clause |
 | `golang.org/x/time` | v0.14.0 | BSD-3-Clause |
@@ -64,7 +64,7 @@ arrive without its terms being recorded here.
 | `modernc.org/memory` | v1.12.1 | BSD-3-Clause |
 | `modernc.org/sqlite` | v1.58.0 | BSD-3-Clause |
 | `svelte` | 5.57.1 | MIT |
-| `the Go standard library` | go1.27.1 | BSD-3-Clause |
+| `the Go standard library` | go1.27.2 | BSD-3-Clause |
 
 ## License texts
 
@@ -458,11 +458,11 @@ Applies to:
 
 - `golang.org/x/crypto` v0.57.0
 - `golang.org/x/image` v0.46.0
-- `golang.org/x/net` v0.58.0
+- `golang.org/x/net` v0.60.0
 - `golang.org/x/sys` v0.48.0
 - `golang.org/x/text` v0.42.0
 - `golang.org/x/time` v0.14.0
-- `the Go standard library` go1.27.1
+- `the Go standard library` go1.27.2
 
 ```text
 Copyright 2009 The Go Authors.

@@ -80,7 +80,7 @@ if (process.argv.includes("--self-test")) {
     );
 
     const head = `ARG NODE_IMAGE=node:24.21.0-alpine3.24
-ARG GO_IMAGE=golang:1.27.1-alpine3.24
+ARG GO_IMAGE=golang:1.27.2-alpine3.24
 
 FROM \${NODE_IMAGE} AS frontend
 WORKDIR /src/web

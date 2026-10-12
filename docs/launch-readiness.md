@@ -1,6 +1,6 @@
 # Project and deployment readiness
 
-Assessment date: **11 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
+Assessment date: **12 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
 feature families are implemented, and a public GitHub repository is configured for
 cross-platform qualification. It is ready for structured candidate testing; it is not yet
 qualified for a production launch.
@@ -11,7 +11,7 @@ qualified for a production launch.
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Public development repository | Publication audit, reporting contacts/intake, policies, templates, review ownership and dependency updates are present. |
-| Automated verification | Public CI passed; qualification gates active | The preparation PR passed Windows/macOS/Linux Go, frontend/static and CodeQL checks. Full-main security analysis found baseline issues under review; release qualification blocks until addressed. |
+| Automated verification | Public CI passed; qualification gates active | The security repair passed native Go/static/CodeQL checks. Seven installer false positives are individually reviewed. The next full run caught standard-library vulnerabilities in Go 1.27.1 and blocked packaging; the patched compiler/source must qualify before publication. |
 | Upgrade fixtures | Connected for CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Publication requires full qualification | Six native targets plus source/checksums are defined. Exact tested revision, run, assets and publication status belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). No registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
@@ -19,6 +19,17 @@ qualified for a production launch.
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
 | Security, privacy and accessibility | Reviews outstanding | Automated checks are useful evidence; independent reviews remain open. |
 | Community beta and soak | Not started | The roadmap requires real community use and observation of a frozen candidate. |
+
+## Toolchain repair on 12 October
+
+Qualification at `d5b9e451` passed native Go, static, CodeQL/findings and Docker checks,
+then stopped before browser journeys when `govulncheck` found ten reachable standard-library
+advisories in Go 1.27.1. No candidate assets or version tag were published by that run.
+Current CI and Docker builds use Go 1.27.2; `go.mod` enforces that minimum even with
+`GOTOOLCHAIN=local`. The network module, notices and SBOM are updated. npm/Go vulnerability
+audits now gate native tests early; release Docker qualification waits for the shared tests.
+Historical baseline compiler provenance stays unchanged. The updated source needs renewed
+individual CodeQL review and complete frozen-revision qualification, recorded on GitHub Releases.
 
 ## Public preparation on 11 October
 
@@ -95,7 +106,7 @@ development session; hosted logs and artifacts will be available in
 - The eight dependency/action updates were checked together in an isolated integration tree:
   all 397 frontend tests, the full Go suite (API 253 seconds), `make check`, workflow syntax
   and redistribution notices passed. Go vulnerability scanning found no affected code;
-  one finding was confined to an unused required module. Hosted combined qualification remains
+  one finding concerned an unimported package in a required module. Hosted combined qualification remains
   the gate for preparing the candidate packages.
   The combined suite ran at local integration revision `51b40e56`; the later RTC-only check
   ran ten times at `d21d9da9`. After all eight PRs were squash-merged, main revision
