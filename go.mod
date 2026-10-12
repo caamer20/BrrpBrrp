@@ -1,6 +1,6 @@
 module brrpbrrp
 
-go 1.26.0
+go 1.27.2
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
@@ -14,7 +14,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.22
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.46.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.58.0
 )

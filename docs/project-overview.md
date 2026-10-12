@@ -402,7 +402,7 @@ The full, dated account is in [known limitations](known-limitations.md#what-has-
 
 ## 11. Development
 
-Install Go 1.27.1 or later and Node.js 22.12 or later (Node 24 is used in CI). Build the frontend before the
+Install Go 1.27.2 or later and Node.js 22.12 or later (Node 24 is used in CI). Build the frontend before the
 Go binary, because the binary embeds it:
 
 ```sh

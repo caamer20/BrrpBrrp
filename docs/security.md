@@ -2,6 +2,22 @@
 
 BrrpBrrp is intended for a small group whose server operator is trusted. It uses HTTPS, authenticated sessions and administrator checks, but does not provide end-to-end encryption or hostile multi-tenant isolation. The operator can read stored messages and relay audio. Protect the host and its backups.
 
+## Build and dependency checks
+
+Build with Go 1.27.2 or newer. The module minimum rejects older compilers, including
+when automatic toolchain downloads are disabled. CI runs the pinned Go vulnerability
+scanner and a moderate-or-higher npm audit before native tests; scanner/network failures
+block qualification.
+
+The 12 October patched-source scan reports zero affected application symbols and zero
+findings in imported packages. Its one module-only advisory,
+[GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932), concerns the unmaintained
+`golang.org/x/crypto/openpgp` package, which has no fixed version. The application uses
+other parts of `x/crypto`; OpenPGP and its subpackages are absent from the command's
+dependency graph for all six supported release targets. They are not linked into the
+native binaries. This records the scan's scope; it is not a blanket claim that the entire
+dependency module is free of advisories.
+
 ## HTTPS choices
 
 1. **Existing certificate:** set `BRRP_TLS_MODE=https` and place the certificate chain and private key inside the data directory. Set `BRRP_CERT_FILE` and `BRRP_KEY_FILE` to their relative paths.

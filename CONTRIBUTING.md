@@ -6,7 +6,7 @@ BrrpBrrp is released under the [MIT License](LICENSE), and everything a release 
 
 ## Development
 
-Install Go 1.27.1 or later and Node.js 22.12 or later. Node 24 is used in CI. Install and build the frontend before building Go:
+Install Go 1.27.2 or later and Node.js 22.12 or later. Node 24 is used in CI. Install and build the frontend before building Go:
 
 ```sh
 npm --prefix web ci

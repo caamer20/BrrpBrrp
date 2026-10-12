@@ -22,7 +22,9 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Frontend checks
         working-directory: web
-        run: npm run check && npm run format:check && npm test
+        run: npm audit --audit-level=moderate && npm run check && npm run format:check && npm test
+      - name: Go vulnerability audit
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - name: Static and workflow failure controls
         run: |
           node scripts/ci-audit.mjs
@@ -37,6 +39,7 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks-bin gitleaks
           /tmp/gitleaks-bin/gitleaks git . --log-opts=--all --redact=100 --no-banner
   native:
+    needs: audit
     name: Go (${{ matrix.os }})
     strategy:
       fail-fast: false
