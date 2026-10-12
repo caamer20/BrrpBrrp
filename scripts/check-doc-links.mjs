@@ -64,7 +64,7 @@ const DOCUMENTS = [
   "docs/manual/administrators.md",
   "docs/manual/troubleshooting.md",
   "docs/manual/glossary.md",
-  ...["1.0.0-rc.1", "0.4.0-alpha.7", "0.4.0-alpha.6"].map(
+  ...["1.0.0", "1.0.0-rc.1", "0.4.0-alpha.7", "0.4.0-alpha.6"].map(
     (release) => `docs/releases/${release}.md`,
   ),
 ];

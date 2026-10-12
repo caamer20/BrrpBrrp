@@ -39,7 +39,7 @@ suppressions do not waive the gate. Reviewed false positives require exact findi
 and an unchanged analyzed source-tree digest; [the review record](codeql-findings-review.md) explains the policy.
 Lower-severity findings remain review work. Full release qualification additionally requires race shards, browser
 journeys, dependency scans, Docker lifecycle/builds, recovery, historical rollback and
-extracted-package consumption before archives or an optional draft prerelease are prepared.
+extracted-package consumption before archives or an optional draft release are prepared.
 Only standard GitHub-hosted runner labels are used; workflow actions are pinned to commit SHAs.
 On `main`, package generation signs GitHub/Sigstore build-provenance attestations. The draft job
 verifies each archive against the repository, workflow, source commit and main ref before preparing

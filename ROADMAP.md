@@ -2,13 +2,13 @@
 
 BrrpBrrp's direction is a self-hosted chat and voice server that a small community can run,
 back up and trust without a vendor account. This roadmap says where the project stands, what
-stands between it and version 1.0.0, what comes after, and what is deliberately out of scope.
+production qualification remains, what comes after version 1.0.0, and what is deliberately out of scope.
 
 It makes **no delivery dates**. Each item states what it needs before it can be called done, so
 that its completion can be checked rather than asserted.
 
 For what is in the product today, read the [project overview](docs/project-overview.md). For the
-known gaps in the current release candidate, read [known limitations](docs/known-limitations.md).
+known gaps in the current release, read [known limitations](docs/known-limitations.md).
 
 ## How to read this roadmap
 
@@ -16,9 +16,9 @@ Every item has one of these statuses:
 
 | Status | Meaning |
 | --- | --- |
-| **Shipped** | In the current release candidate, implemented, and covered by tests in the source tree. |
-| **Shipped, not run** | Implemented in the candidate; the tests that prove it have been written but not yet executed on this exact tree. |
-| **Open gate** | Required before 1.0.0 can be called a release. Usually needs a machine, a person or elapsed time. |
+| **Shipped** | In the current release, implemented, and covered by tests in the source tree. |
+| **Shipped, not run** | Implemented in the release; the tests that prove it have been written but not yet executed on this exact tree. |
+| **Open gate** | Required for production deployment sign-off. Usually needs a machine, a person or elapsed time. |
 | **Planned** | Documented as the next slice of work after 1.0.0. Scope is written down; timing is not. |
 | **Proposed** | An idea recorded here for discussion. It has no decision behind it yet and may change or be dropped. |
 | **Not planned** | Deliberately outside the project's design. Listed so it is not mistaken for an oversight. |
@@ -27,36 +27,35 @@ Items marked **Proposed** are this roadmap's own suggestions, not commitments in
 
 ## Where we are
 
-The project is at **1.0.0-rc.1**, schema 25, a release candidate. Its feature set is the one intended
-for 1.0.0. The honest state is:
+The project is at **1.0.0**, schema 25, for the stable release channel. The owner requested
+stable publication while keeping the remaining production qualification visible.
 
-- Every planned feature family is implemented, including roles and delegation, restricted channels,
-  consented direct conversations and groups, blocking, named threads, moderation timeouts, member data
-  export, voice with screen sharing, verified backups and operator alerts.
-- On 8 October, the candidate passed the local Go suites, 392 frontend tests, static/package checks,
-  30 browser journeys with conversation features off and 45 with private conversations on. Both browser
-  modes keep restricted channels off. The Linux race sweep and cross-platform hosted qualification are
-  still separate evidence; see [deployment readiness](docs/launch-readiness.md).
-- No release gate has passed. Gates need things a development machine cannot supply: a second host,
-  a real network, a physical device, an independent reviewer, or elapsed days.
-- On 11 October the repository became public, with private vulnerability reporting and a real
-  conduct/privacy contact. The shipped-default restricted-channel browser journey passed locally;
-  full hosted qualification and the remaining production gates are recorded in deployment readiness.
+- All planned feature families are implemented: roles, restricted channels, consented conversations,
+  groups, moderation, exports, voice/screen sharing, verified backups and operator alerts.
+- The preceding [RC qualification](https://github.com/caamer20/BrrpBrrp/actions/runs/38244004395)
+  passed all 18 jobs, including 142 browser executions and 354 recovery/rollback checks. Its full-disk
+  Linux rehearsal skipped because loop mounts were unavailable; that scenario was not qualified.
+- Every version requires fresh exact-source automated qualification and actual asset verification.
+  Version 1.0.0's source, run, checksums and publication status are recorded on
+  [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0).
+- Clean-host/device and ARM64 runtime acceptance, native signing/notarization, external networks,
+  independent reviews, measured capacity and the community beta remain open.
+- The public repository has private vulnerability reporting, a conduct/privacy contact, protected
+  `main` and protected version tags. `badges` contains only the dated download-count snapshot.
 
-Details of each change are in the [1.0.0-rc.1 release record](docs/releases/1.0.0-rc.1.md) and the
-execution ledger, `planning/v1-execution-ledger-2026-10-01.md`, in the development repository.
+Read the [1.0.0 release record](docs/releases/1.0.0.md),
+[deployment readiness](docs/launch-readiness.md) and [known limitations](docs/known-limitations.md).
 
-## The path to 1.0.0
 
-### 1. Complete automated candidate qualification
 
-**Open gate.** The local non-race suites and both existing browser modes passed on 8 October.
-Complete the hosted checks and retain results against the candidate source and package bytes.
+## Production qualification
 
-- Hosted Go suites on Windows, macOS and Linux, and browser journeys in both existing harness modes.
-- The Linux `-race` sweep, which was not part of the local pass.
-- A browser mode and journeys for the shipped restricted-channel default (step 2).
-- Any failure found here becomes a defect to fix and re-run, not a note to carry.
+### 1. Retain automated release qualification
+
+**Required for every version.** The preceding RC completed hosted native suites, five race shards,
+three Chromium modes, WebKit and Firefox media, Docker, recovery/rollback and package consumers.
+Retain a new exact-source run and checksums for 1.0.0. Any failing automated gate blocks packaging.
+A skipped scenario stays unqualified; automated success does not close the physical acceptance work below.
 
 ### 2. Exercise restricted channels in a browser
 
@@ -100,14 +99,14 @@ sign-off is in [production readiness](docs/production-readiness.md).
 
 ### 5. Independent reviews
 
-**Open gate.** Three reviews have not been run, and the gate flip waits for them:
+**Open gate.** Three independent reviews remain outstanding production acceptance:
 
 - **Security**, of the authority model, the authentication flows, the upload and preview paths, and the voice relay.
 - **Privacy**, of the restricted channels, the consented conversations, reports, exports and retention, which
   were switched on without a review.
 - **Accessibility**, of the keyboard, screen-reader and zoom behaviour. Automated checks are not an audit.
 
-Each review produces numbered findings. The highest-severity findings would block 1.0.0; how the others
+Each review produces numbered findings. The highest-severity findings block production rollout; how the others
 are handled is a decision for the owner.
 
 ### 6. A beta on real communities
@@ -134,10 +133,13 @@ by the owner before the 100-account reference run can be written.
 
 ### 8. Publication
 
-**Partly complete.** Public source is available. Before stable 1.0.0 is published:
+**Stable publication requested.** Prepare 1.0.0 through the full automated workflow and verify
+the actual downloadable assets before publishing it as latest. Remaining host/device, review,
+capacity and beta work stays visible in its release notes. Publication status and remaining work:
 
 - The public repository, MIT licence, contribution terms and private reporting intake are configured.
-- Private vulnerability reporting is made live and tested with a report, so [SECURITY.md](SECURITY.md) can state it.
+- Private vulnerability reporting is enabled. An external report delivery test remains pending
+  before wider rollout; configuration alone does not establish delivery.
 - Hosted release artifacts receive GitHub/Sigstore build-provenance attestations. Platform code signing
   and notarization identities remain unconfigured; provenance is separate from those signatures.
 - A release policy and changelog process are in place, with [CHANGELOG.md](CHANGELOG.md) as the record.

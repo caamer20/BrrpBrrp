@@ -1,11 +1,9 @@
 # Compatibility
 
 What BrrpBrrp promises to keep working, what it reserves the right to change, and which
-versions of its data it accepts. Version 1.0 is where this becomes a commitment; until
-then every statement here is the current state of a development tree, and the plan's own
-compatibility section — "Data migrations and compatibility" in the v1 implementation plan,
-which ships in the source package but not beside a binary — is the contract this document
-reports on.
+versions of its data it accepts. This is the compatibility contract for version 1.0.0.
+Production acceptance and distribution limitations are recorded separately in
+[known limitations](known-limitations.md).
 
 ## The four numbers
 
@@ -14,7 +12,7 @@ will work and finds out afterwards that it will not.
 
 | Number | Value in this tree | Where it is defined | What it means |
 | --- | --- | --- | --- |
-| Application version | `1.0.0-rc.1` | `internal/app/version.go` | Which build this is. Not a compatibility statement by itself. |
+| Application version | `1.0.0` | `internal/app/version.go` | Which build this is. Not a compatibility statement by itself. |
 | Database schema | 25 | `internal/db/migrations.go`, derived from the migration registry | What the database contains. Forward-only, and a binary refuses a database from a newer schema. |
 | Backup format | 2 | `internal/backup/manifest.go` | What a backup archive looks like. Read by the restore, verify and production-check paths. |
 | Websocket protocol | 1, minimum 1 | `internal/ws/protocol.go` | Whether an open client and this server can understand each other's frames. |

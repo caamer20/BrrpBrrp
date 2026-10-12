@@ -57,9 +57,10 @@ automated CI downloads, checksums and provenance. It counts asset downloads rath
 than installations or unique people. Shields refreshes the badge through GitHub's API;
 its cache can delay changes, and an upstream outage can make it unavailable.
 
-The badge requires no scheduled workflow, write token, generated source changes or
-separate branch. `main` is the only permanent branch. The former filtered ZIP counter
-and its `badges` branch have been retired; fixture assets retain their original identities.
+The live badge requires no scheduled workflow, write token or generated source changes.
+The owner retains two permanent branches: `main` for the application and `badges` for a
+dated SVG/README snapshot only. No workflow updates that snapshot; the README uses the live
+Shields count. Fixture assets retain their original identities.
 
 ## CI fixtures
 
@@ -87,7 +88,7 @@ candidate package directory. Missing or mismatched bytes fail the job.
 1. Commit the version, notes in `docs/releases/`, and notices/SBOM through a reviewed PR.
    The Go application, frontend manifest and release helper must agree on the version.
 2. Run **Actions → Release qualification → Run workflow** on `main`. Leave **Create a draft
-   prerelease** unchecked to qualify archives, or check it to prepare a draft after every gate passes.
+   release** unchecked to qualify archives, or check it to prepare a draft after every gate passes.
 3. Packaging waits for all required job families, including CodeQL analysis and an exact-revision
    SARIF findings gate that blocks unreviewed high/critical security findings. Later branch fixes,
    GitHub dismissals and SARIF suppressions do not waive this gate. Individually reviewed false positives
@@ -98,11 +99,15 @@ candidate package directory. Missing or mismatched bytes fail the job.
 4. Package generation signs GitHub/Sigstore build provenance on `main`. The optional draft job
    downloads only this run's artifacts, verifies both checksum manifests and the signed archive
    provenance against the exact source commit, workflow and main ref, then
-   creates a **draft prerelease** at the exact tested source commit. It refuses an existing version
+   creates a **draft release** at the exact tested source commit. A version with a prerelease
+   suffix (such as `-rc.1`) sets GitHub's prerelease flag; `1.0.0` does not. Drafts never become
+   the latest release automatically. It refuses an existing version
    release or tag. Review notes, files, checksums and real-host evidence before publishing.
    After verifying the draft, create the annotated version tag at that qualified commit and
    confirm its peeled SHA. Protect version tags against updates/deletion before publishing
-   the candidate as a prerelease. A stable release still requires the remaining production gates.
+   the release. For an approved stable version, explicitly publish with `--prerelease=false`
+   and `--latest=true`; publish suffixed versions as prereleases. The owner requested stable
+   1.0.0 publication with outstanding production qualification disclosed in its notes.
 5. Follow the [production runbook](production-readiness.md). A green automated run does not supply
    independent reviews, real-host/device qualification, capacity measurement or community beta evidence.
 

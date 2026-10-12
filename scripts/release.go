@@ -20,7 +20,7 @@ import (
 func main() {
 	supported := releaseTargets()
 	targets := flag.String("targets", strings.Join(supported, ","), "comma-separated supported OS/architecture targets")
-	version := flag.String("version", "1.0.0-rc.1", "release version")
+	version := flag.String("version", "1.0.0", "release version")
 	noticesOnly := flag.String("notices", "", "write dependency notices to this file without building packages")
 	sourceList := flag.Bool("source-list", false, "print the source-package contents (one path per line) without building anything")
 	nativeList := flag.String("native-list", "", "print the documents a native package for this GOOS ships (one path per line) without building anything")

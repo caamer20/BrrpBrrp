@@ -1,5 +1,10 @@
 # BrrpBrrp — README for 1.0.0 (draft)
 
+> **Historical planning draft.** Superseded by the [1.0.0 release record](1.0.0.md) and
+> the current [README](../../README.md). Statements below describe the earlier planning checkpoint,
+> not current publication status or completed qualification.
+
+
 **Draft.** This is the front page the project intends to publish with 1.0.0. It is not the
 current README — [`README.md`](../../README.md) is, and it stays in place until 1.0.0 is
 released. Nothing here has been published, and the version it describes does not exist yet.

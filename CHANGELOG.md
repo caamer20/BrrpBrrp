@@ -1,13 +1,24 @@
 # Changelog
 
 Dated changes to BrrpBrrp, newest first. Each entry is a summary of a record under
-[docs/releases](docs/releases/1.0.0-rc.1.md): read that record for what was measured,
+[docs/releases](docs/releases/1.0.0.md): read that record for what was measured,
 what was not, and what the checkpoint does not prove. Dates are the ones the records state;
 where a record states none, none is given here either.
 
 The dated entries preserve development checkpoints. Publication status and exact-build
 qualification belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases).
 No checkpoint alone marks a production gate passed; read its known issues and verification scope.
+
+## 1.0.0 — 12 October 2026
+
+- Align the executable, frontend/lockfile and archive builder on version 1.0.0.
+- Prepare stable draft metadata for versions without a prerelease suffix; publication remains
+  a deliberate step after exact-source qualification, checksums and provenance verification.
+- Publish the stable channel at the owner's request, with the remaining signing, host/device,
+  independent-review, capacity and beta work disclosed. No application behavior or schema changes
+  are introduced relative to the qualified RC.
+- Keep `main` and the badge-only `badges` snapshot branch; the live download count needs no job.
+- Exact published source, hosted results and asset identities are in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0).
 
 ## Release toolchain hardening — 12 October 2026
 
@@ -134,6 +145,7 @@ Community controls and dependable recovery.
 
 | Version | Database | Backup format | Websocket protocol |
 | --- | --- | --- | --- |
+| 1.0.0 | 25 | 2 | 1 |
 | 1.0.0-rc.1 | 25 | 2 | 1 |
 | 0.4.0-alpha.9 | 25 | 2 | 1 |
 | 0.4.0-alpha.8 | 25 | 2 | — |
@@ -148,8 +160,9 @@ disagree with this table: `internal/db/migrations.go`, `internal/backup/manifest
 `internal/ws/protocol.go` are the sources of truth, and `make check` compares the ones the
 documentation states.
 
-## Not yet released
+## Publication record
 
-1.0.0 has no entry, because it has not been built, packaged or qualified. The draft notes
-are in [docs/releases/1.0.0-notes-draft.md](docs/releases/1.0.0-notes-draft.md) and nothing
-in them is a claim about a released artifact.
+
+
+The stable release record is [docs/releases/1.0.0.md](docs/releases/1.0.0.md).
+Historical planning drafts remain archived and do not supply qualification evidence.

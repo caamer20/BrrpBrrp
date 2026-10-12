@@ -1,24 +1,40 @@
 # Project and deployment readiness
 
-Assessment date: **12 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
+Assessment date: **12 October 2026**. BrrpBrrp is at **1.0.0**, schema 25. Its planned
 feature families are implemented, and a public GitHub repository is configured for
-cross-platform qualification. It is ready for structured candidate testing; it is not yet
-qualified for a production launch.
+cross-platform qualification. The owner requested stable release publication; production
+deployment sign-off still requires the host/device, signing, review, capacity and beta work below.
 
 ## Current assessment
 
 | Area | Assessment | Evidence or remaining work |
 | --- | --- | --- |
-| Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
+| Product scope | Stable 1.0.0 feature set | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Public development repository | Publication audit, reporting contacts/intake, policies, templates, review ownership and dependency updates are present. |
-| Automated verification | Public CI passed; qualification gates active | Patched Go 1.27.2 passed native/security/race/recovery/rollback/Docker checks, three Chromium modes and WebKit. Seven installer false positives are individually reviewed. Linux Firefox now has an explicit silent audio backend, verified with real transport journeys. Final frozen-source results belong in GitHub Releases; real-host testing remains open. |
+| Automated verification | Preceding RC passed automated qualification; every version needs its own run | The RC passed all 18 jobs, including Firefox transport, 142 browser executions and 354 recovery/rollback checks. Full-disk Linux was skipped. Exact 1.0.0 results are in GitHub Releases; real-host testing remains open. |
 | Upgrade fixtures | Connected for CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
-| Distribution | Publication requires full qualification | Six native targets plus source/checksums are defined. Exact tested revision, run, assets and publication status belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). No registry image is published. |
+| Distribution | Stable channel requested; publication requires full automated qualification | Six native targets plus source/checksums are defined. Exact tested revision, run, assets and publication status belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). No registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
 | Linux deployment | Partly verified | Hosted Docker build/lifecycle passed. Systemd lifecycle, real deployment, external networks and off-host recovery need target-host evidence. |
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
 | Security, privacy and accessibility | Reviews outstanding | Automated checks are useful evidence; independent reviews remain open. |
 | Community beta and soak | Not started | The roadmap requires real community use and observation of a frozen candidate. |
+
+## Completed RC and stable release preparation on 12 October
+
+The [RC qualification](https://github.com/caamer20/BrrpBrrp/actions/runs/38244004395), at
+source `7275eb9a320269f4a47651d3d820971fb78cbe6e`, completed all 18 jobs successfully.
+It included 142 browser executions and 354 recovery/rollback checks. The separate Linux
+full-disk rehearsal skipped because loop mounts were unavailable; it was not exercised.
+All six native archives and the source archive were downloaded and verified, along with
+checksums, complete package inventories, build identities and GitHub/Sigstore provenance.
+The actual macOS x64 package passed setup/backup/restore/locking/UI/health/shutdown checks.
+
+Version 1.0.0 aligns the version metadata and selects stable draft status. It requires fresh
+whole-source CodeQL review, all automated gates and verification of its newly built assets.
+The completed exact-version results and publication status are recorded in
+[GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0). This is a stable
+publication decision, not a claim that the outstanding production acceptance has been completed.
 
 ## Toolchain repair on 12 October
 
@@ -79,7 +95,8 @@ is required before release publication, with its actual result recorded on GitHu
 - Routine CI now shares one Linux frontend/static job and native Go coverage on three fixed OS labels.
   Full qualification retains its promotion dependencies and adds CodeQL, shipped-default browser
   coverage and the WebKit core subset. At this checkpoint the badge used a separate branch;
-  the [current counter](github-setup.md#readme-download-count) requires no extra branch or workflow.
+  the [current counter](github-setup.md#readme-download-count) requires no updater workflow;
+  the owner also retains a badge-only snapshot branch.
 - All 406 frontend tests passed locally. The new shipped-default restricted-channel journey and its
   nine setup dependencies passed (10 total). It exposed and regresses an access-inspector confirmation
   that was immediately cleared during refresh; that UI defect is fixed. Individual grants, outsider
@@ -187,7 +204,7 @@ kept under `dist/candidates/9d7cb4d7f2d4/` in the development checkout. They are
 excluded from Git, and are not a published or hosted-qualified release. This assessment's later
 documentation changes do not alter that candidate's source revision.
 
-## Next steps in order
+## Next steps before production rollout
 
 1. **Establish a green candidate.** Finish local checks, resolve hosted failures and retain the
    source revision, run URL and artifacts. Keep automated failures blocking package preparation.
@@ -199,10 +216,10 @@ documentation changes do not alter that candidate's source revision.
 4. **Prove operation outside one machine.** Trusted HTTPS, two-network voice with relay fallback,
    screen sharing, real phone/tablet behavior, push, monitoring and off-host recovery need recorded evidence.
 5. **Complete reviews and the beta.** Resolve blocking independent security/privacy/accessibility
-   findings, run the community beta and observe a frozen candidate before stable publication.
-6. **Publish the tested candidate deliberately.** Public source and private reporting are available.
-   Verify an external test report reaches the maintainer, review the draft candidate, and publish a
-   prerelease for beta use before promoting a fully qualified stable build.
+   findings, run the community beta and observe a frozen candidate before production sign-off.
+6. **Retain exact-version publication evidence.** Verify the actual release assets, provenance,
+   protected tag and source. Keep the stable release notes explicit about the remaining acceptance;
+   verify an external private report reaches the maintainer before wider rollout.
 
 The detailed release gates remain in [ROADMAP.md](../ROADMAP.md) and the
 [production runbook](production-readiness.md). This assessment records readiness; it does not

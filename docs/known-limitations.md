@@ -5,9 +5,9 @@ the release note: a list of what to expect rather than what to hope for. Read it
 [acceptance.md](acceptance.md), which records what has been measured on this tree, and
 [compatibility.md](compatibility.md), which states what may change.
 
-This describes the release candidate that carries it (`1.0.0-rc.1`); its record is
-[releases/1.0.0-rc.1.md](releases/1.0.0-rc.1.md), and the draft notes for the final release
-are in [releases/1.0.0-notes-draft.md](releases/1.0.0-notes-draft.md).
+This describes version `1.0.0`; its record is [releases/1.0.0.md](releases/1.0.0.md).
+The owner requested stable publication with the remaining qualification work disclosed.
+A stable release label does not supply the missing host, device, signing or independent-review evidence.
 
 ## Bounds built into the product
 
@@ -118,9 +118,9 @@ is not evidence that it works.
 | Platform | State |
 | --- | --- |
 | macOS, native (darwin/amd64) | Built and run here: the Go suites, the browser suites and the recovery rehearsals were all executed on this host. |
-| Linux, native | Cross-compiled; hosted Go qualification is running. Native systemd installation, physical networks and off-host recovery remain unqualified. |
-| Windows, native | Cross-compiled; hosted Go qualification is running. Installation, service lifecycle, ACLs, tray and the Tailscale deployment remain unqualified. |
+| Linux, native | Hosted native Go suites passed for the preceding RC; exact 1.0.0 results are recorded on GitHub Releases. Native systemd installation, physical networks and off-host recovery remain unqualified. |
+| Windows, native | Hosted native Go suites passed for the preceding RC; exact 1.0.0 results are recorded on GitHub Releases. Installation, service lifecycle, ACLs, tray and the Tailscale deployment remain unqualified. |
 | Docker / any container runtime | Hosted x64 image build and container lifecycle/persistence checks passed on 8 October, and the ARM64 image built. Real host operation, ARM64 runtime, external media networks and off-host recovery remain unqualified. See [deployment readiness](launch-readiness.md). |
 | Physical devices | None. No phone, tablet or second machine has been used: touch, on-screen keyboards, background/resume, push notifications and certificate trust are all unqualified. |
 | Second host / off-host storage | None. Both-host recovery, an off-host backup destination and a restore on different hardware remain qualification work. |
-| Independent reviews | Not entered. Security, privacy and accessibility reviews are the owner's, and the gate flip waits on them. |
+| Independent reviews | Not entered. Security, privacy and accessibility reviews remain outstanding production acceptance; the conversation features are already enabled. |

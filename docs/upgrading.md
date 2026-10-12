@@ -31,7 +31,7 @@ serving people again.
 ## The upgrade, step by step
 
 1. **Read the record** for the version you are moving to, under
-   [docs/releases](releases/1.0.0-rc.1.md). Its "Known issues" and upgrade sections state
+   [docs/releases](releases/1.0.0.md). Its "Known issues" and upgrade sections state
    what changed and what the checkpoint does not prove.
 2. **Stop writing.** Scheduled jobs, uploads and browser sessions should not be running.
 3. **Take the snapshot** with the executable currently in use, including attachments, and
@@ -64,7 +64,7 @@ its own database schema:
 | 0.4.0-alpha.8 | 25 |
 | 0.4.0-alpha.9 | 25 |
 | 1.0.0-rc.1 | 25 |
-| 1.0.0 | not built |
+| 1.0.0 | 25 |
 
 The path from an alpha installation to 1.0.0 is a supported forward upgrade, one step at a
 time if you want the rollback points, in the order above. Two practical notes:
@@ -77,9 +77,10 @@ time if you want the rollback points, in the order above. Two practical notes:
 - **Keep the alpha executable with its snapshot.** A later alpha does not read an earlier
   snapshot's schema, and an earlier alpha does not read a later one's.
 
-**1.0.0 is not released.** Neither the archives, the container image nor the release notes
-exist as anything but a draft, and no upgrade *to* 1.0.0 has been performed. This section
-describes the path this project supports; it is not a record of one that was walked.
+**1.0.0 uses the same schema as 1.0.0-rc.1.** No new database migration is introduced.
+Its exact-source automated recovery, historical upgrade and rollback results are recorded in
+[GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0). Clean-host service
+updates and off-host restoration still need operator acceptance. No registry image is published.
 
 ## What an upgrade does not need
 
