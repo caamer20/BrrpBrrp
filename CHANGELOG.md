@@ -18,6 +18,8 @@ No checkpoint alone marks a production gate passed; read its known issues and ve
   independent-review, capacity and beta work disclosed. No application behavior or schema changes
   are introduced relative to the qualified RC.
 - Keep `main` and the badge-only `badges` snapshot branch; the live download count needs no job.
+- Synchronize the mute journey with the opened channel's real read receipt and retain a
+  nonzero unread control, so its before/after comparison isolates the mute operation.
 - Exact published source, hosted results and asset identities are in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0).
 
 ## Release toolchain hardening — 12 October 2026
