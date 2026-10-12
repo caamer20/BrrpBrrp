@@ -19,6 +19,8 @@ No checkpoint alone marks a production gate passed; read its known issues and ve
 - Isolate Chromium launch flags and optional channels from WebKit/Firefox qualification,
   and pass Firefox's audio preference through its supported launch options. A regression
   checks the projects after Playwright resolves inherited configuration.
+- Use the standard release-asset download badge and remove its scheduled workflow,
+  allowing `main` to remain the only permanent branch without daily source changes.
 - Fresh complete-source review and full qualification remain required before publication.
 
 ## Release preparation — 11 October 2026
