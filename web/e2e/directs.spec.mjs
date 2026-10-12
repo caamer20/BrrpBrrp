@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 import {
   assignOnly,
   captureGeneratedAudio,
@@ -921,7 +922,7 @@ test('a recipient can report a request and block without accepting it', async ({
   // Unique per run: the projects share one server, and a name reused from an
   // earlier journey would collide on the second pass rather than fail honestly.
   // Usernames are limited to 32 characters, so the run tag is deliberately short.
-  const tag = Math.random().toString(36).slice(2, 8);
+  const tag = randomBytes(4).toString('hex');
   const recipient = { username: `p10_rec_${tag}`, password: 'a p10r recipient passphrase' };
   const sender = { username: `p10_snd_${tag}`, password: 'a p10r sender passphrase' };
   const outsider = { username: `p10_out_${tag}`, password: 'a p10r outsider passphrase' };

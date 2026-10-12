@@ -340,7 +340,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
 	rows, err := tx.QueryContext(r.Context(), `SELECT a.id,a.source_kind,a.source_id,u.username,a.created_at,a.acknowledged_at,a.conversation_id
         FROM account_activity a LEFT JOIN users u ON u.id=a.actor_id
         WHERE a.user_id=? AND a.id<? AND a.conversation_id<>''
-          AND (`+kindIs(kind)+`) AND (`+unacknowledgedIs(unacknowledgedOnly)+`)
+          AND (?='' OR a.source_kind=?) AND (?=0 OR a.acknowledged_at='')
           AND NOT EXISTS(SELECT 1 FROM user_blocks b
                         WHERE (b.blocker_id=a.user_id AND b.blocked_id=a.actor_id)
                            OR (b.blocker_id=a.actor_id AND b.blocked_id=a.user_id))
@@ -353,7 +353,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request, user db.Us
                                   AND cu.is_deleted=0 AND cu.is_deactivated=0 AND cu.is_banned=0)
                END)
         ORDER BY a.id DESC LIMIT ?`,
-		principal.UserID, before, activityPageLimit+1)
+		principal.UserID, before, kind, kind, boolToInt(unacknowledgedOnly), activityPageLimit+1)
 	if err != nil {
 		s.failed(w, err)
 		return
@@ -538,20 +538,6 @@ func (s *Server) activityCounts(userID string) struct{ outstanding, unacknowledg
             AND u.is_deleted=0 AND u.is_deactivated=0 AND u.is_banned=0)`, userID, userID).
 		Scan(&counts.unacknowledged, &counts.outstanding)
 	return counts
-}
-
-func kindIs(kind string) string {
-	if kind == "" {
-		return "1=1"
-	}
-	return "a.source_kind='" + kind + "'"
-}
-
-func unacknowledgedIs(only bool) string {
-	if only {
-		return "a.acknowledged_at=''"
-	}
-	return "1=1"
 }
 
 // pruneActivity reclaims in bounded batches: acknowledged rows first, on the

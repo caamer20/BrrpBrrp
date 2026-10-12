@@ -40,7 +40,7 @@ It is deliberately small in three ways:
 
 It is not end-to-end encrypted, so the operator can read what is stored and hear voice that passes
 through. It is not a public network, a federated system or a hosted service. It has no camera video,
-no recording and no voice history. It is not yet a published, reviewed or measured product; see
+no recording and no voice history. It is a candidate without independent reviews or measured capacity; see
 [Status](#2-status-and-what-has-been-verified).
 
 ---
@@ -48,8 +48,9 @@ no recording and no voice history. It is not yet a published, reviewed or measur
 ## 2. Status and what has been verified
 
 **The current build is `1.0.0-rc.1`, a release candidate, schema 25.** It is the feature set intended
-for version 1.0.0. It has not been published as an application release. The development repository is
-private during qualification, and the project has no code-signing identity
+for version 1.0.0. Publication status and exact-build qualification are recorded on
+[GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). The development repository is
+public, and the project has no native code-signing identity
 and has had **no independent security, privacy or accessibility review**. No beta has happened.
 
 The distinction between *built*, *tested*, *run on a platform* and *reviewed* matters, and the project

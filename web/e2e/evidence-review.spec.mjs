@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 import { OWNER, createAccount, signIn, signInOverApi, test } from './support.mjs';
 
 // The reviewer journey lives in its own file and its own Playwright project, which
@@ -20,7 +21,7 @@ test('a review survives a refresh that lands while it is in flight', async ({ pa
   // Usernames are limited to 32 characters and the projects share one server, so
   // the run tag is short and every account here is distinct: a fixed name would
   // collide on a second pass rather than fail honestly.
-  const tag = Math.random().toString(36).slice(2, 8);
+  const tag = randomBytes(4).toString('hex');
   // Two pairs across three accounts: the queue needs two records with different
   // authors, and the suite already creates many accounts against the server's
   // 100-account cap.

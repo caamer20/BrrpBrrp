@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assessSarif, selectAnalyses } from '../../scripts/check-security-alerts.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  assessSarif,
+  selectAnalyses,
+  findingIdentity,
+  sourceTreeDigest
+} from '../../scripts/check-security-alerts.mjs';
 
 const sha = 'a'.repeat(40);
 const ref = 'refs/heads/main';
@@ -32,10 +41,10 @@ const sarif = (score, extra = {}) => ({
 
 test('clean exact-revision analyses and lower-severity findings pass', () => {
   assert.deepEqual(selectAnalyses(analyses, sha, ref), analyses);
-  assert.deepEqual(assessSarif(sarif('4.3')), { problems: [], findings: 1 });
+  assert.deepEqual(assessSarif(sarif('4.3')), { problems: [], findings: 1, reviewed: 0 });
   const clean = sarif('8.1');
   clean.runs[0].results = [];
-  assert.deepEqual(assessSarif(clean), { problems: [], findings: 0 });
+  assert.deepEqual(assessSarif(clean), { problems: [], findings: 0, reviewed: 0 });
 });
 test('high and critical results block even when suppressed or dismissed elsewhere', () => {
   for (const score of ['7', '8.1', '9', '10'])
@@ -77,7 +86,7 @@ test('GitHub CodeQL query-pack extension rules are checked, including referenced
   ];
   delete extension.runs[0].tool.driver.rules;
   extension.runs[0].results = [];
-  assert.deepEqual(assessSarif(extension), { problems: [], findings: 0 });
+  assert.deepEqual(assessSarif(extension), { problems: [], findings: 0, reviewed: 0 });
   extension.runs[0].results = [{ rule: { index: 0, toolComponent: { index: 0 } } }];
   assert.match(assessSarif(extension).problems.join(';'), /High security finding/);
 });
@@ -112,4 +121,163 @@ test('component names, GUIDs and indices must identify the same unique component
     { rule: { id: 'go/example', toolComponent: { index: 1, name: 'queries', guid: 'two' } } }
   ];
   assert.match(assessSarif(response).problems.join(';'), /Critical security finding/);
+});
+
+function reviewedFixture() {
+  const response = sarif('8.1');
+  const component = response.runs[0].tool.driver;
+  component.semanticVersion = '2.27.2';
+  const result = response.runs[0].results[0];
+  result.partialFingerprints = { primaryLocationLineHash: '0123456789abcdef:1' };
+  result.locations = [
+    {
+      physicalLocation: {
+        artifactLocation: { uri: 'internal/example.go' },
+        region: { startLine: 3, startColumn: 1 }
+      }
+    }
+  ];
+  result.codeFlows = [
+    { threadFlows: [{ locations: [{ location: structuredClone(result.locations[0]) }] }] }
+  ];
+  const sourceDigest = 'c'.repeat(64);
+  const record = {
+    ...findingIdentity(result, component, result.ruleId),
+    disposition: 'false-positive',
+    reason: 'A test-only verified trust-boundary rationale for this exact result.',
+    evidence: ['internal/example.go:3']
+  };
+  return {
+    response,
+    context: {
+      sourceDigest,
+      dispositions: { version: 1, source_digest: sourceDigest, findings: [record] }
+    }
+  };
+}
+
+test('a reviewed false positive must match the complete result and analyzed source identity', () => {
+  const { response, context } = reviewedFixture();
+  assert.deepEqual(assessSarif(response, context), { problems: [], findings: 1, reviewed: 1 });
+});
+
+test('changed analyzed source invalidates reviewed findings without refreshing them', () => {
+  const { response, context } = reviewedFixture();
+  assert.throws(
+    () => assessSarif(response, { ...context, sourceDigest: 'd'.repeat(64) }),
+    /exact analyzed source/
+  );
+});
+
+test('moved, replaced, different-pack and different-flow findings remain blocked', () => {
+  for (const mutate of [
+    (s) => {
+      s.runs[0].results[0].locations[0].physicalLocation.region.startLine++;
+    },
+    (s) => {
+      s.runs[0].results[0].partialFingerprints.primaryLocationLineHash = 'other';
+    },
+    (s) => {
+      s.runs[0].tool.driver.semanticVersion = 'next';
+    },
+    (s) => {
+      s.runs[0].results[0].codeFlows[0].threadFlows[0].locations[0].location.physicalLocation.region
+        .startLine++;
+    },
+    (s) => {
+      s.runs[0].tool.driver.rules[0].id = 'go/unknown';
+      s.runs[0].results[0].ruleId = 'go/unknown';
+    }
+  ]) {
+    const { response, context } = reviewedFixture();
+    mutate(response);
+    assert.ok(assessSarif(response, context).problems.length);
+  }
+});
+
+test('duplicate results cannot consume the same reviewed exception twice', () => {
+  const { response, context } = reviewedFixture();
+  response.runs[0].results.push(structuredClone(response.runs[0].results[0]));
+  assert.throws(() => assessSarif(response, context), /Duplicate finding/);
+});
+
+test('invalid, duplicated or misleading review records fail closed', () => {
+  for (const mutate of [
+    (c) => {
+      c.dispositions.version = 2;
+    },
+    (c) => {
+      c.dispositions.findings[0].disposition = 'accepted-risk';
+    },
+    (c) => {
+      c.dispositions.findings[0].reason = '';
+    },
+    (c) => {
+      c.dispositions.findings[0].component = 1;
+    },
+    (c) => {
+      c.dispositions.findings.push(structuredClone(c.dispositions.findings[0]));
+    },
+    (c) => {
+      c.dispositions.findings[0].path = 'different.go';
+    }
+  ]) {
+    const { response, context } = reviewedFixture();
+    mutate(context);
+    assert.throws(() => assessSarif(response, context), /Invalid|disagree/);
+  }
+});
+
+test('source binding covers embedded SQL and workflow configuration at the exact commit', () => {
+  const root = mkdtempSync(join(tmpdir(), 'brrp-source-review-'));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  const commit = () => {
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=Source review test',
+      '-c',
+      'user.email=test@example.invalid',
+      'commit',
+      '-qm',
+      'fixture'
+    );
+    return git('rev-parse', 'HEAD');
+  };
+  try {
+    git('init', '-q', '--object-format=sha1');
+    for (const folder of ['internal/db', '.github/workflows', 'scripts'])
+      mkdirSync(join(root, folder), { recursive: true });
+    writeFileSync(join(root, 'internal/db/schema.sql'), 'CREATE TABLE fixture(id TEXT);');
+    writeFileSync(join(root, '.github/workflows/security.yml'), 'name: CodeQL');
+    writeFileSync(join(root, 'scripts/codeql-reviewed-findings.json'), '{}');
+    const first = commit();
+    const original = sourceTreeDigest(first, root);
+    writeFileSync(join(root, 'scripts/codeql-reviewed-findings.json'), '{"review":"updated"}');
+    assert.equal(sourceTreeDigest(commit(), root), original);
+    writeFileSync(join(root, 'internal/db/schema.sql'), 'CREATE TABLE changed(id TEXT);');
+    const sql = commit();
+    const changed = sourceTreeDigest(sql, root);
+    assert.notEqual(changed, original);
+    assert.equal(sourceTreeDigest(first, root), original);
+    writeFileSync(
+      join(root, '.github/workflows/security.yml'),
+      'name: Different scanner configuration'
+    );
+    assert.notEqual(sourceTreeDigest(commit(), root), changed);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('URI bases participate in identity and unresolved or cyclic bases fail closed', () => {
+  const { response, context } = reviewedFixture();
+  const run = response.runs[0];
+  run.results[0].locations[0].physicalLocation.artifactLocation.uriBaseId = 'SOURCE';
+  run.originalUriBaseIds = { SOURCE: { uri: 'file:///different/' } };
+  assert.ok(assessSarif(response, context).problems.length);
+  delete run.originalUriBaseIds.SOURCE;
+  assert.throws(() => assessSarif(response, context), /URI base/);
+  run.originalUriBaseIds.SOURCE = { uri: 'file:///different/', uriBaseId: 'SOURCE' };
+  assert.throws(() => assessSarif(response, context), /URI base/);
 });

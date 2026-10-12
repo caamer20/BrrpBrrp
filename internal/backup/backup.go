@@ -280,6 +280,9 @@ func Restore(ctx context.Context, config app.Config, source string) error {
 	}
 	defer os.RemoveAll(stage)
 	for _, entry := range archive.File {
+		if !filepath.IsLocal(entry.Name) {
+			return errors.New("archive entry must have a local relative path")
+		}
 		limit, err := entryLimit(entry.Name)
 		if err != nil {
 			return err
