@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const targets = JSON.parse(
@@ -101,9 +102,12 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   try {
+    const { values } = parseArgs({
+      options: { output: { type: "string", default: resolve(root, "docs/assets/downloads.svg") } },
+    });
     const total = updateBadge({
       repository: process.env.GITHUB_REPOSITORY,
-      output: resolve(root, "docs/assets/downloads.svg"),
+      output: resolve(values.output),
     });
     console.log(`Release archive downloads: ${total}`);
   } catch (error) {

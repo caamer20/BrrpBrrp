@@ -1,4 +1,4 @@
-name: Check
+name: Release qualification
 on:
   workflow_dispatch:
     inputs:
@@ -13,39 +13,46 @@ concurrency:
   cancel-in-progress: false
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
+    uses: ./.github/workflows/ci.yml
+  security:
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      security-events: write
+  security-review:
+    if: github.ref == 'refs/heads/main'
+    needs: security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: ./.github/actions/setup
-      - name: Frontend checks
-        working-directory: web
-        run: |
-          npm run check
-          npm test
-          npm run format:check
-      - name: Static audits
-        run: node scripts/ci-audit.mjs
-      - run: go build ./cmd/brrpbrrp
-      - name: Go tests on this platform
-        run: go test -count=1 -timeout 45m ./...
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Require tested analysis results without high or critical findings
+        run: node scripts/check-security-alerts.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_REF: ${{ github.ref }}
   race:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         shard: ["1/4", "2/4", "3/4", "4/4", "rest"]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - name: The shard split is a partition before it runs
         run: node scripts/race-shard.mjs --self-test
@@ -58,16 +65,18 @@ jobs:
           fi
   browser:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - run: npm audit --audit-level=moderate
         working-directory: web
       - name: Install Playwright browsers and system dependencies
         working-directory: web
-        run: npx playwright install --with-deps chromium firefox
+        run: npx playwright install --with-deps chromium firefox webkit
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: mkdir -p dist && go build -o dist/brrpbrrp-e2e ./cmd/brrpbrrp
       - run: node scripts/check-browser-steps.mjs --self-test
@@ -90,6 +99,26 @@ jobs:
           npm run test:e2e 2>&1 | tee browser-private.log
           test -d test-results && mv test-results test-results-private || true
           grep -q '\[directs\]' browser-private.log || { echo 'FAIL: the opted-in run never executed the directs project'; exit 1; }
+      - name: Browser journeys (shipped conversation defaults)
+        working-directory: web
+        shell: bash
+        env:
+          BRRP_E2E_SHIPPED_DEFAULTS: '1'
+          PLAYWRIGHT_HTML_OUTPUT_DIR: report-shipped
+        run: |
+          npm run test:e2e 2>&1 | tee browser-shipped.log
+          test -d test-results && mv test-results test-results-shipped || true
+          grep -q '\[restricted\]' browser-shipped.log || { echo 'FAIL: the shipped-default run omitted restricted channels'; exit 1; }
+          grep -q '\[directs\]' browser-shipped.log || { echo 'FAIL: the shipped-default run omitted private conversations'; exit 1; }
+      - name: Browser journeys (WebKit engine)
+        working-directory: web
+        shell: bash
+        env:
+          BRRP_E2E_WEBKIT: '1'
+          PLAYWRIGHT_HTML_OUTPUT_DIR: report-webkit
+        run: |
+          npm run test:e2e -- --project=release-webkit 2>&1 | tee browser-webkit.log
+          grep -q '\[release-webkit\]' browser-webkit.log || { echo 'FAIL: the WebKit project did not execute'; exit 1; }
       - name: Browser journeys (Firefox engine)
         working-directory: web
         shell: bash
@@ -99,12 +128,18 @@ jobs:
         run: |
           npm run test:e2e -- --project=voice-firefox 2>&1 | tee browser-firefox.log
           grep -q '\[voice-firefox\]' browser-firefox.log || { echo 'FAIL: the engine run never executed the voice-firefox project'; exit 1; }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: browser-report
+          retention-days: 7
           if-no-files-found: warn
           path: |
+            web/report-shipped/
+            web/browser-shipped.log
+            web/test-results-shipped/
+            web/report-webkit/
+            web/browser-webkit.log
             web/report-default/
             web/report-private/
             web/browser-default.log
@@ -118,10 +153,12 @@ jobs:
     uses: ./.github/workflows/docker.yml
   recovery:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Build the candidate
         run: mkdir -p dist check-results && go build -trimpath -ldflags="-s -w" -o dist/brrpbrrp-recovery ./cmd/brrpbrrp
@@ -140,7 +177,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          test -n "$CI_BASELINE_TAG" || { echo 'Set BRRP_CI_BASELINE_TAG to the private CI fixture release.' >&2; exit 1; }
+          test -n "$CI_BASELINE_TAG" || { echo 'Set BRRP_CI_BASELINE_TAG to the archival CI fixture release.' >&2; exit 1; }
           mkdir -p /tmp/brrp-s13 && rm -rf /tmp/brrp-s13/*
           gh release download "$CI_BASELINE_TAG" --pattern brrpbrrp-schema13-linux-amd64.zip --dir /tmp/brrp-s13
           digest="$(node -p 'require("./scripts/schema13-baselines.json")["linux-x64"].archive_sha256')"
@@ -167,17 +204,21 @@ jobs:
           go build -trimpath -o /tmp/brrp-source-built ./cmd/brrpbrrp
           cd "$GITHUB_WORKSPACE"
           node scripts/check-package.mjs /tmp/brrp-source-built
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
           name: recovery-reports
+          retention-days: 14
           path: check-results/*.json
   rollback:
     if: github.event_name == 'workflow_dispatch'
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Build the candidate
         run: mkdir -p dist check-results && go build -trimpath -ldflags="-s -w" -o dist/brrpbrrp-recovery ./cmd/brrpbrrp
@@ -188,7 +229,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          test -n "$CI_BASELINE_TAG" || { echo 'Set BRRP_CI_BASELINE_TAG to the private CI fixture release.' >&2; exit 1; }
+          test -n "$CI_BASELINE_TAG" || { echo 'Set BRRP_CI_BASELINE_TAG to the archival CI fixture release.' >&2; exit 1; }
           mkdir -p /tmp/brrp-baselines
           gh release download "$CI_BASELINE_TAG" --pattern 'brrpbrrp-0.4.0-alpha.*-linux-amd64.zip' --dir /tmp/brrp-baselines
           node scripts/fetch-baseline-release.mjs --self-test
@@ -198,41 +239,68 @@ jobs:
         run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release /tmp/brrp-verified-baselines/brrpbrrp-0.4.0-alpha.5-linux-amd64.zip --report check-results/rollback-alpha5.json
       - name: Upgrade/rollback against the legacy baseline
         run: node scripts/upgrade-rollback.mjs --binary "$(pwd)/dist/brrpbrrp-recovery" --old-release /tmp/brrp-verified-baselines/brrpbrrp-0.4.0-alpha.3-linux-amd64.zip --report check-results/rollback-alpha3.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: rollback-reports
+          retention-days: 14
           path: check-results/*.json
   # Only full qualification can prepare release archives.
   packages:
-    if: github.event_name == 'workflow_dispatch'
-    needs: [test, race, browser, docker, recovery, rollback]
-    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [test, security, security-review, race, browser, docker, recovery, rollback]
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - run: go mod download
       - run: go run scripts/release.go
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Sign build provenance
+        id: provenance
+        if: github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          create-storage-record: false
+          subject-path: |
+            dist/releases/*
+            dist/brrpbrrp-docker-source-*.zip
+            dist/DOCKER-SOURCE-SHA256SUMS
+      - name: Include the signed provenance bundle
+        if: github.ref == 'refs/heads/main'
+        run: cp "$PROVENANCE_BUNDLE" dist/releases/PROVENANCE.json
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: brrpbrrp-native-packages
+          retention-days: 14
           path: dist/releases/*
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: brrpbrrp-docker-source
+          retention-days: 14
           path: |
             dist/brrpbrrp-docker-source-*.zip
             dist/DOCKER-SOURCE-SHA256SUMS
   release-draft:
     if: github.event_name == 'workflow_dispatch' && inputs.prepare_release && github.ref == 'refs/heads/main'
     needs: packages
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
+      attestations: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: brrpbrrp-native-packages
@@ -247,10 +315,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ github.sha }}
           GH_REPO: ${{ github.repository }}
+          QUALIFICATION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cd release-assets
           sha256sum -c SHA256SUMS
           sha256sum -c DOCKER-SOURCE-SHA256SUMS
+          for archive in *.zip; do
+            gh attestation verify "$archive" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/check.yml" \
+              --source-digest "$RELEASE_COMMIT" --source-ref refs/heads/main
+          done
           cd ..
           version="$(node -p 'require("./web/package.json").version')"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || { echo 'Invalid release version'; exit 1; }
@@ -265,6 +339,8 @@ jobs:
             echo 'A release with this version already exists. Review it or choose a new version.' >&2
             exit 1
           fi
+          cp "$notes" "$RUNNER_TEMP/brrpbrrp-release-notes.md"
+          printf '\n## Automated qualification\n\nTested source: %s\n\nRun: %s\n\nAll required automated job families passed before these assets were prepared. Real-host, independent review, capacity and beta qualification remain separate.\n' "$RELEASE_COMMIT" "$QUALIFICATION_URL" >> "$RUNNER_TEMP/brrpbrrp-release-notes.md"
           gh release create "v$version" release-assets/* \
             --target "$RELEASE_COMMIT" --title "BrrpBrrp $version" \
-            --notes-file "$notes" --draft --prerelease --latest=false
+            --notes-file "$RUNNER_TEMP/brrpbrrp-release-notes.md" --draft --prerelease --latest=false

@@ -97,6 +97,9 @@ export default defineConfig({
       : []),
     { name: 'authority', testMatch: 'authority.spec.mjs', dependencies: ['release'] },
     { name: 'privacy', testMatch: 'privacy.spec.mjs', dependencies: ['release'] },
+    ...(process.env.BRRP_E2E_RESTRICTED_CHANNELS === '1'
+      ? [{ name: 'restricted', testMatch: 'restricted.spec.mjs', dependencies: ['release'] }]
+      : []),
     ...(process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1'
       ? [
           { name: 'directs', testMatch: 'directs.spec.mjs', dependencies: ['release'] },

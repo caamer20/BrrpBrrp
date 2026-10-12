@@ -64,5 +64,5 @@ everyone, published on GitHub.
 - Decisions D-15 (signing, repository and registry identities) and the rest of WP-01
   remain open. The license decision does not create a repository, a signing identity,
   a private security intake or a published release; those still need owner-controlled
-  destinations, and [SECURITY.md](../../SECURITY.md) says plainly that its channel is
-  not live yet.
+  destinations. The repository and private security intake were subsequently configured;
+  current status is recorded in [deployment readiness](../launch-readiness.md).

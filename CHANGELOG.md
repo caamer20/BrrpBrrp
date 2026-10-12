@@ -9,6 +9,16 @@ Every version below is a **local development checkpoint**, not a published relea
 none of them marks a G0–G8 release gate passed. Read the record's "Known issues" section
 before deciding anything on the strength of one.
 
+## Release preparation — 11 October 2026
+
+- Public repository, private security intake and owner-supplied conduct/privacy contact.
+- Efficient contribution CI, CodeQL, historical secret scanning and fixed standard runner labels.
+- Shipped-default restricted-channel browser coverage and WebKit core qualification.
+- Fixed the access inspector clearing its own successful-save confirmation.
+- Protected-main-compatible download badge branch, current SHA-pinned Actions, artifact retention
+  and signed build-provenance verification before draft release creation.
+- Stable production qualification remains open; see deployment readiness.
+
 ## 1.0.0-rc.1 — 6 October 2026
 
 The first release candidate for 1.0.0: the intended feature set, not yet a release.

@@ -4,10 +4,9 @@ Thank you for contributing to BrrpBrrp. This agreement lets the project accept y
 contribution while keeping its licensing consistent for everyone who uses it.
 
 **Status:** This is the agreement the project asks contributors to accept. It is written
-in plain language for that purpose and is not legal advice; the owner should have it
-reviewed against the chosen jurisdiction before the public repository opens, and should
-decide whether signatures are collected by hand or through a signing service (see
-[How to sign](#how-to-sign)).
+in plain language for that purpose and is not legal advice. Legal review against the chosen
+jurisdiction remains outstanding. Signatures are recorded manually using
+[How to sign](#how-to-sign); no signing service is configured.
 
 ## 1. Definitions
 

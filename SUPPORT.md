@@ -1,9 +1,9 @@
 # Support policy
 
-**Draft.** The policy below is what the project intends to offer at 1.0.0. It is written
-before 1.0.0 exists and before any support channel has been opened, so it describes an
-intention rather than a commitment that has been tested against real traffic. Anything
-still a decision of the project owner's is marked as such rather than guessed at.
+Community support is best-effort through
+[GitHub issues](https://github.com/caamer20/BrrpBrrp/issues). The current version is a
+release candidate; production qualification and independent reviews are tracked in
+[deployment readiness](docs/launch-readiness.md). There is no paid support or availability guarantee.
 
 ## What this is
 
@@ -32,8 +32,8 @@ That has three consequences worth stating plainly.
 
 | | |
 | --- | --- |
-| The released source and the binaries the project builds from it | Supported at the version released; the previous minor version is supported for the upgrade path described in [upgrading.md](docs/upgrading.md) |
-| The two documented deployments | Windows as a native service, and Linux under Docker, as specified in [host-qualification.md](docs/host-qualification.md) |
+| The current source candidate and latest published application version | Best-effort fixes; older archives are migration fixtures, with upgrade paths described in [upgrading.md](docs/upgrading.md) |
+| The documented deployment paths | Windows service, Linux systemd/Docker and macOS LaunchAgent; runtime qualification remains in [host-qualification.md](docs/host-qualification.md) |
 | The documented configuration keys | Those listed in [deployment.md](docs/deployment.md) and [compatibility.md](docs/compatibility.md) |
 | Restoring a backup the server itself wrote | Supported, format 2, per [deployment.md](docs/deployment.md) |
 | The HTTP and WebSocket interfaces the bundled frontend uses | **Not** a supported API. They are internal and version with the server; see [compatibility.md](docs/compatibility.md) |
@@ -52,7 +52,7 @@ That has three consequences worth stating plainly.
 ## How a problem is reported
 
 Open an issue on the repository with the version (`brrpbrrp version`), the deployment
-(Windows service or Docker), the exact command or step, what happened, what was expected,
+(Windows service, Linux systemd/Docker or macOS LaunchAgent), the exact command or step, what happened, what was expected,
 and whether any data was at risk. Include the operator's log excerpt where it is safe to:
 logs contain usernames and conversation identifiers, so read them before attaching them.
 
@@ -62,12 +62,10 @@ the shape of the data instead — the project will ask for something narrower.
 
 ## Response expectations
 
-**Not yet set.** There is no hosted CI, no released 1.0.0, no support channel and no
-maintainer rota, so any number written here today would be invented. The project owner
-decides, when there is something to support: which channels exist, whether there is a
-security-only response target, and how a report that affects data safety is escalated.
-Until that decision is recorded, treat every report as best-effort by whoever is carrying
-the project at the time.
+Reports are handled by the maintainer as time permits. Documentation and reproducible
+bugs are welcome; security-sensitive reports go through [SECURITY.md](SECURITY.md).
+Avoid treating a reply deadline or a fix date as guaranteed. A self-hosted operator remains
+responsible for monitoring, backups and availability.
 
 ## Related documents
 

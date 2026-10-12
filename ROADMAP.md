@@ -39,6 +39,9 @@ for 1.0.0. The honest state is:
   still separate evidence; see [deployment readiness](docs/launch-readiness.md).
 - No release gate has passed. Gates need things a development machine cannot supply: a second host,
   a real network, a physical device, an independent reviewer, or elapsed days.
+- On 11 October the repository became public, with private vulnerability reporting and a real
+  conduct/privacy contact. The shipped-default restricted-channel browser journey passed locally;
+  full hosted qualification and the remaining production gates are recorded in deployment readiness.
 
 Details of each change are in the [1.0.0-rc.1 release record](docs/releases/1.0.0-rc.1.md) and the
 execution ledger, `planning/v1-execution-ledger-2026-10-01.md`, in the development repository.
@@ -57,9 +60,10 @@ Complete the hosted checks and retain results against the candidate source and p
 
 ### 2. Exercise restricted channels in a browser
 
-**Open gate.** Restricted channels are on by default and enforced by the server, but they have never
-been driven through a real browser. This is the most important unbuilt acceptance item for the candidate.
-It needs journeys for: creating a private channel, granting a role and an individual account, a
+**Partly verified.** The shipped-default browser journey now covers a private channel, an individual
+grant, the rendered access inspector, outsider denial and live revocation. Extend it to role grants,
+announcement-channel posting and restricted voice/device behavior. The complete target remains: a
+private channel, granting a role and an individual account, a
 removed grant ending access immediately, an announcement channel's posting rule, a restricted voice room,
 and the access inspector's statement.
 
@@ -118,9 +122,9 @@ beta entry checklist, `planning/beta-entry-checklist.md`, in the development rep
 These are open questions that only the project's owner can answer. They are recorded in the verification queue,
 section 5, and none of them is assumed.
 
-1. **Community enforcement contact.** Who a community reaches about a code-of-conduct matter.
-2. **Support response expectations.** What the project promises about response times.
-3. **Harness follows the gate default.** Whether the browser harness should exercise the shipped defaults.
+1. **Community enforcement contact:** supplied and published in the code of conduct.
+2. **Support response expectations:** community support is best-effort, with no response guarantee.
+3. **Harness follows the gate default:** an explicit shipped-default mode is part of qualification.
 4. **Community guide: living or dated.** Whether member-facing guidance is updated in place or versioned.
 5. **Self-service departure in 1.0.** Whether a member can remove their own account in v1, or whether removal
    stays an administrator's action as it is now.
@@ -130,11 +134,12 @@ by the owner before the 100-account reference run can be written.
 
 ### 8. Publication
 
-**Open gate.** The project is not public yet. Before 1.0.0 is published:
+**Partly complete.** Public source is available. Before stable 1.0.0 is published:
 
-- A public repository is created by the owner, with the chosen licence and contribution terms.
+- The public repository, MIT licence, contribution terms and private reporting intake are configured.
 - Private vulnerability reporting is made live and tested with a report, so [SECURITY.md](SECURITY.md) can state it.
-- Releases are signed. No signing identity exists yet, and the release archives are currently unsigned.
+- Hosted release artifacts receive GitHub/Sigstore build-provenance attestations. Platform code signing
+  and notarization identities remain unconfigured; provenance is separate from those signatures.
 - A release policy and changelog process are in place, with [CHANGELOG.md](CHANGELOG.md) as the record.
 
 ## Planned after 1.0.0

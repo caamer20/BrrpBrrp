@@ -5,14 +5,31 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { describeEngines, harnessEnvironment } from '../e2e/harness-env.mjs';
+import {
+  describeEngines,
+  harnessEnvironment,
+  serverFeatureEnvironment
+} from '../e2e/harness-env.mjs';
 
-test('a default run forwards the four gates switched off and nothing else', () => {
+test('a default run forwards explicit feature and engine gates', () => {
   assert.deepEqual(harnessEnvironment({ PATH: '/usr/bin', BRRP_DATA_DIR: '/srv/data' }), {
     BRRP_E2E_PRIVATE_CONVERSATIONS: '0',
+    BRRP_E2E_RESTRICTED_CHANNELS: '0',
+    BRRP_E2E_SHIPPED_DEFAULTS: '0',
     BRRP_E2E_FIREFOX: '0',
     BRRP_E2E_WEBKIT: '0',
     BRRP_E2E_SCALE: '0'
+  });
+});
+
+test('shipped-default coverage leaves server overrides absent and enables both test projects', () => {
+  const forwarded = harnessEnvironment({ BRRP_E2E_SHIPPED_DEFAULTS: '1' });
+  assert.deepEqual(serverFeatureEnvironment(forwarded), {});
+  assert.equal(forwarded.BRRP_E2E_PRIVATE_CONVERSATIONS, '1');
+  assert.equal(forwarded.BRRP_E2E_RESTRICTED_CHANNELS, '1');
+  assert.deepEqual(serverFeatureEnvironment(harnessEnvironment({})), {
+    BRRP_ENABLE_RESTRICTED_CHANNELS: 'false',
+    BRRP_ENABLE_PRIVATE_CONVERSATIONS: 'false'
   });
 });
 
