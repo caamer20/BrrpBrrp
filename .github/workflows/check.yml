@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       prepare_release:
-        description: Create a draft prerelease after every automated gate passes
+        description: Create a draft release after every automated gate passes
         type: boolean
         default: false
 permissions:
@@ -315,7 +315,7 @@ jobs:
         with:
           name: brrpbrrp-docker-source
           path: release-assets
-      - name: Verify assets and create a draft prerelease
+      - name: Verify assets and create a draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -334,6 +334,8 @@ jobs:
           cd ..
           version="$(node -p 'require("./web/package.json").version')"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || { echo 'Invalid release version'; exit 1; }
+          prerelease=false
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
           notes="docs/releases/$version.md"
           test -f "$notes"
           git ls-remote --tags origin "refs/tags/v$version" > /tmp/brrp-existing-release-tag
@@ -349,4 +351,4 @@ jobs:
           printf '\n## Automated qualification\n\nTested source: %s\n\nRun: %s\n\nAll required automated job families passed before these assets were prepared. Real-host, independent review, capacity and beta qualification remain separate.\n' "$RELEASE_COMMIT" "$QUALIFICATION_URL" >> "$RUNNER_TEMP/brrpbrrp-release-notes.md"
           gh release create "v$version" release-assets/* \
             --target "$RELEASE_COMMIT" --title "BrrpBrrp $version" \
-            --notes-file "$RUNNER_TEMP/brrpbrrp-release-notes.md" --draft --prerelease --latest=false
+            --notes-file "$RUNNER_TEMP/brrpbrrp-release-notes.md" --draft --prerelease="$prerelease" --latest=false

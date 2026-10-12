@@ -2,7 +2,7 @@
   "name": "brrpbrrp-web",
   "private": true,
   "license": "MIT",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",

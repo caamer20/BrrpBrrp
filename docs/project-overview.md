@@ -40,15 +40,14 @@ It is deliberately small in three ways:
 
 It is not end-to-end encrypted, so the operator can read what is stored and hear voice that passes
 through. It is not a public network, a federated system or a hosted service. It has no camera video,
-no recording and no voice history. It is a candidate without independent reviews or measured capacity; see
+no recording and no voice history. It has no independent reviews or measured capacity; see
 [Status](#2-status-and-what-has-been-verified).
 
 ---
 
 ## 2. Status and what has been verified
 
-**The current build is `1.0.0-rc.1`, a release candidate, schema 25.** It is the feature set intended
-for version 1.0.0. Publication status and exact-build qualification are recorded on
+**The current build is `1.0.0`, schema 25, for the stable release channel.** Publication status and exact-build qualification are recorded on
 [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). The development repository is
 public, and the project has no native code-signing identity
 and has had **no independent security, privacy or accessibility review**. No beta has happened.
@@ -56,19 +55,19 @@ and has had **no independent security, privacy or accessibility review**. No bet
 The distinction between *built*, *tested*, *run on a platform* and *reviewed* matters, and the project
 keeps it explicit:
 
-| Question | Answer for this candidate |
+| Question | Answer for this release |
 | --- | --- |
 | Is the feature set implemented? | Yes. Every feature family planned for 1.0 has an implementation. |
 | Does the Go code build and type-check? | Yes, under the static gates the project runs. |
-| Were the automated suites run on the candidate? | The local Go suites, 392 frontend tests, static/package gates and 30 off-mode/45 private-mode browser journeys passed on 8 October. Restricted-channel browser acceptance and the hosted race sweep remain open. See [deployment readiness](launch-readiness.md). |
-| Has it run on Windows, in Docker or on a hosted runner? | Hosted cross-platform qualification has started. A Docker build defect was found and fixed; completed outcomes are tracked in [deployment readiness](launch-readiness.md). Native service and real-device qualification remain open. |
+| Were the automated suites run? | The preceding RC passed all 18 hosted qualification jobs, including 142 browser executions and 354 recovery/rollback checks. Version 1.0.0 requires a new run on its own exact source; published results are in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/tag/v1.0.0). See [deployment readiness](launch-readiness.md). |
+| Has it run on Windows, in Docker or on a hosted runner? | Hosted cross-platform Go tests and Docker lifecycle checks passed for the RC; exact-version outcomes are tracked in [deployment readiness](launch-readiness.md). Native service and real-device qualification remain open. |
 | Has it been run on a second machine or a real network? | No. Voice across two networks, a UDP-blocked network and a physical device are unqualified. |
 | Has it been independently reviewed? | No. Security, privacy and accessibility reviews are owed. |
 | Has it had a beta? | No. |
 
-The authoritative account is the [1.0.0-rc.1 release record](releases/1.0.0-rc.1.md), the
+The authoritative account is the [1.0.0 release record](releases/1.0.0.md), the
 [known limitations](known-limitations.md) and the [production readiness](production-readiness.md)
-runbook, which records the gates a 1.0.0 release must pass before it is called one. The
+runbook, which records the gates required for production deployment sign-off. The
 execution ledger (`planning/v1-execution-ledger-2026-10-01.md`, in the development repository) is the evidence trail behind
 each claim.
 
@@ -457,7 +456,7 @@ approach and the container packaging.
 | Operate, update or roll back | [Deployment](deployment.md), [Upgrading](upgrading.md), [Production readiness](production-readiness.md) |
 | Understand the security boundary | [Security](security.md) and [SECURITY.md](../SECURITY.md) |
 | Know what does not work yet | [Known limitations](known-limitations.md) |
-| See what changed in a release | [CHANGELOG](../CHANGELOG.md), [1.0.0-rc.1](releases/1.0.0-rc.1.md) |
+| See what changed in a release | [CHANGELOG](../CHANGELOG.md), [1.0.0](releases/1.0.0.md) |
 | Plan the future | [Roadmap](../ROADMAP.md) |
 | Read the design decisions | [ADRs](adr/) and [architecture](architecture.md) |
 | Contribute code | [CONTRIBUTING.md](../CONTRIBUTING.md) and [architecture](architecture.md) |

@@ -26,12 +26,12 @@ no third-party chat platform.
   scheduled and verified backups, offline restore, and operator alerts.
 - **Light, dark and system themes**, a phone layout and an installable web app.
 
-> **Status: 1.0.0-rc.1, a release candidate.** This is the feature set intended for version 1.0.0. It has
-> **no independent security, privacy or accessibility review**, and no beta has
-> run. Two conversation features — restricted channels and private conversations — are **on by default** and
-> have not been reviewed. Automated verification and real-host qualification are tracked separately in
-> [deployment readiness](docs/launch-readiness.md). Read the [release record](docs/releases/1.0.0-rc.1.md) and [known limitations](docs/known-limitations.md)
-> before you rely on it.
+> **Version 1.0.0 is the stable release channel.** Download it from [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/latest).
+> Automated qualification and real-host acceptance are tracked separately. Native signing/notarization,
+> independent security, privacy and accessibility reviews, measured capacity and community beta remain open.
+> Restricted channels and private conversations are **on by default** and have not been independently reviewed.
+> Read the [release record](docs/releases/1.0.0.md), [deployment readiness](docs/launch-readiness.md) and
+> [known limitations](docs/known-limitations.md) before deploying.
 
 ## Documentation
 
@@ -49,8 +49,9 @@ The full set of guides, decision records and release notes is listed in the
 
 ## Quick start
 
-The source repository is public. Download a versioned candidate from [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases)
-when published, or build from source below or with Docker. The archival CI fixture release is for migration tests;
+The source repository is public. Download version 1.0.0 from
+[GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases/latest), or build from source
+below or with Docker. The archival CI fixture release is for migration tests;
 its binaries should not be installed as a current server. Maintainers prepare release
 archives through the [gated GitHub workflow](docs/github-setup.md#prepare-a-release).
 
@@ -63,7 +64,7 @@ The badge counts downloads of all published release assets, including prerelease
 archival fixtures, automated CI downloads, checksums and provenance. It counts asset
 downloads, not installations or unique users, and refreshes through Shields without an Actions job.
 
-When a candidate release is available, download the ZIP for your operating system and processor from
+Download the ZIP for your operating system and processor from
 [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases), verify its checksum, extract it, and run the setup wizard.
 The wizard installs the server as a background service, checks the port and storage, and creates your
 administrator account in the browser.
