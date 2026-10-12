@@ -6,9 +6,10 @@ what stays outside its boundary, so a report lands on the right side of that lin
 
 ## Supported versions
 
-The newest published release is the supported one. Fixes ship as a new version rather
-than a patch for an older one, because every release carries a schema version and the
-upgrade path is forward-only.
+The latest published application version receives fixes. Before the first application
+release, the current release candidate is under active development; archival CI fixtures
+are unsupported. Older versions are retained only for documented migration and rollback
+tests. Read [known limitations](docs/known-limitations.md) before running a candidate.
 
 ## Reporting a vulnerability
 
@@ -16,13 +17,11 @@ Use GitHub's private vulnerability reporting: open the repository's **Security**
 choose **Report a vulnerability**. That report is visible only to maintainers, and it is
 the channel for security reports — do not open a public issue containing exploit details.
 
-**This intake is not live yet.** [The repository](https://github.com/caamer20/BrrpBrrp) is
-private during candidate qualification. GitHub's public vulnerability intake is unavailable
-on this private repository. Enable it and deliver a test report before a public launch,
-as required by the project's plan (WP-01). Draft security advisories also cannot be created
-in a private repository. A private reporting contact is pending and must be established
-before public launch. Until it is named, use an existing private communication channel with
-the project maintainer; do not put exploit details in repository issues or pull requests.
+The private reporting form is at
+[Report a vulnerability](https://github.com/caamer20/BrrpBrrp/security/advisories/new).
+If the form is unavailable, email [cameron.amer@gmail.com](mailto:cameron.amer@gmail.com)
+with a minimal description and ask for a safe way to share sensitive details. Conduct
+reports use [the code of conduct](CODE_OF_CONDUCT.md).
 
 Please include:
 
@@ -34,8 +33,7 @@ Please include:
 ## What to expect
 
 The project targets an acknowledgement within seven days and a first assessment within
-thirty days. That is one maintainer's best effort rather than a service level, and the
-owner should confirm the targets before the public launch. You will be told the outcome:
+thirty days. That is one maintainer's best effort rather than a service level, with no guaranteed response time. You will be told the outcome:
 fixed with a version and a note, accepted as a known limitation, or declined with a
 reason. Please allow the project to release a fix before publishing details.
 

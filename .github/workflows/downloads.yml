@@ -12,30 +12,37 @@ concurrency:
   cancel-in-progress: false
 jobs:
   badge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
       - name: Read all published release archives
-        run: node scripts/update-download-badge.mjs
+        run: node scripts/update-download-badge.mjs --output /tmp/brrpbrrp-downloads.svg
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Save the count when it changes
+      - name: Check out the badge branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: badges
+          path: badge
+      - name: Save the count outside protected main
+        working-directory: badge
+        shell: bash
         run: |
-          if git diff --quiet -- docs/assets/downloads.svg; then
+          cp /tmp/brrpbrrp-downloads.svg downloads.svg
+          if git diff --quiet -- downloads.svg; then
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- docs/assets/downloads.svg
+          git add -- downloads.svg
           git commit -m 'Update release download count [skip ci]'
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git push origin HEAD:badges

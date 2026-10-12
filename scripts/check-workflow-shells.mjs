@@ -155,7 +155,7 @@ if (process.argv.includes("--self-test")) {
 
 const override = process.argv.indexOf("--workflow");
 const workflowPath =
-  override > -1 ? resolve(process.argv[override + 1]) : resolve(repository, ".github/workflows/check.yml");
+  override > -1 ? resolve(process.argv[override + 1]) : resolve(repository, ".github/workflows/ci.yml");
 const { problems, checked } = audit(readFileSync(workflowPath, "utf8"));
 if (problems.length) {
   for (const problem of problems) console.error(problem);

@@ -127,9 +127,9 @@
         role_ids: access.roles,
         user_ids: access.users
       });
-      accessNotice = 'Access updated.';
       await openAccess(accessChannel);
       await workspace.refreshState();
+      if (!accessError) accessNotice = 'Access updated.';
     } catch (e) {
       accessError = errorMessage(e);
     } finally {

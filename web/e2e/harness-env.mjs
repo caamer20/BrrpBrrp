@@ -8,6 +8,8 @@
 // (review finding F-08, W-08).
 const FORWARDED = {
   BRRP_E2E_PRIVATE_CONVERSATIONS: '0',
+  BRRP_E2E_RESTRICTED_CHANNELS: '0',
+  BRRP_E2E_SHIPPED_DEFAULTS: '0',
   // The engine projects exist only for their flag. The WebKit pass cannot share an
   // invocation with the Chromium projects, because one installation serves one pass.
   BRRP_E2E_FIREFOX: '0',
@@ -39,7 +41,22 @@ export function harnessEnvironment(environment) {
     const value = environment[key] || fallback;
     if (value !== undefined) forwarded[key] = value;
   }
+  if (forwarded.BRRP_E2E_SHIPPED_DEFAULTS === '1') {
+    forwarded.BRRP_E2E_PRIVATE_CONVERSATIONS = '1';
+    forwarded.BRRP_E2E_RESTRICTED_CHANNELS = '1';
+  }
   return forwarded;
+}
+
+export function serverFeatureEnvironment(forwarded) {
+  // Leaving both variables absent tests the application's actual defaults.
+  if (forwarded.BRRP_E2E_SHIPPED_DEFAULTS === '1') return {};
+  return {
+    BRRP_ENABLE_RESTRICTED_CHANNELS:
+      forwarded.BRRP_E2E_RESTRICTED_CHANNELS === '1' ? 'true' : 'false',
+    BRRP_ENABLE_PRIVATE_CONVERSATIONS:
+      forwarded.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'true' : 'false'
+  };
 }
 
 // One line that says which browser a run actually used, so a log proves the engine and

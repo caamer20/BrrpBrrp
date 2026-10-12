@@ -1,7 +1,7 @@
 # Project and deployment readiness
 
-Assessment date: **8 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
-feature families are implemented, and a private GitHub repository is configured for
+Assessment date: **11 October 2026**. BrrpBrrp is at **1.0.0-rc.1**, schema 25. Its planned
+feature families are implemented, and a public GitHub repository is configured for
 cross-platform qualification. It is ready for structured candidate testing; it is not yet
 qualified for a production launch.
 
@@ -10,15 +10,30 @@ qualified for a production launch.
 | Area | Assessment | Evidence or remaining work |
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
-| Repository presentation | Prepared for private development | README, manual, roadmap, policies, issue/PR templates, review ownership and dependency updates are present. |
-| Automated verification | Capped retry blocked by account billing; execution paused | GitHub assigned no runner and executed no steps in the latest attempt. Full hosted qualification remains outstanding. |
-| Upgrade fixtures | Connected for private CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
+| Repository presentation | Public development repository | Publication audit, reporting contacts/intake, policies, templates, review ownership and dependency updates are present. |
+| Automated verification | Public CI and full qualification prepared | Optimized contribution checks and complete release gates are configured. Final hosted outcomes remain pending below. |
+| Upgrade fixtures | Connected for CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Local candidate built; hosted draft blocked | Six native targets plus source/checksums built locally. No application release or registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
 | Linux deployment | Partly verified | Hosted Docker build/lifecycle passed. Systemd lifecycle, real deployment, external networks and off-host recovery need target-host evidence. |
 | macOS deployment | Unqualified | Local builds do not establish installation, login/reboot lifecycle, update and restore on a clean host. |
 | Security, privacy and accessibility | Reviews outstanding | Automated checks are useful evidence; independent reviews remain open. |
 | Community beta and soak | Not started | The roadmap requires real community use and observation of a frozen candidate. |
+
+## Public preparation on 11 October
+
+- Public visibility is confirmed. Private vulnerability reporting, secret scanning and push protection
+  are enabled. The owner supplied a real conduct/privacy contact.
+- The [publication audit](public-release-audit.md) covers reachable GitHub history, retained logs and
+  archival fixture inventories/checksums. Historical scanner exceptions are exact fingerprints, and
+  a synthetic new-token control still fails.
+- Routine CI now shares one Linux frontend/static job and native Go coverage on three fixed OS labels.
+  Full qualification retains its promotion dependencies and adds CodeQL, shipped-default browser
+  coverage and the WebKit core subset. The badge writes a separate branch.
+- All 406 frontend tests passed locally. The new shipped-default restricted-channel journey and its
+  nine setup dependencies passed (10 total). It exposed and regresses an access-inspector confirmation
+  that was immediately cleared during refresh; that UI defect is fixed. Individual grants, outsider
+  denial and live revocation are covered. Broader real-host and independent review work remains open.
 
 ## Verification on 8 October
 
@@ -84,7 +99,7 @@ development session; hosted logs and artifacts will be available in
   could not start its runners. GitHub reported an account payment/spending-limit issue; no
   test steps executed. At the owner's request, repository Actions execution and the three
   project workflows were paused until the Actions limit resets. There are no running or queued
-  workflows. See [pause and resume instructions](github-setup.md#actions-pause-and-resume).
+  workflows. See [workflow setup](github-setup.md#workflows-and-runner-use).
 - The owner authorized a retry within 10% of the Actions allowance. Workflows now share setup
   and static audits, and full qualification is manual-only to prevent automatic spending. The
   new one-job **Budget check** has a bounded timeout and cannot package or qualify a release.
@@ -117,9 +132,8 @@ documentation changes do not alter that candidate's source revision.
 
 1. **Establish a green candidate.** Finish local checks, resolve hosted failures and retain the
    source revision, run URL and artifacts. Keep automated failures blocking package preparation.
-2. **Cover the shipped conversation defaults.** Both features ship enabled, while the existing
-   browser harness runs restricted channels disabled. Add restricted-channel browser journeys and
-   a run using shipped defaults; existing private-conversation off/on results do not cover that gap.
+2. **Complete conversation acceptance.** Retain the new shipped-default browser proof and extend
+   restricted role grants, announcements and voice/device coverage against the documented scenario catalog.
 3. **Prepare and qualify the candidate archives.** Use the gated manual workflow, then install
    its actual Windows, macOS and Linux packages on clean hosts. Include ARM64 runtime testing where
    it is advertised, Docker persistence and update/rollback on each deployment type.
@@ -127,9 +141,9 @@ documentation changes do not alter that candidate's source revision.
    screen sharing, real phone/tablet behavior, push, monitoring and off-host recovery need recorded evidence.
 5. **Complete reviews and the beta.** Resolve blocking independent security/privacy/accessibility
    findings, run the community beta and observe a frozen candidate before stable publication.
-6. **Open the public project deliberately.** Review tracked history, activate and test vulnerability
-   intake, choose conduct/support contacts, publish the tested prerelease and later promote the
-   qualified build. Keep the repository private until that decision is made.
+6. **Publish the tested candidate deliberately.** Public source and private reporting are available.
+   Verify an external test report reaches the maintainer, review the draft candidate, and publish a
+   prerelease for beta use before promoting a fully qualified stable build.
 
 The detailed release gates remain in [ROADMAP.md](../ROADMAP.md) and the
 [production runbook](production-readiness.md). This assessment records readiness; it does not

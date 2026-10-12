@@ -104,8 +104,8 @@ is none today.
 - **No support window and no deprecation policy.** `SECURITY.md` states that the newest
   release is the supported one because the upgrade path is forward-only; that is the whole
   of the policy today.
-- **No published repository, so no release cadence.** There is no remote, no hosted CI run
-  and no signing identity, and the project's plan records those as the owner's.
+- **No fixed release cadence.** The public repository and hosted verification are available;
+  a stable release schedule and platform signing identities have not been established.
 - **No platform qualification.** Which platforms have been executed, and which have only
   been cross-compiled, is stated in [known limitations](known-limitations.md) and
   [acceptance.md](acceptance.md) rather than assumed from an archive existing.

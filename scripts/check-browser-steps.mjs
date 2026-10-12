@@ -222,7 +222,7 @@ function npmStub(workspace, exitCode) {
   const stub = join(bin, "npm");
   writeFileSync(
     stub,
-    `#!/bin/sh\nprintf '%s\\n' '> brrpbrrp@0.0.0 test:e2e' 'Running 1 test using 1 worker' '[directs] > example.spec.mjs:10:1 passed (1.2s)' '[voice-firefox] > example.spec.mjs:10:1 passed (1.2s)'\nexit ${exitCode}\n`,
+    `#!/bin/sh\nprintf '%s\\n' '> brrpbrrp@0.0.0 test:e2e' 'Running 1 test using 1 worker' '[directs] > example.spec.mjs:10:1 passed (1.2s)' '[voice-firefox] > example.spec.mjs:10:1 passed (1.2s)' '[restricted] > example.spec.mjs:10:1 passed (1.2s)' '[release-webkit] > example.spec.mjs:10:1 passed (1.2s)'\nexit ${exitCode}\n`,
   );
   chmodSync(stub, 0o755);
   return bin;

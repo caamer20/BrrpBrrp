@@ -19,18 +19,13 @@ the boundary between the application and its operator.
 
 ## Reporting and enforcement
 
-> **Owner decision, not yet made.** The Covenant requires an enforcement contact, and this
-> project does not have one. No address is invented here: a conduct or privacy report sent
-> to a guessed address reaches nobody, which is worse than a report that was never sent.
-> `planning/v1-roadmap-2026-10-01.md` records this as the owner's item (PUB-05), together
-> with the decision about a manually recorded CLA or a signing service.
+Send conduct or privacy reports privately to [cameron.amer@gmail.com](mailto:cameron.amer@gmail.com).
+Include the incident, relevant links or dates, and the safest way to contact you. Share only
+what is needed; keep personal data and accusations out of public issues. Reports are handled
+by the project maintainer with discretion. Security vulnerabilities use the separate private
+intake in [SECURITY.md](SECURITY.md).
 
-Until a contact is named, a conduct report should reach the person who published the release
-you are running. That is the same fallback [SECURITY.md](SECURITY.md) uses for vulnerability
-reports, and it is a fallback rather than an arrangement: it depends on that person being
-reachable and on their handling the report privately.
-
-When a contact exists, enforcement follows the Covenant's own enforcement guidelines.
+Enforcement follows the Covenant's own enforcement guidelines.
 Decisions are recorded, the person reporting is told the outcome, and a maintainer involved
 in an incident does not decide its outcome alone. [CONTRIBUTING.md](CONTRIBUTING.md)
 describes how contributions are reviewed and [CLA.md](CLA.md) how rights are handled; none

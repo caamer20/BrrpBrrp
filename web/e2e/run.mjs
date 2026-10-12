@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { describeEngines, harnessEnvironment } from './harness-env.mjs';
+import { describeEngines, harnessEnvironment, serverFeatureEnvironment } from './harness-env.mjs';
 
 const dataDir = await mkdtemp(join(tmpdir(), 'brrpbrrp-browser-'));
 const binary = resolve(process.env.BRRP_E2E_BINARY || '../dist/brrpbrrp-e2e');
@@ -91,16 +91,7 @@ async function run() {
       // journeys fail on purpose and they share this one address: the default stays 20,
       // and the limiter's behaviour stays a server-side concern with its own tests.
       BRRP_LOGIN_ATTEMPTS: '400',
-      // Restricted channels now ship on. Every journey here was written, and last run,
-      // with them off, and none creates a restricted channel or reads its screens, so this
-      // server states the old value explicitly; a mode that exercises them in a browser is
-      // W-07 and does not exist yet. The harness names its own values so that a changed
-      // product default cannot silently change what an existing journey measures.
-      BRRP_ENABLE_RESTRICTED_CHANNELS: 'false',
-      // Private conversations are likewise off in the default suite, and on only when the
-      // caller asks. The focused DM journey opts this temporary server in explicitly.
-      BRRP_ENABLE_PRIVATE_CONVERSATIONS:
-        process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'true' : 'false'
+      ...serverFeatureEnvironment(forwarded)
     },
     stdio: ['ignore', 'ignore', 'pipe']
   });
@@ -113,8 +104,13 @@ async function run() {
   // than just which variable someone hoped the harness honored (review 8, R8-04).
   console.log(
     `browser suite feature mode: private conversations ${
-      process.env.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'ENABLED' : 'disabled (default)'
+      forwarded.BRRP_E2E_PRIVATE_CONVERSATIONS === '1' ? 'ENABLED' : 'disabled'
     }`
+  );
+  console.log(
+    forwarded.BRRP_E2E_SHIPPED_DEFAULTS === '1'
+      ? 'browser suite configuration: shipped defaults; both feature overrides are unset'
+      : `browser suite restricted channels: ${forwarded.BRRP_E2E_RESTRICTED_CHANNELS === '1' ? 'ENABLED' : 'disabled'}`
   );
   console.log(`browser suite engines: ${describeEngines(forwarded)}`);
   const test = spawn(

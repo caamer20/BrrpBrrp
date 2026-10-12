@@ -2,7 +2,8 @@
 
 # BrrpBrrp
 
-[![Release archive downloads](docs/assets/downloads.svg)](https://github.com/caamer20/BrrpBrrp/releases)
+[![CI](https://github.com/caamer20/BrrpBrrp/actions/workflows/ci.yml/badge.svg)](https://github.com/caamer20/BrrpBrrp/actions/workflows/ci.yml)
+[![Release archive downloads](https://raw.githubusercontent.com/caamer20/BrrpBrrp/badges/downloads.svg)](https://github.com/caamer20/BrrpBrrp/releases)
 
 **[User manual](docs/manual/README.md) · [Installation](docs/installation.md) · [Roadmap](ROADMAP.md) · [Deployment readiness](docs/launch-readiness.md) · [Contributing](CONTRIBUTING.md)**
 
@@ -48,8 +49,7 @@ The full set of guides, decision records and release notes is listed in the
 
 ## Quick start
 
-The repository is private while the candidate is qualified. **There is no published application release
-yet.** Build from source below, or use Docker to build from the checkout. Maintainers can prepare release
+The source repository is public. **There is no published application release yet.** Build from source below, or use Docker to build from the checkout. Maintainers can prepare release
 archives through the [gated GitHub workflow](docs/github-setup.md#prepare-a-release).
 
 Native packages are built for **Windows, macOS and Linux**, each on **x64 and ARM64**.
@@ -58,7 +58,7 @@ phones and tablets; the web app can also be installed. Build targets and complet
 deployment qualification are tracked in [deployment readiness](docs/launch-readiness.md).
 
 The badge counts downloads of published native and Docker source ZIPs, including
-prereleases. It refreshes daily and on release changes, works with the private repository,
+prereleases. It refreshes daily and on release changes, uses the protected-main-compatible badge branch,
 and excludes draft releases and CI fixtures. It counts archive downloads, not unique users.
 
 When a candidate release is available, download the ZIP for your operating system and processor from
@@ -153,7 +153,8 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and th
 [Contributor License Agreement](CLA.md), including its signature sentence and signatory record. Please follow the
 [code of conduct](CODE_OF_CONDUCT.md). For help, see [SUPPORT.md](SUPPORT.md).
 
-To report a vulnerability, read [SECURITY.md](SECURITY.md). Its private reporting channel is not live yet.
+To report a vulnerability privately, use [SECURITY.md](SECURITY.md). Conduct and privacy reports use
+the owner-provided contact in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 BrrpBrrp is released under the [MIT License](LICENSE). Third-party licences are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

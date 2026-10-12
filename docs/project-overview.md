@@ -322,7 +322,7 @@ BrrpBrrp is built for a small group whose operator is trusted. Its boundary is p
 - **Credentials** are rate-limited by failures, not attempts, so one mistake or a shared address does not lock
   a member out.
 
-The [vulnerability reporting policy](../SECURITY.md) names the channel; that channel is not live yet.
+The [vulnerability reporting policy](../SECURITY.md) names the enabled private GitHub intake and fallback contact.
 
 ---
 
