@@ -21,6 +21,8 @@ No checkpoint alone marks a production gate passed; read its known issues and ve
   checks the projects after Playwright resolves inherited configuration.
 - Use the standard release-asset download badge and remove its scheduled workflow,
   allowing `main` to remain the only permanent branch without daily source changes.
+- Give hosted Linux Firefox a silent virtual audio backend so real audio contexts
+  advance and the synthetic voice/screen-share transport journeys can execute.
 - Fresh complete-source review and full qualification remain required before publication.
 
 ## Release preparation — 11 October 2026

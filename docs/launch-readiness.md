@@ -11,7 +11,7 @@ qualified for a production launch.
 | --- | --- | --- |
 | Product scope | Substantial release candidate | Channels, roles, private conversations, moderation, voice, screen sharing, backups and installer commands are implemented. See [project overview](project-overview.md). |
 | Repository presentation | Public development repository | Publication audit, reporting contacts/intake, policies, templates, review ownership and dependency updates are present. |
-| Automated verification | Public CI passed; qualification gates active | Patched Go 1.27.2 passed native/security/race/recovery/rollback/Docker checks and three Chromium modes. Seven installer false positives are individually reviewed. WebKit launch exposed inherited Chromium options; the repaired harness/source must complete qualification before publication. |
+| Automated verification | Public CI passed; qualification gates active | Patched Go 1.27.2 passed native/security/race/recovery/rollback/Docker checks, three Chromium modes and WebKit. Seven installer false positives are individually reviewed. Linux Firefox now has an explicit silent audio backend, verified with real transport journeys. Final frozen-source results belong in GitHub Releases; real-host testing remains open. |
 | Upgrade fixtures | Connected for CI | Preserved alpha archives retain their hashes. Linux schema-13 reconstruction has explicit provenance. See [GitHub setup](github-setup.md#ci-fixtures). |
 | Distribution | Publication requires full qualification | Six native targets plus source/checksums are defined. Exact tested revision, run, assets and publication status belong in [GitHub Releases](https://github.com/caamer20/BrrpBrrp/releases). No registry image is published. |
 | Windows deployment | Unqualified | Real service, ACL, firewall, tray, reboot, update and restore acceptance is outstanding. |
@@ -47,6 +47,28 @@ The repaired harness passed seven WebKit journeys and fourteen Firefox/setup jou
 locally, plus all 414 frontend tests and static/source-package checks. Complete new
 frozen-main qualification remains required before publication.
 
+## Linux Firefox audio qualification on 12 October
+
+[Qualification at `b4753054`](https://github.com/caamer20/BrrpBrrp/actions/runs/38236457416)
+passed the native suites, audits, exact-source security gate, all five race shards,
+Docker, recovery, rollback, three Chromium modes and WebKit. Firefox authenticated
+successfully, but all five voice journeys stopped while the application's audio context
+was starting. Packaging remained blocked; this run produced no candidate archives or tag.
+
+An [isolated Linux experiment](https://github.com/caamer20/BrrpBrrp/actions/runs/38240451392)
+used the same Firefox preferences and a trusted button click. Without an audio backend,
+the application context stayed suspended, its clock remained at zero and synthetic capture
+was never entered. After starting a PulseAudio null sink, both application and capture
+contexts resumed and their clocks advanced; the generated track became live. All fourteen
+setup/Firefox journeys then passed on Linux, including the five real voice/screen-share
+transport checks. The application and browser assertions were unchanged.
+
+Hosted qualification starts that silent sink before Firefox and fails if its setup fails.
+These are synthetic loopback media checks, not physical microphone or external-network
+acceptance. The hosted full-disk rehearsal at `b4753054` recorded a privilege-related skip;
+it does not count as passed full-disk qualification. A renewed complete frozen-main run
+is required before release publication, with its actual result recorded on GitHub Releases.
+
 ## Public preparation on 11 October
 
 - Public visibility is confirmed. Private vulnerability reporting, secret scanning and push protection
@@ -56,7 +78,8 @@ frozen-main qualification remains required before publication.
   a synthetic new-token control still fails.
 - Routine CI now shares one Linux frontend/static job and native Go coverage on three fixed OS labels.
   Full qualification retains its promotion dependencies and adds CodeQL, shipped-default browser
-  coverage and the WebKit core subset. The badge writes a separate branch.
+  coverage and the WebKit core subset. At this checkpoint the badge used a separate branch;
+  the [current counter](github-setup.md#readme-download-count) requires no extra branch or workflow.
 - All 406 frontend tests passed locally. The new shipped-default restricted-channel journey and its
   nine setup dependencies passed (10 total). It exposed and regresses an access-inspector confirmation
   that was immediately cleared during refresh; that UI defect is fixed. Individual grants, outsider

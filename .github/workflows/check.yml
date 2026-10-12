@@ -116,6 +116,14 @@ jobs:
         run: |
           npm run test:e2e -- --project=release-webkit 2>&1 | tee browser-webkit.log
           grep -q '\[release-webkit\]' browser-webkit.log || { echo 'FAIL: the WebKit project did not execute'; exit 1; }
+      - name: Start the silent Firefox audio backend
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=brrpbrrp_ci
+          pactl set-default-sink brrpbrrp_ci
+          pactl set-default-source brrpbrrp_ci.monitor
       - name: Browser journeys (Firefox engine)
         working-directory: web
         shell: bash
