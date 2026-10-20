@@ -377,7 +377,7 @@
     {
       "type": "library",
       "name": "golang.org/x/image",
-      "version": "v0.46.0",
+      "version": "v0.47.0",
       "licenses": [
         {
           "license": {
@@ -401,7 +401,7 @@
     {
       "type": "library",
       "name": "golang.org/x/sys",
-      "version": "v0.48.0",
+      "version": "v0.49.0",
       "licenses": [
         {
           "license": {
@@ -413,7 +413,7 @@
     {
       "type": "library",
       "name": "golang.org/x/text",
-      "version": "v0.42.0",
+      "version": "v0.43.0",
       "licenses": [
         {
           "license": {
